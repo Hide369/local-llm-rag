@@ -2043,19 +2043,22 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ## Task 10: Streamlit UI
 
 **Files:**
+- Create: `ingest/prompting.py`
 - Create: `rag_chat_app.py`
-- Create: `tests/test_app_helpers.py`
+- Create: `tests/test_prompting.py`
 
 **Interfaces:**
 - Consumes: `ingest.retrieval.search`, `ingest.retrieval.Hit`, `ingest.store`, `ingest.embedder`, `scripts.ingest_source.ingest_directory`
-- Produces: `build_prompt(question: str, hits: list[Hit]) -> str`、`format_report(report) -> str`
+- Produces: `ingest.prompting.build_prompt(question: str, hits: list[Hit]) -> str`、`ingest.prompting.format_report(report) -> str`
+
+**重要:** `build_prompt` と `format_report` は `rag_chat_app.py` ではなく `ingest/prompting.py` に置く。Streamlitスクリプトはトップレベルに処理を並べるため、テストからインポートするとスクリプト全体が実行され、本番の `chroma_db` を開いてしまう。テスト対象のロジックはUIファイルの外に出す。
 
 - [ ] **Step 1: 失敗するテストを書く**
 
-`tests/test_app_helpers.py`:
+`tests/test_prompting.py`:
 ```python
+from ingest.prompting import build_prompt, format_report
 from ingest.retrieval import Hit
-from rag_chat_app import build_prompt, format_report
 from scripts.ingest_source import IngestReport
 
 
@@ -2087,46 +2090,38 @@ def test_prompt_includes_citations_so_the_model_can_cite_them():
     assert "a.pdf p.48" in prompt
 
 
-def test_report_summarises_counts():
+def test_report_counts_chunks_files_and_skips_separately():
     report = IngestReport(
-        indexed={"a.pdf": 10}, skipped=["b.pptx"], failed={}, removed=["c.docx"]
+        indexed={"a.pdf": 10, "b.pdf": 7}, skipped=["c.pptx"], failed={}, removed=["d.docx"]
     )
     text = format_report(report)
-    assert "10" in text and "1" in text
+    assert "17チャンク" in text
+    assert "2ファイル" in text
+    assert "スキップ: 1ファイル" in text
+    assert "削除: 1ファイル" in text
 
 
 def test_report_lists_failures():
     report = IngestReport(indexed={}, skipped=[], failed={"壊れた.pdf": "読めません"}, removed=[])
-    assert "壊れた.pdf" in format_report(report)
+    text = format_report(report)
+    assert "壊れた.pdf" in text
+    assert "読めません" in text
 ```
 
 - [ ] **Step 2: テストが失敗することを確認する**
 
-Run: `.\myvenv313\Scripts\python.exe -m pytest tests/test_app_helpers.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'rag_chat_app'`
+Run: `.\myvenv313\Scripts\python.exe -m pytest tests/test_prompting.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'ingest.prompting'`
 
-- [ ] **Step 3: 最小限の実装を書く**
+- [ ] **Step 3: ヘルパーモジュールを実装する**
 
-`rag_chat_app.py`:
+`ingest/prompting.py`:
 ```python
-"""ローカル文書RAGチャット。
+"""プロンプト組み立てと取り込み結果の要約。
 
-取り込み処理は ingest/ 側にあり、このファイルは表示と入出力だけを担当する。
-初回の取り込みは13分かかるため、CLI (python -m scripts.ingest_source) で行う。
-このUIのボタンは差分取り込み（通常は数秒）を想定している。
+UIから呼ばれるがUIには依存しない。Streamlitスクリプトに置くと、テストが
+インポートしただけでスクリプト全体が走り本番DBを開いてしまうため、ここに分離する。
 """
-from datetime import datetime
-from pathlib import Path
-
-import chromadb
-import streamlit as st
-from openai import OpenAI
-
-from ingest import embedder, store
-from ingest.retrieval import RELEVANCE_THRESHOLD, search
-from scripts.ingest_source import DEFAULT_SOURCE_DIR, ingest_directory
-
-DB_DIR = str(Path(__file__).parent / "chroma_db")
 
 
 def build_prompt(question: str, hits) -> str:
@@ -2154,6 +2149,36 @@ def format_report(report) -> str:
     for source, message in report.failed.items():
         lines.append(f"失敗 {source}: {message}")
     return "\n".join(lines)
+```
+
+- [ ] **Step 4: ヘルパーのテストが通ることを確認する**
+
+Run: `.\myvenv313\Scripts\python.exe -m pytest tests/test_prompting.py -v`
+Expected: PASS（5件）
+
+- [ ] **Step 5: UIを実装する**
+
+`rag_chat_app.py`:
+```python
+"""ローカル文書RAGチャット。
+
+取り込み処理は ingest/ 側にあり、このファイルは表示と入出力だけを担当する。
+初回の取り込みは13分かかるため、CLI (python -m scripts.ingest_source) で行う。
+このUIのボタンは差分取り込み（通常は数秒）を想定している。
+"""
+from datetime import datetime
+from pathlib import Path
+
+import chromadb
+import streamlit as st
+from openai import OpenAI
+
+from ingest import embedder, store
+from ingest.prompting import build_prompt, format_report
+from ingest.retrieval import RELEVANCE_THRESHOLD, search
+from scripts.ingest_source import DEFAULT_SOURCE_DIR, ingest_directory
+
+DB_DIR = str(Path(__file__).parent / "chroma_db")
 
 
 @st.cache_resource
@@ -2247,12 +2272,12 @@ if question:
     )
 ```
 
-- [ ] **Step 4: テストが通ることを確認する**
+- [ ] **Step 6: 全テストが通ることを確認する**
 
 Run: `.\myvenv313\Scripts\python.exe -m pytest tests/ -v`
 Expected: PASS（全62件）
 
-- [ ] **Step 5: アプリを起動して動作を確認する**
+- [ ] **Step 7: アプリを起動して動作を確認する**
 
 Run: `.\myvenv313\Scripts\streamlit.exe run rag_chat_app.py`
 
@@ -2263,10 +2288,10 @@ Run: `.\myvenv313\Scripts\streamlit.exe run rag_chat_app.py`
 4. 「今日の天気は」と質問し、参考情報が表示されないこと
 5. 「差分を取り込む」を押し、数秒で「スキップ: 8ファイル」と表示されること
 
-- [ ] **Step 6: コミットする**
+- [ ] **Step 8: コミットする**
 
 ```bash
-git add rag_chat_app.py tests/test_app_helpers.py
+git add ingest/prompting.py rag_chat_app.py tests/test_prompting.py
 git commit -m "feat: add RAG chat UI with document citations
 
 Retrieved passages carry their file and page into the prompt so the model
