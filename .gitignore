@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# 仮想環境
+myvenv/
+myvenv313/
+
+# ベクトルDB（source からいつでも再生成できるため追跡しない）
+chroma_db/
+
+# 取り込み対象の原本（バイナリが大きく、内容も配布対象ではない）
+source/
+
+# ツールの作業ディレクトリ
+.playwright-mcp/
