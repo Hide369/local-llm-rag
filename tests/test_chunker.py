@@ -23,6 +23,19 @@ def test_long_unit_is_split():
     assert all(len(c.text) <= CHUNK_SIZE for c in chunks)
 
 
+def test_unit_at_exactly_chunk_size_is_not_split():
+    """CHUNK_SIZEちょうどは「800字以下」に含まれるため分割してはいけない境界値。"""
+    chunks = _chunk([_unit("あ" * CHUNK_SIZE)])
+    assert len(chunks) == 1
+    assert len(chunks[0].text) == CHUNK_SIZE
+
+
+def test_unit_one_char_over_chunk_size_is_split():
+    """CHUNK_SIZEを1字でも超えたら分割が必要になる境界値。off-by-oneの回帰を検知する。"""
+    chunks = _chunk([_unit("あ" * (CHUNK_SIZE + 1))])
+    assert len(chunks) >= 2
+
+
 def test_empty_unit_produces_no_chunk():
     assert _chunk([_unit("   ")]) == []
 
