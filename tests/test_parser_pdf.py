@@ -64,5 +64,44 @@ def test_ocr_threshold_is_30_characters():
     assert OCR_MIN_CHARS == 30
 
 
+def test_page_at_exactly_threshold_is_not_sent_to_ocr(tmp_path):
+    """しきい値ちょうど(30文字)はOCRへ回さず抽出テキストをそのまま使う。
+
+    ``if len(text) < OCR_MIN_CHARS`` が誤って ``<=`` に変わっても、
+    定数値だけを見る test_ocr_threshold_is_30_characters では検知できない。
+    この境界値テストで分岐の向きそのものを保証する。
+    """
+    # 抽出後の文字数を手計算で当てにせず、PDFへ書き込んだ文字列と同じ長さになる
+    # ことを実測済みのパターンで組み立てる（check_len3.py で 29/30 文字とも
+    # 抽出前後で完全一致することを確認済み）。
+    text = ("Boundary text " + "x" * OCR_MIN_CHARS)[:OCR_MIN_CHARS]
+    assert len(text) == OCR_MIN_CHARS
+    path = _make_pdf(tmp_path, [text])
+
+    def _fail(_page):
+        raise AssertionError("しきい値ちょうどのページでOCRを呼んではいけない")
+
+    units = parse_pdf(path, ocr_page=_fail)
+    assert len(units) == 1
+    assert units[0].text == text
+    assert units[0].ocr is False
+
+
+def test_page_one_under_threshold_is_sent_to_ocr(tmp_path):
+    """しきい値-1文字(29文字)は抽出テキストを捨ててOCRへ回す。
+
+    しきい値ちょうどのテストと対にすることで、境界の両側を分岐させる
+    ``<`` の向きを直接検証する。
+    """
+    text = ("Boundary text " + "x" * (OCR_MIN_CHARS - 1))[: OCR_MIN_CHARS - 1]
+    assert len(text) == OCR_MIN_CHARS - 1
+    path = _make_pdf(tmp_path, [text])
+
+    units = parse_pdf(path, ocr_page=lambda _page: "OCRフォールバック文字列")
+    assert len(units) == 1
+    assert units[0].text == "OCRフォールバック文字列"
+    assert units[0].ocr is True
+
+
 def test_dispatch_handles_pdf(text_pdf):
     assert parse(text_pdf)[0].location_type == "page"
