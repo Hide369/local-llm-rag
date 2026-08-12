@@ -120,7 +120,9 @@ def main() -> int:
         return 1
 
     collection = store.open_collection(chromadb.PersistentClient(path=str(DB_DIR)))
-    report = ingest_directory(args.source_dir, collection, on_progress=print)
+    report = ingest_directory(
+        args.source_dir, collection, on_progress=print, force=args.force
+    )
 
     print("\n--- 結果 ---")
     print(f"取り込み: {sum(report.indexed.values())}チャンク / {len(report.indexed)}ファイル")

@@ -1,9 +1,12 @@
+import sys
+
 import chromadb
 import pytest
 from docx import Document
 
 from ingest.embedder import EMBED_DIM
 from ingest.store import open_collection, stored_file_hash
+from scripts import ingest_source
 from scripts.ingest_source import file_hash, ingest_directory
 
 
@@ -142,3 +145,45 @@ def test_progress_is_reported_per_file(source_dir, collection):
     )
     assert any("a.docx" in m for m in messages)
     assert any("b.docx" in m for m in messages)
+
+
+class _FakeCollectionForMain:
+    def count(self):
+        return 0
+
+
+def test_main_forwards_force_flag_to_ingest_directory(tmp_path, monkeypatch):
+    """argparseが--forceを受け取っても、main()がingest_directoryへ渡さなければ
+    死んだフラグになる。Trueだけを確認するとforce=True決め打ちの実装でも通って
+    しまうため、--force省略時にFalseが渡ることも合わせて検証する。
+    実DBにもOllamaにも触れないよう、main()が呼ぶものはすべてスタブに差し替える。
+    """
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+
+    received_force = []
+
+    def _fake_ingest_directory(*_args, **kwargs):
+        received_force.append(kwargs.get("force"))
+        return ingest_source.IngestReport()
+
+    monkeypatch.setattr(ingest_source, "ingest_directory", _fake_ingest_directory)
+    monkeypatch.setattr(ingest_source.embedder, "check_ollama", lambda: None)
+    monkeypatch.setattr(
+        ingest_source.chromadb, "PersistentClient", lambda path: object()
+    )
+    monkeypatch.setattr(
+        ingest_source.store, "open_collection", lambda client: _FakeCollectionForMain()
+    )
+
+    monkeypatch.setattr(
+        sys, "argv", ["ingest_source.py", "--source-dir", str(source_dir), "--force"]
+    )
+    ingest_source.main()
+
+    monkeypatch.setattr(
+        sys, "argv", ["ingest_source.py", "--source-dir", str(source_dir)]
+    )
+    ingest_source.main()
+
+    assert received_force == [True, False]
