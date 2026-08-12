@@ -121,6 +121,18 @@ def test_format_table_labels_the_relaxed_group():
     assert "家電製品/UD-1100i.md" in table
 
 
+def test_relaxed_group_states_which_condition_fails():
+    """見出しが「条件を外すと合致」だけだと、モデルはこの群を読み違える。
+
+    実測では、26dBだが設置できない機種を尋ねられて「該当する製品はありません」と
+    答えた。表には該当機種が並んでいたので、欠けていたのは数値ではなく説明である。
+    """
+    product = Product(source="家電製品/UD-1100i.md", attributes={"noise_wash_db": 26})
+    table = format_table(QUIET_AND_SLIM, [], [("installation_depth_min_mm", [product])])
+    assert "installation_depth_min_mm 510以下" in table
+    assert "だけを満たさない" in table
+
+
 def test_format_table_says_none_when_nothing_matches():
     """空の表を渡すと、モデルは根拠が無いことに気づかず作り話を始める。"""
     assert "該当なし" in format_table({"noise_wash_db": {"$lte": 20}}, [], [])

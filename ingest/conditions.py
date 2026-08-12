@@ -9,6 +9,8 @@ LLMの呼び出しは ask として外から渡す。ここをモジュール内
 束縛すると、変換規則のテストに実機のOllamaが要るようになるため。
 """
 import json
+import re
+import unicodedata
 from dataclasses import dataclass, field
 
 from ingest.chunker import RESERVED_METADATA_KEYS
@@ -16,6 +18,9 @@ from ingest.chunker import RESERVED_METADATA_KEYS
 # ChromaDBの where がそのまま受け取れる演算子だけを許す。変換層を挟まずに済む。
 COMPARISONS = ("$lte", "$gte")
 EQUALITY = "$eq"
+
+# 質問文に書かれている数値。条件の値がここに無ければ、モデルが作った値である。
+_NUMBER = re.compile(r"\d+(?:\.\d+)?")
 
 
 @dataclass(frozen=True)
@@ -56,17 +61,42 @@ def available_keys(collection) -> dict[str, str]:
 
 
 def _prompt(question: str, schema: dict[str, str]) -> str:
+    """抽出プロンプト。文面は実測で決めている。
+
+    「向き」と「作らない」の2つを明記しているのは、llama3.1:8b が実際にその2つを
+    間違えたためである。防水パン510mmの質問で不等号を逆に取り、「できるだけ
+    大容量」という程度の表現から washing_capacity_kg ≥ 10 という質問文に無い
+    しきい値をでっち上げた。どちらも例外を出さずに誤った絞り込みになる。
+    """
     keys = "\n".join(f"- {key}（{kind}）" for key, kind in sorted(schema.items()))
     return (
         "次の質問から、資料を絞り込む条件だけを抜き出してJSONで答えてください。\n"
         "使ってよい属性は以下だけです。\n\n"
         f"{keys}\n\n"
         "演算子は $lte（以下）、$gte（以上）、$eq（一致）の3つだけを使ってください。\n"
-        '形式: {"属性名": {"演算子": 値}}\n'
+        '形式: {"属性名": {"演算子": 値}}\n\n'
+        "不等号の向きは、属性の値が製品側の値であることに注意して決めてください。\n"
+        "- 利用者が使える上限を述べている（設置できる寸法、これ以下の音、予算）"
+        "→ 製品側の値はその値以下なので $lte\n"
+        "- 利用者が求める下限を述べている（これ以上の容量がほしい）"
+        "→ 製品側の値はその値以上なので $gte\n\n"
+        "質問文に書かれていない値を条件にしないでください。"
+        "「大容量」「静か」「コンパクト」のような程度の表現だけでは条件になりません。\n"
+        "型番や製品名を挙げて1つの製品について尋ねている質問も、条件なしです。\n"
         "条件が読み取れない質問には {} と答えてください。\n"
         "説明は書かず、JSONだけを返してください。\n\n"
         f"質問: {question}"
     )
+
+
+def _normalise_operator(operator: str) -> str:
+    """先頭の $ の書き忘れを補う。
+
+    実測では、意味も値も正しく取れているのに $ だけが落ちた
+    {"lte": 26} が返り、条件が丸ごと捨てられた。許す演算子を増やすわけでは
+    ないので、_valid の判定はこの後もそのまま効く。
+    """
+    return operator if operator.startswith("$") else f"${operator}"
 
 
 def _valid(operator: str, value) -> bool:
@@ -77,7 +107,29 @@ def _valid(operator: str, value) -> bool:
     return operator == EQUALITY and isinstance(value, (int, float, str))
 
 
-def _sanitise(loaded: dict, schema: dict[str, str]) -> dict:
+def _grounded(value, question: str) -> bool:
+    """条件の値が質問文に実在することを確かめる。
+
+    実測では、型番だけを尋ねた質問に brand=Panasonic（コーパスに無いメーカー）を、
+    「できるだけ大容量」という程度の表現から washing_capacity_kg ≥ 10 という
+    書かれていないしきい値を作った。どちらも例外を出さず、条件に合う製品が
+    無いという誤った回答になる。プロンプトで禁じても消えなかったため、ここで落とす。
+
+    書かれていない条件を作られるより、読み取れずベクトル検索へ落ちるほうが安全である。
+    そのため「漢数字で書かれた数値を取りこぼす」側に倒している。
+    全角の数字は半角へ寄せてから照合する（NFKC）。日本語入力では普通に混ざるため。
+
+    数値は部分文字列ではなく数として突き合わせる。単純な部分一致にしたところ、
+    でっち上げられた 10 が質問文中の「510mm」に含まれてしまい素通りした。
+    数として比べれば 9 と 9.0 が同じものとして扱えるという利点もある。
+    """
+    haystack = unicodedata.normalize("NFKC", question)
+    if isinstance(value, str):
+        return value in haystack
+    return any(float(token) == float(value) for token in _NUMBER.findall(haystack))
+
+
+def _sanitise(loaded: dict, schema: dict[str, str], question: str) -> dict:
     """スキーマに無いキー・許可外の演算子・型の合わない値を1件ずつ捨てる。
 
     1つでも壊れていたら全部捨てる作りにはしない。2条件のうち片方だけが壊れて
@@ -88,8 +140,9 @@ def _sanitise(loaded: dict, schema: dict[str, str]) -> dict:
         if key not in schema or not isinstance(condition, dict):
             continue
         for operator, value in condition.items():
-            if _valid(operator, value):
-                conditions[key] = {operator: value}
+            normalised = _normalise_operator(operator)
+            if _valid(normalised, value) and _grounded(value, question):
+                conditions[key] = {normalised: value}
                 break
     return conditions
 
@@ -108,4 +161,4 @@ def extract(question: str, schema: dict[str, str], ask) -> Extraction:
         return Extraction(failed=True)
     if not isinstance(loaded, dict):
         return Extraction(failed=True)
-    return Extraction(conditions=_sanitise(loaded, schema))
+    return Extraction(conditions=_sanitise(loaded, schema, question))

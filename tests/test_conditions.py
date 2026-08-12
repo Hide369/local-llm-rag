@@ -75,6 +75,22 @@ def test_unknown_key_is_dropped():
     assert result.conditions == {}
 
 
+def test_operator_without_the_dollar_prefix_is_accepted():
+    """実測でllama3.1:8bは意味を正しく取れていても $ を落とすことがある。
+
+    26dBと510mmの質問で {"lte": 26} が返り、向きも値も合っているのに
+    形式だけを理由に両方の条件が捨てられ、絞り込みが丸ごと失われた。
+    """
+    result = extract("26dB以下は", SCHEMA, _answer('{"noise_wash_db": {"lte": 26}}'))
+    assert result.conditions == {"noise_wash_db": {"$lte": 26}}
+
+
+def test_unknown_operator_without_the_prefix_is_still_dropped():
+    """$ を補うのは書き忘れの救済であって、演算子を増やす話ではない。"""
+    result = extract("26dBより下", SCHEMA, _answer('{"noise_wash_db": {"lt": 26}}'))
+    assert result.conditions == {}
+
+
 def test_unknown_operator_is_dropped():
     result = extract("26dBより下", SCHEMA, _answer('{"noise_wash_db": {"$lt": 26}}'))
     assert result.conditions == {}
@@ -99,6 +115,50 @@ def test_one_broken_condition_does_not_discard_the_other():
     result = extract("26dBで80kg以下", SCHEMA, _answer(payload))
     assert result.conditions == {"noise_wash_db": {"$lte": 26}}
     assert result.failed is False
+
+
+def test_a_value_absent_from_the_question_is_dropped():
+    """実測でllama3.1:8bは、型番だけを尋ねた質問に brand=Panasonic を返した。
+
+    コーパスに存在しない値であり、通すと通常の質問が絞り込み経路へ流れて
+    「該当なし」と答えてしまう。プロンプトで禁じても直らなかった。
+    """
+    result = extract(
+        "UD-0900iの乾燥方式は何ですか", SCHEMA, _answer('{"price_tier": {"$eq": "Panasonic"}}')
+    )
+    assert result.conditions == {}
+    assert result.failed is False
+
+
+def test_a_threshold_absent_from_the_question_is_dropped():
+    """「できるだけ大容量」から washing_capacity_kg ≥ 10 を作った実測への対処。"""
+    payload = '{"noise_wash_db": {"$lte": 26}, "installation_depth_min_mm": {"$lte": 999}}'
+    result = extract("26dB以下の機種は", SCHEMA, _answer(payload))
+    assert result.conditions == {"noise_wash_db": {"$lte": 26}}
+
+
+def test_a_fabricated_number_hiding_inside_another_number_is_dropped():
+    """部分一致で照合すると、でっち上げた 10 が「510mm」に含まれて素通りする。
+
+    実測でモデルが作った条件がまさにこれで、数として突き合わせないと防げない。
+    """
+    payload = '{"washing_capacity_kg": {"$gte": 10}, "installation_depth_min_mm": {"$lte": 510}}'
+    result = extract("防水パン奥行きが510mmしかありません", SCHEMA, _answer(payload))
+    assert result.conditions == {"installation_depth_min_mm": {"$lte": 510}}
+
+
+def test_full_width_digits_in_the_question_still_match():
+    """日本語入力では全角数字が普通に混ざる。照合できないと黙って条件を失う。"""
+    result = extract("２６dB以下は", SCHEMA, _answer('{"noise_wash_db": {"$lte": 26}}'))
+    assert result.conditions == {"noise_wash_db": {"$lte": 26}}
+
+
+def test_a_whole_number_written_without_a_decimal_point_matches():
+    """9.0kg の属性に対して、質問には「9キログラム」としか書かれていない。"""
+    result = extract(
+        "洗濯容量が9キログラム以上は", SCHEMA, _answer('{"noise_wash_db": {"$gte": 9.0}}')
+    )
+    assert result.conditions == {"noise_wash_db": {"$gte": 9.0}}
 
 
 def test_empty_schema_does_not_call_the_llm():

@@ -75,9 +75,23 @@ def _describe(conditions: dict) -> str:
     return " / ".join(parts)
 
 
-def _row(product: Product) -> str:
+def _shown(key: str, value, conditions: dict) -> bool:
+    """比較に使える列だけを残す。
+
+    設計書6.4の表は型番と数値の列だけを並べている。全属性を出すと1行が8列になり、
+    20行の表で数値が180個ほど並ぶ。実測では、その表を渡された llama3.1:8b が
+    「1つだけ条件を満たさない機種」を挙げられなかった。brand は全製品で同じ値、
+    product_name は型番の言い換えであり、比較には何も足さない。
+    絞り込みに使われた属性は、文字列でも残す（price_tier のような一致条件のため）。
+    """
+    return key in conditions or key == "model_id" or isinstance(value, (int, float))
+
+
+def _row(product: Product, conditions: dict) -> str:
     attributes = " | ".join(
-        f"{key}={value}" for key, value in sorted(product.attributes.items())
+        f"{key}={value}"
+        for key, value in sorted(product.attributes.items())
+        if _shown(key, value, conditions)
     )
     return f"{product.source} | {attributes}"
 
@@ -90,11 +104,20 @@ def format_table(conditions: dict, matched: list[Product], relaxed: list) -> str
     """
     lines = [f"条件: {_describe(conditions)}", "", f"■ 全条件に合致（{len(matched)}件）"]
     if matched:
-        lines.extend(_row(product) for product in matched)
+        lines.extend(_row(product, conditions) for product in matched)
     else:
         lines.append("該当なし")
     for dropped, products in relaxed:
+        # 見出しが「条件を外すと合致」だけだったとき、モデルは「条件を満たさない
+        # 製品はありません」と、表と正反対のことを答えた。何を満たし何を満たさない
+        # かを書くと、その矛盾した断定は出なくなった。ただし llama3.1:8b は
+        # 依然として「同じ26dBだが設置できない機種は」という後半に答えられていない
+        # （設計書13節の限界。表の側の情報は正しく揃っている）。
+        condition = conditions.get(dropped)
+        described = _describe({dropped: condition}) if condition else dropped
         lines.append("")
-        lines.append(f"■ 「{dropped}」の条件を外すと合致（{len(products)}件）")
-        lines.extend(_row(product) for product in products)
+        lines.append(
+            f"■ 「{described}」だけを満たさない（他の条件は満たす）（{len(products)}件）"
+        )
+        lines.extend(_row(product, conditions) for product in products)
     return "\n".join(lines)
