@@ -21,6 +21,22 @@ CHUNK_OVERLAP = 100
 # 実測して決める方法）。
 MIN_CHUNK_CHARS = 10
 
+# チャンク自身が使うメタデータのキー。フロントマター由来の属性がこれらと
+# 同名だった場合は採用しない。source を上書きされると出典表示と差分取り込みの
+# ハッシュ判定が同時に壊れ、しかも例外が出ないため気づけない。
+RESERVED_METADATA_KEYS = frozenset(
+    {
+        "source",
+        "file_hash",
+        "location_type",
+        "location",
+        "ocr",
+        "heading",
+        "chunk_index",
+        "indexed_at",
+    }
+)
+
 # 日本語は空白で語が区切られないため、句読点を区切り候補に含める。
 # これがないと文の途中で不自然に切れて検索精度が落ちる。
 _SEPARATORS = ["\n\n", "\n", "。", "、", " ", ""]
@@ -70,6 +86,11 @@ def chunk_units(
                         "heading": unit.heading,
                         "chunk_index": index,
                         "indexed_at": indexed_at,
+                        **{
+                            key: value
+                            for key, value in unit.attributes.items()
+                            if key not in RESERVED_METADATA_KEYS
+                        },
                     },
                 )
             )
