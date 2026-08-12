@@ -147,6 +147,48 @@ def test_progress_is_reported_per_file(source_dir, collection):
     assert any("b.docx" in m for m in messages)
 
 
+def test_files_in_subdirectories_are_indexed(source_dir, collection):
+    """資料を分類して置けるようにする。iterdir のままでは中身に到達しない。"""
+    sub = source_dir / "家電製品"
+    sub.mkdir()
+    _write_docx(sub, "仕様.docx", "この製品の仕様書の本文がここにあります。")
+    report = ingest_directory(source_dir, collection, session=_FakeSession())
+    assert report.indexed == {"家電製品/仕様.docx": 1}
+
+
+def test_top_level_identifier_stays_the_bare_filename(source_dir, collection):
+    """既存279チャンクを再取り込みさせないための保証。
+
+    相対パスは直下のファイルではファイル名と一致するため、識別子は変わらない。
+    """
+    _write_docx(source_dir, "議事録.docx", "決定事項：RAGを導入するという結論です。")
+    report = ingest_directory(source_dir, collection, session=_FakeSession())
+    assert report.indexed == {"議事録.docx": 1}
+    assert stored_file_hash(collection, "議事録.docx") is not None
+
+
+def test_subdirectory_files_are_not_pruned_as_orphans(source_dir, collection):
+    """孤児判定を相対パスに揃え忘れると、毎回削除と再取り込みを繰り返す。"""
+    sub = source_dir / "家電製品"
+    sub.mkdir()
+    _write_docx(sub, "仕様.docx", "この製品の仕様書の本文がここにあります。")
+    ingest_directory(source_dir, collection, session=_FakeSession())
+    report = ingest_directory(source_dir, collection, session=_FakeSession())
+    assert report.removed == []
+    assert report.skipped == ["家電製品/仕様.docx"]
+
+
+def test_same_filename_in_two_folders_does_not_collide(source_dir, collection):
+    """ファイル名だけを識別子にすると、片方がもう片方を上書きしてしまう。"""
+    for folder in ("A", "B"):
+        directory = source_dir / folder
+        directory.mkdir()
+        _write_docx(directory, "仕様.docx", f"{folder}フォルダの仕様書の本文です。")
+    report = ingest_directory(source_dir, collection, session=_FakeSession())
+    assert set(report.indexed) == {"A/仕様.docx", "B/仕様.docx"}
+    assert collection.count() == 2
+
+
 class _FakeCollectionForMain:
     def count(self):
         return 0
