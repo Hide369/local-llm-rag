@@ -1,0 +1,68 @@
+import pytest
+
+from ingest.retrieval import Hit, search
+
+
+class _FakeCollection:
+    def __init__(self, documents, distances, metadatas):
+        self._payload = {
+            "documents": [documents],
+            "distances": [distances],
+            "metadatas": [metadatas],
+        }
+
+    def count(self):
+        return len(self._payload["documents"][0])
+
+    def query(self, query_embeddings, n_results):
+        return self._payload
+
+
+def _meta(source="a.pdf", location_type="page", location=48, ocr=False):
+    return {
+        "source": source,
+        "location_type": location_type,
+        "location": location,
+        "ocr": ocr,
+    }
+
+
+@pytest.fixture(autouse=True)
+def _no_real_embedding(monkeypatch):
+    monkeypatch.setattr("ingest.retrieval.embed_query", lambda _q, session=None: [0.1])
+
+
+def test_page_citation():
+    hit = Hit(text="本文", distance=0.1, metadata=_meta())
+    assert hit.citation == "a.pdf p.48"
+
+
+def test_slide_citation():
+    hit = Hit(text="本文", distance=0.1, metadata=_meta(location_type="slide", location=12))
+    assert hit.citation == "a.pdf スライド12"
+
+
+def test_document_citation_has_no_position():
+    hit = Hit(text="本文", distance=0.1, metadata=_meta(location_type="document", location=0))
+    assert hit.citation == "a.pdf"
+
+
+def test_ocr_hits_are_marked():
+    """OCR由来は小書き仮名が崩れることがあるため、根拠として示すときに明示する。"""
+    hit = Hit(text="本文", distance=0.1, metadata=_meta(ocr=True))
+    assert hit.citation == "a.pdf p.48（OCR）"
+
+
+def test_far_results_are_dropped():
+    collection = _FakeCollection(["近い", "遠い"], [0.10, 0.90], [_meta(), _meta()])
+    hits = search(collection, "質問", threshold=0.5)
+    assert [h.text for h in hits] == ["近い"]
+
+
+def test_empty_collection_returns_nothing():
+    assert search(_FakeCollection([], [], []), "質問", threshold=0.5) == []
+
+
+def test_hits_keep_their_distance():
+    collection = _FakeCollection(["本文"], [0.25], [_meta()])
+    assert search(collection, "質問", threshold=0.5)[0].distance == 0.25
