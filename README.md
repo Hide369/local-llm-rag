@@ -46,11 +46,26 @@ Ollamaインスタンスを別途用意する必要がある（例: `$env:OLLAMA
 .\myvenv313\Scripts\python.exe -m scripts.ingest_source
 
 # チャットを起動する
-.\myvenv313\Scripts\streamlit.exe run rag_chat_app.py
+.\myvenv313\Scripts\python.exe -m streamlit run rag_chat_app.py
 ```
 
 2回目以降はファイルのハッシュを見て変更分だけを処理するため数秒で終わる。
 UIサイドバーの「差分を取り込む」も同じ処理を呼ぶ。
+
+### コマンドは必ず `python.exe -m` 経由で実行すること
+
+`streamlit.exe` や `pytest.exe` のようなランチャーは、venv作成時のPython絶対パスを
+実行ファイル内部に焼き込む。そのためプロジェクトフォルダを移動・改名すると
+`Fatal error in launcher: Unable to create process using '...'` で起動しなくなる。
+
+`python.exe` は自身の位置から環境を解決するため移動の影響を受けない。
+`python.exe -m streamlit` の形ならランチャーを経由しないので常に動く。
+
+（このリポジトリの `myvenv313` は実際に `09_RAG_FineTuning\04_...` で作成された後に
+移動されており、`pyvenv.cfg` の `command` 行に当時のパスが残っている。
+`python.exe` と `pythonw.exe` 以外の `Scripts\*.exe` は現在すべて壊れている。
+`.exe` を使えるようにしたい場合は該当パッケージを
+`python.exe -m pip install --force-reinstall --no-deps <package>` で入れ直す。）
 
 ## 構成
 
