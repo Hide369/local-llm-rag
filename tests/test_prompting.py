@@ -31,6 +31,20 @@ def test_prompt_includes_citations_so_the_model_can_cite_them():
     assert "a.pdf p.48" in prompt
 
 
+def test_prompt_instructs_the_model_to_decline_when_hits_are_irrelevant():
+    """しきい値だけでは、挨拶のような意味的に空な入力を弾けない
+    （Task 9で実測・許容: 「こんにちは」が距離0.41前後でRELEVANCE_THRESHOLD=0.50を
+    すり抜け、無関係なチャンクが1件返る）。距離やUI側のフィルタでは解決できないため、
+    根拠が質問と無関係なら使わずにその旨を答えるよう、プロンプト自身がモデルに
+    指示する。この指示文が失われると、無関係な文書がそのまま回答として
+    復唱されてしまう（例: 「こんにちは」への回答にセミナー資料の挨拶スライドが
+    紛れ込む）ため、ここでロックしておく。
+    """
+    prompt = build_prompt("経費の上限は", [_hit()])
+    assert "無関係" in prompt
+    assert "回答できない旨" in prompt
+
+
 def test_report_counts_chunks_files_and_skips_separately():
     report = IngestReport(
         indexed={"a.pdf": 10, "b.pdf": 7}, skipped=["c.pptx"], failed={}, removed=["d.docx"]

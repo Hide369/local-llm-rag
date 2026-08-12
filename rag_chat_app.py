@@ -9,7 +9,7 @@ from pathlib import Path
 
 import chromadb
 import streamlit as st
-from openai import OpenAI
+from openai import APIError, OpenAI
 
 from ingest import embedder, store
 from ingest.prompting import build_prompt, format_report
@@ -93,18 +93,26 @@ if question:
         history = [{"role": "system", "content": system_prompt}] + history
 
     with st.chat_message("assistant"):
-        stream = client.chat.completions.create(
-            model=model, messages=history, temperature=temperature, stream=True
+        # 疎通確認をしないため、Ollama未起動やモデル名の誤りは生成時に初めて
+        # わかる。ingestボタンのエラー表示（st.sidebar.error）と同じ見せ方で、
+        # 生のトレースバックの代わりにチャット欄へ短いメッセージを出す。
+        answer = None
+        try:
+            stream = client.chat.completions.create(
+                model=model, messages=history, temperature=temperature, stream=True
+            )
+
+            def tokens():
+                for chunk in stream:
+                    if chunk.choices and chunk.choices[0].delta.content:
+                        yield chunk.choices[0].delta.content
+
+            answer = st.write_stream(tokens())
+            render_hits(hits)
+        except APIError as error:
+            st.error(f"回答を生成できませんでした: {error}")
+
+    if answer is not None:
+        st.session_state.messages.append(
+            {"role": "assistant", "content": answer, "hits": hits}
         )
-
-        def tokens():
-            for chunk in stream:
-                if chunk.choices and chunk.choices[0].delta.content:
-                    yield chunk.choices[0].delta.content
-
-        answer = st.write_stream(tokens())
-        render_hits(hits)
-
-    st.session_state.messages.append(
-        {"role": "assistant", "content": answer, "hits": hits}
-    )

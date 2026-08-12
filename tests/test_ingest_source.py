@@ -1,6 +1,5 @@
 import sys
 
-import chromadb
 import pytest
 from docx import Document
 
@@ -8,6 +7,7 @@ from ingest.embedder import EMBED_DIM
 from ingest.store import open_collection, stored_file_hash
 from scripts import ingest_source
 from scripts.ingest_source import file_hash, ingest_directory
+from tests.conftest import ephemeral_client
 
 
 @pytest.fixture
@@ -17,7 +17,7 @@ def collection():
     クリアしないとテストをまたいでデータが残る
     （tests/test_store.py と同じchromadbの既知の制約への対処）。
     """
-    client = chromadb.EphemeralClient()
+    client = ephemeral_client()
     yield open_collection(client)
     client.clear_system_cache()
 

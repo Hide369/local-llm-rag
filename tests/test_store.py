@@ -1,4 +1,3 @@
-import chromadb
 import pytest
 
 from ingest.embedder import EMBED_DIM
@@ -12,6 +11,7 @@ from ingest.store import (
     replace_source,
     stored_file_hash,
 )
+from tests.conftest import ephemeral_client
 
 
 @pytest.fixture
@@ -23,7 +23,7 @@ def collection():
     データが残ってしまう。chromadb自身のテストスイートに倣い、テストごとに
     system cacheをクリアして完全に独立させる。
     """
-    client = chromadb.EphemeralClient()
+    client = ephemeral_client()
     yield open_collection(client)
     client.clear_system_cache()
 
