@@ -1,4 +1,4 @@
-from ingest.prompting import build_prompt, format_report
+from ingest.prompting import build_catalog_prompt, build_prompt, format_report
 from ingest.retrieval import Hit
 from scripts.ingest_source import IngestReport
 
@@ -14,10 +14,6 @@ def _hit(text="本文", source="a.pdf", location=48):
             "ocr": False,
         },
     )
-
-
-def test_prompt_without_hits_is_the_bare_question():
-    assert build_prompt("経費の上限は", []) == "経費の上限は"
 
 
 def test_prompt_includes_retrieved_text():
@@ -61,3 +57,27 @@ def test_report_lists_failures():
     text = format_report(report)
     assert "壊れた.pdf" in text
     assert "読めません" in text
+
+
+def test_prompt_without_hits_tells_the_model_not_to_guess():
+    """根拠ゼロは最もハルシネーションが起きやすい場面である。ここで指示が
+    外れると、残るのは『あなたは有能なアシスタントです』だけになる。"""
+    prompt = build_prompt("今日の天気は", [])
+    assert prompt != "今日の天気は"
+    assert "社内文書" in prompt
+
+
+def test_prompt_without_hits_still_contains_the_question():
+    assert "今日の天気は" in build_prompt("今日の天気は", [])
+
+
+def test_catalog_prompt_contains_the_table_and_the_question():
+    prompt = build_catalog_prompt("26dB以下は", "■ 全条件に合致（1件）\nUD-1100iS.md")
+    assert "UD-1100iS.md" in prompt
+    assert "26dB以下は" in prompt
+
+
+def test_catalog_prompt_forbids_inventing_values():
+    """表に無い数値を補われると、絞り込みで正確にした意味が消える。"""
+    prompt = build_catalog_prompt("26dB以下は", "表")
+    assert "推測" in prompt
