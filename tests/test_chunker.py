@@ -1,4 +1,4 @@
-from ingest.chunker import CHUNK_SIZE, chunk_units
+from ingest.chunker import CHUNK_SIZE, MIN_CHUNK_CHARS, chunk_units
 from ingest.models import ParsedUnit
 
 
@@ -12,9 +12,10 @@ def _chunk(units):
 
 def test_short_unit_becomes_exactly_one_chunk():
     """議事録のような800字未満の文書は分割せず1つの文脈として保つ。"""
-    chunks = _chunk([_unit("短い本文")])
+    text = "本日の会議では今後のプロジェクト方針について話し合いました。"
+    chunks = _chunk([_unit(text)])
     assert len(chunks) == 1
-    assert chunks[0].text == "短い本文"
+    assert chunks[0].text == text
 
 
 def test_long_unit_is_split():
@@ -40,10 +41,39 @@ def test_empty_unit_produces_no_chunk():
     assert _chunk([_unit("   ")]) == []
 
 
+def test_punctuation_only_unit_produces_no_chunk():
+    """句読点だけのチャンクは埋め込むとコーパスの重心付近に位置し、挨拶のような
+    意味的に空な入力の最近傍になって紛れ込んでしまうため、そもそも作らない。"""
+    assert _chunk([_unit("。")]) == []
+
+
+def test_unit_under_min_chars_is_dropped():
+    """MIN_CHUNK_CHARS未満の境界値。9字は検索の役に立たないため捨てる。"""
+    assert _chunk([_unit("あ" * (MIN_CHUNK_CHARS - 1))]) == []
+
+
+def test_unit_at_min_chars_is_kept():
+    """MIN_CHUNK_CHARSちょうどの境界値。10字は残す。"""
+    text = "あ" * MIN_CHUNK_CHARS
+    chunks = _chunk([_unit(text)])
+    assert len(chunks) == 1
+    assert chunks[0].text == text
+
+
+def test_split_tail_fragment_of_only_punctuation_is_dropped():
+    """長い文書を分割した結果、末尾に「。」だけの断片が残ることがある。
+    分割由来でも素通りでも同じ基準で捨てないと、断片だけ検索を汚染する。"""
+    text = "あ" * (CHUNK_SIZE + 1) + "。"
+    chunks = _chunk([_unit(text)])
+    assert all(len(c.text) >= MIN_CHUNK_CHARS for c in chunks)
+    assert "。" not in [c.text for c in chunks]
+
+
 def test_id_is_deterministic():
     """同じ資料を再取り込みしても同じIDになり、重複登録が起きない。"""
-    first = _chunk([_unit("本文", location=48)])
-    second = _chunk([_unit("本文", location=48)])
+    text = "議事録の本文として十分な長さのある文章です。"
+    first = _chunk([_unit(text, location=48)])
+    second = _chunk([_unit(text, location=48)])
     assert first[0].id == second[0].id == "a.pdf::page48::0"
 
 
@@ -67,7 +97,7 @@ def test_ocr_flag_is_carried_into_every_chunk():
 
 
 def test_metadata_contains_source_hash_and_date():
-    chunk = _chunk([_unit("本文")])[0]
+    chunk = _chunk([_unit("メタデータの伝播を確認するための本文です。")])[0]
     assert chunk.metadata["source"] == "a.pdf"
     assert chunk.metadata["file_hash"] == "abc123"
     assert chunk.metadata["indexed_at"] == "2026-08-11"
@@ -75,7 +105,12 @@ def test_metadata_contains_source_hash_and_date():
 
 def test_units_are_processed_independently():
     """ページをまたいで結合しない。混ざるとページ番号が特定できなくなる。"""
-    chunks = _chunk([_unit("一ページ目", location=1), _unit("二ページ目", location=2)])
+    chunks = _chunk(
+        [
+            _unit("これは一ページ目に記載されている内容です。", location=1),
+            _unit("これは二ページ目に記載されている内容です。", location=2),
+        ]
+    )
     assert len(chunks) == 2
     assert chunks[0].metadata["location"] == 1
     assert chunks[1].metadata["location"] == 2

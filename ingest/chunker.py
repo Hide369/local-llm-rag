@@ -11,6 +11,16 @@ from ingest.models import Chunk, ParsedUnit
 CHUNK_SIZE = 800
 CHUNK_OVERLAP = 100
 
+# 内容がなさすぎるチャンクは検索の役に立たないだけでなく、実害がある。
+# 実測（scripts/check_retrieval.py, bge-m3 / 280チャンク）で、句読点1字だけの
+# チャンク（'。'）が埋め込まれてDBに残っており、その位置がコーパスの重心付近
+# だったため、「こんにちは」のような意味的に空な入力の最近傍として必ず
+# ヒットしてしまっていた。コーパス中で最短の意味あるチャンクは15字
+# （'。 横展開：コア構成はそのまま'）、内容のないチャンクは1字（'。'）のみ
+# だったため、両者の間に余裕を持って10を採る（RELEVANCE_THRESHOLDと同じ、
+# 実測して決める方法）。
+MIN_CHUNK_CHARS = 10
+
 # 日本語は空白で語が区切られないため、句読点を区切り候補に含める。
 # これがないと文の途中で不自然に切れて検索精度が落ちる。
 _SEPARATORS = ["\n\n", "\n", "。", "、", " ", ""]
@@ -23,10 +33,14 @@ _splitter = RecursiveCharacterTextSplitter(
 
 
 def _split(text: str) -> list[str]:
-    """800字以下はそのまま返す。分割器を通すと余計な境界調整が入るため。"""
-    if len(text) <= CHUNK_SIZE:
-        return [text]
-    return [part for part in _splitter.split_text(text) if part.strip()]
+    """800字以下はそのまま返す。分割器を通すと余計な境界調整が入るため。
+
+    素通りでも分割器を通した後でも、最後に必ずMIN_CHUNK_CHARS未満を捨てる。
+    分割の副産物として句読点だけの断片が末尾に残ることがあり、素通りする
+    3字の文書も分割で生じる3字の断片も、検索に使えないという点で同じだから。
+    """
+    parts = [text] if len(text) <= CHUNK_SIZE else _splitter.split_text(text)
+    return [part for part in parts if len(part.strip()) >= MIN_CHUNK_CHARS]
 
 
 def chunk_units(

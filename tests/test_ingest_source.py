@@ -91,9 +91,9 @@ def test_unchanged_file_is_skipped_on_second_run(source_dir, collection):
 
 
 def test_changed_file_is_reindexed(source_dir, collection):
-    _write_docx(source_dir, "議事録.docx", "初版の本文")
+    _write_docx(source_dir, "議事録.docx", "初版として作成した本文がここに入っています。")
     ingest_directory(source_dir, collection, session=_FakeSession())
-    _write_docx(source_dir, "議事録.docx", "改訂された本文")
+    _write_docx(source_dir, "議事録.docx", "内容を修正した本文がここに新しく入っています。")
     report = ingest_directory(source_dir, collection, session=_FakeSession())
     assert report.indexed == {"議事録.docx": 1}
     assert stored_file_hash(collection, "議事録.docx") == file_hash(
@@ -102,7 +102,7 @@ def test_changed_file_is_reindexed(source_dir, collection):
 
 
 def test_force_reindexes_even_when_unchanged(source_dir, collection):
-    _write_docx(source_dir, "議事録.docx", "本文")
+    _write_docx(source_dir, "議事録.docx", "強制再取り込みの確認に使う本文です。")
     ingest_directory(source_dir, collection, session=_FakeSession())
     report = ingest_directory(source_dir, collection, session=_FakeSession(), force=True)
     assert report.indexed == {"議事録.docx": 1}
@@ -110,8 +110,8 @@ def test_force_reindexes_even_when_unchanged(source_dir, collection):
 
 
 def test_deleted_file_is_pruned(source_dir, collection):
-    _write_docx(source_dir, "残す.docx", "本文")
-    path = _write_docx(source_dir, "消す.docx", "本文")
+    _write_docx(source_dir, "残す.docx", "この資料は削除テストで残す側の本文です。")
+    path = _write_docx(source_dir, "消す.docx", "この資料は削除テストで消す側の本文です。")
     ingest_directory(source_dir, collection, session=_FakeSession())
     path.unlink()
     report = ingest_directory(source_dir, collection, session=_FakeSession())
@@ -126,7 +126,7 @@ def test_unsupported_files_are_ignored(source_dir, collection):
 
 
 def test_one_broken_file_does_not_stop_the_others(source_dir, collection):
-    _write_docx(source_dir, "正常.docx", "読める本文")
+    _write_docx(source_dir, "正常.docx", "これは正常に読み込める本文です。")
     (source_dir / "壊れた.docx").write_bytes(b"this is not a docx")
     report = ingest_directory(source_dir, collection, session=_FakeSession())
     assert report.indexed == {"正常.docx": 1}
