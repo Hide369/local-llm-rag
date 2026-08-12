@@ -10,10 +10,11 @@ from ingest.embedder import embed_query
 SEARCH_RESULT_COUNT = 4
 
 # 検索結果を採用するcosine距離のしきい値（0に近いほど類似）。
-# scripts/check_retrieval.py の実測（bge-m3 / 280チャンク）:
+# scripts/check_retrieval.py の実測（bge-m3 / 279チャンク。MIN_CHUNK_CHARS導入で
+# 内容のない1字チャンクを取り除いた後の再測定）:
 #   関連する質問の最大距離 = 0.459、圏外の質問の最小距離 = 0.549
 # この2つの間を取っている。扱う資料を入れ替えたら再度実測して調整すること。
-# 挨拶のような意味的に空な入力（実測 0.386〜0.405）は距離では切り分けられない。
+# 挨拶のような意味的に空な入力（実測 0.412〜0.436）は距離では切り分けられない。
 # コーパスの重心付近に落ちるためで、これは ingest/prompting.py の
 # 「根拠がなければ答えない」プロンプトが受け持つ。
 RELEVANCE_THRESHOLD = 0.50
