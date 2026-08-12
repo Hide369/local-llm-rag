@@ -18,12 +18,13 @@ class _FakeCollection:
         return self._payload
 
 
-def _meta(source="a.pdf", location_type="page", location=48, ocr=False):
+def _meta(source="a.pdf", location_type="page", location=48, ocr=False, heading=""):
     return {
         "source": source,
         "location_type": location_type,
         "location": location,
         "ocr": ocr,
+        "heading": heading,
     }
 
 
@@ -44,6 +45,30 @@ def test_slide_citation():
 
 def test_document_citation_has_no_position():
     hit = Hit(text="本文", distance=0.1, metadata=_meta(location_type="document", location=0))
+    assert hit.citation == "a.pdf"
+
+
+def test_section_citation_shows_the_heading():
+    hit = Hit(
+        text="本文",
+        distance=0.1,
+        metadata=_meta(
+            source="家電製品/UD-0900i_spec_step3.md",
+            location_type="section",
+            location=3,
+            heading="設置情報",
+        ),
+    )
+    assert hit.citation == "家電製品/UD-0900i_spec_step3.md ＞ 設置情報"
+
+
+def test_section_without_a_heading_shows_only_the_file():
+    """見出しのないMarkdownでは、空の『＞』を出さない。"""
+    hit = Hit(
+        text="本文",
+        distance=0.1,
+        metadata=_meta(location_type="section", location=1, heading=""),
+    )
     assert hit.citation == "a.pdf"
 
 

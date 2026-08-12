@@ -28,7 +28,10 @@ class Hit:
 
     @property
     def citation(self) -> str:
-        """「ファイル名 p.48（OCR）」の形式で出典を組み立てる。"""
+        """「ファイル名 p.48（OCR）」の形式で出典を組み立てる。
+
+        出典整形はここが唯一の置き場所である。位置種別を増やすときはこのメソッドだけを直す。
+        """
         source = self.metadata.get("source", "")
         location_type = self.metadata.get("location_type")
         location = self.metadata.get("location")
@@ -36,6 +39,11 @@ class Hit:
             source = f"{source} p.{location}"
         elif location_type == "slide":
             source = f"{source} スライド{location}"
+        elif location_type == "section":
+            # 見出し文字列で示す。通し番号（location）は利用者にとって意味がない。
+            heading = self.metadata.get("heading")
+            if heading:
+                source = f"{source} ＞ {heading}"
         if self.metadata.get("ocr"):
             source = f"{source}（OCR）"
         return source
