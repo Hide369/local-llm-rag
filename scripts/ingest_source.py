@@ -38,20 +38,30 @@ def file_hash(path: Path) -> str:
     return digest[:16]
 
 
-def _target_files(source_dir: Path) -> list[Path]:
+def _normalise_suffix(suffix: str) -> str:
+    """先頭のドットの有無を問わない。--only-suffix md と .md を同じに扱う。"""
+    lowered = suffix.strip().lower()
+    return lowered if lowered.startswith(".") else f".{lowered}"
+
+
+def _target_files(source_dir: Path, only_suffix: str | None = None) -> list[Path]:
     """サブフォルダも含めて対象ファイルを集める。
 
     資料を分類して置けるようにするため再帰する。対象外の拡張子はここで落とすので、
     source/ に雑多なファイルが増えてもパーサーには渡らない。
     ~$ で始まるファイルはOfficeが編集中に作る一時ファイル（ロックファイル）なので、
     対応拡張子でも除外する。含めるとPermissionErrorで取り込みが失敗扱いになる。
+    only_suffix を渡すとさらにその拡張子だけへ絞る。フロントマターの追加のように
+    Markdownだけを取り直したいとき、OCRを含む全量再処理（約24分）を避けるため。
     """
+    wanted = _normalise_suffix(only_suffix) if only_suffix else None
     return sorted(
         path
         for path in source_dir.rglob("*")
         if path.is_file()
         and path.suffix.lower() in SUPPORTED_SUFFIXES
         and not path.name.startswith("~$")
+        and (wanted is None or path.suffix.lower() == wanted)
     )
 
 
@@ -72,6 +82,7 @@ def ingest_directory(
     session=None,
     on_progress=None,
     force: bool = False,
+    only_suffix: str | None = None,
 ) -> IngestReport:
     """source_dir を走査し、変更のあった資料だけを取り込む。"""
     report = IngestReport()
@@ -81,7 +92,7 @@ def ingest_directory(
     today = date.today().isoformat()
 
     try:
-        files = _target_files(source_dir)
+        files = _target_files(source_dir, only_suffix)
         for path in files:
             source = _source_key(path, source_dir)
             current_hash = file_hash(path)
@@ -108,11 +119,14 @@ def ingest_directory(
             notify(f"完了: {source}（{len(chunks)}チャンク）")
 
         # source/ を唯一の入力とするため、消えた資料はDBからも消す。
-        report.removed = store.delete_orphans(
-            collection, {_source_key(path, source_dir) for path in files}
-        )
-        for source in report.removed:
-            notify(f"削除（source/にありません）: {source}")
+        # ただし部分取り込みのときは行わない。対象外の拡張子のファイルが
+        # すべて孤児と判定され、他形式のチャンクが丸ごと消えるため。
+        if only_suffix is None:
+            report.removed = store.delete_orphans(
+                collection, {_source_key(path, source_dir) for path in files}
+            )
+            for source in report.removed:
+                notify(f"削除（source/にありません）: {source}")
     finally:
         if own_session:
             session.close()
@@ -125,6 +139,10 @@ def main() -> int:
     parser.add_argument("--source-dir", type=Path, default=DEFAULT_SOURCE_DIR)
     parser.add_argument(
         "--force", action="store_true", help="変更がなくても再取り込みする"
+    )
+    parser.add_argument(
+        "--only-suffix",
+        help="この拡張子のファイルだけを対象にする（例 .md）。指定時は孤児削除を行わない",
     )
     args = parser.parse_args()
 
@@ -141,7 +159,11 @@ def main() -> int:
 
     collection = store.open_collection(chromadb.PersistentClient(path=str(DB_DIR)))
     report = ingest_directory(
-        args.source_dir, collection, on_progress=print, force=args.force
+        args.source_dir,
+        collection,
+        on_progress=print,
+        force=args.force,
+        only_suffix=args.only_suffix,
     )
 
     print("\n--- 結果 ---")
