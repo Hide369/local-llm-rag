@@ -113,7 +113,7 @@ def main() -> int:
         return 1
 
     try:
-        # 260チャンクの処理を始めてから落ちないよう、先に疎通を確認する。
+        # 279チャンクの処理を始めてから落ちないよう、先に疎通を確認する。
         embedder.check_ollama()
     except embedder.EmbeddingError as error:
         print(error)
