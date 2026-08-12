@@ -3,10 +3,10 @@ import requests
 
 import ingest.embedder as embedder
 from ingest.embedder import (
+    DEFAULT_OLLAMA_HOST,
     EMBED_BATCH_SIZE,
     EMBED_DIM,
     EMBED_MODEL,
-    OLLAMA_HOST,
     EmbeddingError,
     check_ollama,
     embed_query,
@@ -53,9 +53,19 @@ def _vectors(count):
 
 
 def test_host_never_uses_localhost():
-    """Windowsでは localhost 解決に約2.1秒かかる。127.0.0.1 なら約80ms。"""
-    assert "localhost" not in OLLAMA_HOST
-    assert "127.0.0.1" in OLLAMA_HOST
+    """Windowsでは localhost 解決に約2.1秒かかる。127.0.0.1 なら約80ms。
+
+    OLLAMA_HOST ではなく既定値を検査する。前者は環境変数で上書きされるため、
+    実行環境によってテスト結果が変わってしまう。
+    """
+    assert "localhost" not in DEFAULT_OLLAMA_HOST
+    assert "127.0.0.1" in DEFAULT_OLLAMA_HOST
+
+
+def test_default_port_matches_ollamas_own_default():
+    """Ollamaはインストール直後 11434 で待ち受ける。既定値をそこに合わせておかないと、
+    環境変数を設定し忘れた利用者が全員「接続できません」で詰まる。"""
+    assert DEFAULT_OLLAMA_HOST == "http://127.0.0.1:11434"
 
 
 def test_uses_bge_m3(monkeypatch):

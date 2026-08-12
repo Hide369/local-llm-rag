@@ -6,27 +6,25 @@ PDF・PowerPoint・Word を完全ローカルでベクトルDBに取り込み、
 ## 必要なもの
 
 - Python 3.13（`myvenv313`）
-- Ollama
+- Ollama（インストール直後の標準ポート `http://127.0.0.1:11434` で待ち受けていること）
 - モデル: `ollama pull bge-m3` と `ollama pull llama3.1:8b`
 
-### Ollamaの待ち受けポートについて（重要）
+### Ollamaの待ち受けポートについて
 
-このプロジェクトの既定値は `http://127.0.0.1:12000` で、`ingest/embedder.py` の
-`OLLAMA_HOST` もこの値がデフォルトになっている。しかしOllamaは通常
-**`http://127.0.0.1:11434`**（インストール直後の標準ポート）で待ち受ける。
+`ingest/embedder.py` の `DEFAULT_OLLAMA_HOST` はOllamaの標準ポート
+`http://127.0.0.1:11434` に合わせてあるため、通常は何も設定せずに動く。
+`ollama list` が応答すれば、そのOllamaに接続できる。
 
-Ollamaを標準ポートのまま使っている場合は、`scripts/ingest_source.py` や
-`rag_chat_app.py` を実行するコマンドの前で環境変数 `OLLAMA_HOST` を実際の待ち受け先に
-合わせること。
+標準以外のポートで動かしている場合のみ、環境変数 `OLLAMA_HOST` で上書きする。
+`http://` から書くこと（コードはこの値をそのままURLに埋め込む）。
 
 ```powershell
-$env:OLLAMA_HOST="http://127.0.0.1:11434"
+$env:OLLAMA_HOST="http://127.0.0.1:12000"
 .\myvenv313\Scripts\python.exe -m scripts.ingest_source
 ```
 
-`OLLAMA_HOST` を設定しなければ既定値の12000番ポートに接続しにいき、Ollamaが起動して
-いても「Ollamaに接続できません」というエラーになる。ここで詰まる人が最も多いと想定される
-ため、必ず自分の環境のOllamaの待ち受けポートを確認してから実行すること。
+`localhost` は使わないこと。Windowsでは先にIPv6の `::1` に解決され、
+1リクエストあたり約2.1秒を浪費する（`127.0.0.1` なら約80ms）。
 
 なお `udemy1.py`〜`udemy3.py` は教材オリジナルのコードで `http://localhost:12000` を
 直接埋め込んでおり、環境変数を読まない。これらを動かす場合は12000番で待ち受ける
@@ -82,6 +80,7 @@ UIサイドバーの「差分を取り込む」も同じ処理を呼ぶ。
 | `OCR_MIN_CHARS` | 30 | `ingest/parsers/pdf_parser.py` |
 | `OCR_DPI` | 200 | `ingest/ocr.py` |
 | `EMBED_BATCH_SIZE` | 8 | `ingest/embedder.py` |
+| `DEFAULT_OLLAMA_HOST` | `http://127.0.0.1:11434` | `ingest/embedder.py` |
 | `RELEVANCE_THRESHOLD` | 0.50 | `ingest/retrieval.py` |
 
 ## テスト
