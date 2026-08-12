@@ -1,7 +1,7 @@
 """source/ 配下の資料をベクトルDBへ取り込むCLI。
 
-初回はOCR23ページと埋め込み279件でおよそ13分かかる。Streamlitのボタンで
-13分ブロックするのは現実的でないため、初回はこのCLIから実行する。
+初回はOCR23ページを含む38ファイル・460チャンクの処理でおよそ24分かかる。
+Streamlitのボタンで24分ブロックするのは現実的でないため、初回はこのCLIから実行する。
 
 1ファイル処理するごとにDBへ書き込む。全ファイル分をまとめて書き込むと、
 12分経過時点の失敗ですべてを失う。ファイル単位で保存しておけば、再実行時に
@@ -43,11 +43,15 @@ def _target_files(source_dir: Path) -> list[Path]:
 
     資料を分類して置けるようにするため再帰する。対象外の拡張子はここで落とすので、
     source/ に雑多なファイルが増えてもパーサーには渡らない。
+    ~$ で始まるファイルはOfficeが編集中に作る一時ファイル（ロックファイル）なので、
+    対応拡張子でも除外する。含めるとPermissionErrorで取り込みが失敗扱いになる。
     """
     return sorted(
         path
         for path in source_dir.rglob("*")
-        if path.is_file() and path.suffix.lower() in SUPPORTED_SUFFIXES
+        if path.is_file()
+        and path.suffix.lower() in SUPPORTED_SUFFIXES
+        and not path.name.startswith("~$")
     )
 
 
@@ -129,7 +133,7 @@ def main() -> int:
         return 1
 
     try:
-        # 279チャンクの処理を始めてから落ちないよう、先に疎通を確認する。
+        # 460チャンクの処理を始めてから落ちないよう、先に疎通を確認する。
         embedder.check_ollama()
     except embedder.EmbeddingError as error:
         print(error)

@@ -106,6 +106,21 @@ def test_dispatch_handles_md(sample):
     assert parse(sample)[0].location_type == "section"
 
 
+def test_bom_prefixed_file_parses_the_same_as_without_bom(tmp_path):
+    """BOM付きでも \\ufeff が先頭行の '---' にくっつかず、フロントマター判定が
+    外れないことを確認する（外れると生YAMLがそのまま索引されてしまう）。"""
+    without_bom = _write(tmp_path, SAMPLE, name="without_bom.md")
+    with_bom_path = tmp_path / "with_bom.md"
+    with_bom_path.write_bytes(b"\xef\xbb\xbf" + without_bom.read_bytes())
+
+    units_without_bom = parse_md(without_bom)
+    units_with_bom = parse_md(with_bom_path)
+
+    assert [u.heading for u in units_with_bom] == [u.heading for u in units_without_bom]
+    assert [u.text for u in units_with_bom] == [u.text for u in units_without_bom]
+    assert all("model_id" not in u.text for u in units_with_bom)
+
+
 def test_heading_inside_a_code_fence_does_not_split(tmp_path):
     """コードブロック内の ## は見出しではない。誤分割しても例外は出ず静かに壊れる。"""
     fence = "`" * 3

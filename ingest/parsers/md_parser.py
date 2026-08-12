@@ -17,13 +17,18 @@ _FENCE = "```"
 
 
 def _read_lines(path: Path) -> list[str]:
-    """CRLFを正規化して行に分ける。
+    r"""CRLFを正規化して行に分ける。
 
     実データ30件はすべてCRLFであり、そのままだと見出し文字列の末尾に \r が残って
     出典が「＞ 設置情報\r」のように壊れる。encoding を省略しないのは、Windowsの
     既定が CP932 で日本語の読み込みに必ず失敗するため。
+
+    utf-8 ではなく utf-8-sig を使うのは、BOM付きファイルだとBOM文字（U+FEFF）が
+    先頭行の '---' にくっつき、_drop_frontmatter が先頭のフロントマター境界を
+    認識できず、フロントマターの生のYAMLがそのまま索引されてしまうため。
+    BOMなしのファイルはutf-8-sigでも同じ結果になるので、常にこちらを使ってよい。
     """
-    text = path.read_text(encoding="utf-8")
+    text = path.read_text(encoding="utf-8-sig")
     return text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
 
 
