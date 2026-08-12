@@ -114,3 +114,19 @@ def test_units_are_processed_independently():
     assert len(chunks) == 2
     assert chunks[0].metadata["location"] == 1
     assert chunks[1].metadata["location"] == 2
+
+
+def test_heading_is_empty_for_units_without_one():
+    """ページ由来のチャンクでもキー自体は存在させ、読み手が分岐を書かずに済むようにする。"""
+    chunks = _chunk([_unit("これは十分な長さのある本文です。")])
+    assert chunks[0].metadata["heading"] == ""
+
+
+def test_heading_is_carried_into_every_chunk():
+    """出典表示に使うため、分割されても全チャンクが見出しを保持する必要がある。"""
+    unit = ParsedUnit(
+        text="あ" * 2000, location_type="section", location=1, heading="設置情報"
+    )
+    chunks = _chunk([unit])
+    assert len(chunks) > 1
+    assert all(c.metadata["heading"] == "設置情報" for c in chunks)

@@ -1,7 +1,7 @@
 """source/ 配下の資料をベクトルDBへ取り込むCLI。
 
-初回はOCR23ページと埋め込み279件でおよそ13分かかる。Streamlitのボタンで
-13分ブロックするのは現実的でないため、初回はこのCLIから実行する。
+初回はOCR23ページを含む38ファイル・460チャンクの処理でおよそ24分かかる。
+Streamlitのボタンで24分ブロックするのは現実的でないため、初回はこのCLIから実行する。
 
 1ファイル処理するごとにDBへ書き込む。全ファイル分をまとめて書き込むと、
 12分経過時点の失敗ですべてを失う。ファイル単位で保存しておけば、再実行時に
@@ -39,11 +39,31 @@ def file_hash(path: Path) -> str:
 
 
 def _target_files(source_dir: Path) -> list[Path]:
+    """サブフォルダも含めて対象ファイルを集める。
+
+    資料を分類して置けるようにするため再帰する。対象外の拡張子はここで落とすので、
+    source/ に雑多なファイルが増えてもパーサーには渡らない。
+    ~$ で始まるファイルはOfficeが編集中に作る一時ファイル（ロックファイル）なので、
+    対応拡張子でも除外する。含めるとPermissionErrorで取り込みが失敗扱いになる。
+    """
     return sorted(
         path
-        for path in source_dir.iterdir()
-        if path.is_file() and path.suffix.lower() in SUPPORTED_SUFFIXES
+        for path in source_dir.rglob("*")
+        if path.is_file()
+        and path.suffix.lower() in SUPPORTED_SUFFIXES
+        and not path.name.startswith("~$")
     )
+
+
+def _source_key(path: Path, source_dir: Path) -> str:
+    """source/ からの相対パスを資料の識別子にする。
+
+    区切りはスラッシュに統一する。WindowsのバックスラッシュがそのままチャンクIDと
+    メタデータに入ると、環境をまたいだときに一致しなくなるため。
+    直下のファイルは相対パスがファイル名と一致するので、既存のチャンクの識別子は
+    変わらず、再取り込みは発生しない。
+    """
+    return path.relative_to(source_dir).as_posix()
 
 
 def ingest_directory(
@@ -63,7 +83,7 @@ def ingest_directory(
     try:
         files = _target_files(source_dir)
         for path in files:
-            source = path.name
+            source = _source_key(path, source_dir)
             current_hash = file_hash(path)
 
             if not force and store.stored_file_hash(collection, source) == current_hash:
@@ -89,7 +109,7 @@ def ingest_directory(
 
         # source/ を唯一の入力とするため、消えた資料はDBからも消す。
         report.removed = store.delete_orphans(
-            collection, {path.name for path in files}
+            collection, {_source_key(path, source_dir) for path in files}
         )
         for source in report.removed:
             notify(f"削除（source/にありません）: {source}")
@@ -113,7 +133,7 @@ def main() -> int:
         return 1
 
     try:
-        # 279チャンクの処理を始めてから落ちないよう、先に疎通を確認する。
+        # 460チャンクの処理を始めてから落ちないよう、先に疎通を確認する。
         embedder.check_ollama()
     except embedder.EmbeddingError as error:
         print(error)

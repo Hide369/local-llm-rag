@@ -38,10 +38,12 @@ st.sidebar.title("設定")
 
 model = st.sidebar.text_input("モデル名", value="llama3.1:8b")
 temperature = st.sidebar.slider("Temperature", 0.0, 1.0, 0.3, 0.1)
-system_prompt = st.sidebar.text_area(
-    "System Prompt",
-    f"あなたは有能なアシスタントです。今日の日付は{datetime.today():%Y年%m月%d日}です。"
-    "日本語で回答して下さい。",
+# サイドバーには出さない。利用者に編集させる項目ではないため。
+# 出典付き回答の指示は ingest/prompting.py が質問側に組み込む。ここは口調と
+# 日付だけを受け持ち、検索結果の扱い方の指示とは置き場所を分けている。
+SYSTEM_PROMPT = (
+    f"あなたは有能なアシスタントです。今日の日付は{datetime.today():%Y年%m月%d日}です。\n"
+    "日本語で回答して下さい。"
 )
 
 collection = get_collection(DB_DIR)
@@ -84,13 +86,14 @@ if question:
     st.session_state.messages.append({"role": "user", "content": question})
 
     hits = search(collection, question)
-    history = [
-        {"role": m["role"], "content": m["content"]}
-        for m in st.session_state.messages[:-1]
-    ] + [{"role": "user", "content": build_prompt(question, hits)}]
-
-    if system_prompt.strip():
-        history = [{"role": "system", "content": system_prompt}] + history
+    history = (
+        [{"role": "system", "content": SYSTEM_PROMPT}]
+        + [
+            {"role": m["role"], "content": m["content"]}
+            for m in st.session_state.messages[:-1]
+        ]
+        + [{"role": "user", "content": build_prompt(question, hits)}]
+    )
 
     with st.chat_message("assistant"):
         # 疎通確認をしないため、Ollama未起動やモデル名の誤りは生成時に初めて

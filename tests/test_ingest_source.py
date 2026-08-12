@@ -6,7 +6,7 @@ from docx import Document
 from ingest.embedder import EMBED_DIM
 from ingest.store import open_collection, stored_file_hash
 from scripts import ingest_source
-from scripts.ingest_source import file_hash, ingest_directory
+from scripts.ingest_source import _target_files, file_hash, ingest_directory
 from tests.conftest import ephemeral_client
 
 
@@ -34,6 +34,12 @@ def _write_docx(directory, name, body):
     doc.add_paragraph(body)
     doc.save(directory / name)
     return directory / name
+
+
+def _write_md(directory, name, text):
+    path = directory / name
+    path.write_text(text, encoding="utf-8")
+    return path
 
 
 class _FakeSession:
@@ -128,6 +134,17 @@ def test_unsupported_files_are_ignored(source_dir, collection):
     assert report.failed == {}
 
 
+def test_office_lock_files_are_not_picked_up(source_dir):
+    """Officeが編集中に作る ~$ 始まりの一時ファイルは、対応拡張子でも対象外にする。
+
+    実際に source/ に ~$生成AI活用セミナー.pptx が存在し、放置すると
+    PermissionError で取り込み全体が失敗扱いになる。"""
+    _write_docx(source_dir, "議事録.docx", "本文")
+    (source_dir / "~$議事録.docx").write_bytes(b"lock file placeholder")
+    files = _target_files(source_dir)
+    assert [path.name for path in files] == ["議事録.docx"]
+
+
 def test_one_broken_file_does_not_stop_the_others(source_dir, collection):
     _write_docx(source_dir, "正常.docx", "これは正常に読み込める本文です。")
     (source_dir / "壊れた.docx").write_bytes(b"this is not a docx")
@@ -145,6 +162,80 @@ def test_progress_is_reported_per_file(source_dir, collection):
     )
     assert any("a.docx" in m for m in messages)
     assert any("b.docx" in m for m in messages)
+
+
+def test_files_in_subdirectories_are_indexed(source_dir, collection):
+    """資料を分類して置けるようにする。iterdir のままでは中身に到達しない。"""
+    sub = source_dir / "家電製品"
+    sub.mkdir()
+    _write_docx(sub, "仕様.docx", "この製品の仕様書の本文がここにあります。")
+    report = ingest_directory(source_dir, collection, session=_FakeSession())
+    assert report.indexed == {"家電製品/仕様.docx": 1}
+
+
+def test_top_level_identifier_stays_the_bare_filename(source_dir, collection):
+    """既存279チャンクを再取り込みさせないための保証。
+
+    相対パスは直下のファイルではファイル名と一致するため、識別子は変わらない。
+    """
+    _write_docx(source_dir, "議事録.docx", "決定事項：RAGを導入するという結論です。")
+    report = ingest_directory(source_dir, collection, session=_FakeSession())
+    assert report.indexed == {"議事録.docx": 1}
+    assert stored_file_hash(collection, "議事録.docx") is not None
+
+
+def test_subdirectory_files_are_not_pruned_as_orphans(source_dir, collection):
+    """孤児判定を相対パスに揃え忘れると、毎回削除と再取り込みを繰り返す。"""
+    sub = source_dir / "家電製品"
+    sub.mkdir()
+    _write_docx(sub, "仕様.docx", "この製品の仕様書の本文がここにあります。")
+    ingest_directory(source_dir, collection, session=_FakeSession())
+    report = ingest_directory(source_dir, collection, session=_FakeSession())
+    assert report.removed == []
+    assert report.skipped == ["家電製品/仕様.docx"]
+
+
+def test_markdown_file_in_subdirectory_is_indexed_with_section_metadata(source_dir, collection):
+    """docxしか通していなかった構成（サブフォルダ×相対パスsource×sectionチャンクID×
+    heading メタデータ）をMarkdownで一気通貫に確認する。"""
+    sub = source_dir / "家電製品"
+    sub.mkdir()
+    text = (
+        "---\n"
+        "model_id: UD-0900i\n"
+        "---\n\n"
+        "# UD-0900i IoTコンパクト\n\n"
+        "## 機種概要\n\n"
+        "打田電器のUD-0900iは、洗濯容量9キログラムのコンパクトなIoTモデルです。\n\n"
+        "## 設置情報\n\n"
+        "外形寸法は幅598ミリメートル、奥行き700ミリメートルです。\n"
+    )
+    _write_md(sub, "spec.md", text)
+
+    report = ingest_directory(source_dir, collection, session=_FakeSession())
+
+    source = "家電製品/spec.md"
+    assert report.indexed == {source: 2}
+
+    stored = collection.get(where={"source": source}, include=["metadatas"])
+    assert set(stored["ids"]) == {f"{source}::section1::0", f"{source}::section2::0"}
+    headings_by_id = {
+        chunk_id: metadata["heading"]
+        for chunk_id, metadata in zip(stored["ids"], stored["metadatas"])
+    }
+    assert headings_by_id[f"{source}::section1::0"] == "機種概要"
+    assert headings_by_id[f"{source}::section2::0"] == "設置情報"
+
+
+def test_same_filename_in_two_folders_does_not_collide(source_dir, collection):
+    """ファイル名だけを識別子にすると、片方がもう片方を上書きしてしまう。"""
+    for folder in ("A", "B"):
+        directory = source_dir / folder
+        directory.mkdir()
+        _write_docx(directory, "仕様.docx", f"{folder}フォルダの仕様書の本文です。")
+    report = ingest_directory(source_dir, collection, session=_FakeSession())
+    assert set(report.indexed) == {"A/仕様.docx", "B/仕様.docx"}
+    assert collection.count() == 2
 
 
 class _FakeCollectionForMain:

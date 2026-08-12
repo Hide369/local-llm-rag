@@ -67,6 +67,7 @@ def chunk_units(
                         "location_type": unit.location_type,
                         "location": unit.location,
                         "ocr": unit.ocr,
+                        "heading": unit.heading,
                         "chunk_index": index,
                         "indexed_at": indexed_at,
                     },

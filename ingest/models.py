@@ -1,6 +1,6 @@
 """取り込みパイプライン全体で共有するデータ構造。
 
-各パーサーはPDF・PPTX・DOCXの違いをすべて ParsedUnit に吸収する。
+各パーサーはPDF・PPTX・DOCX・Markdownの違いをすべて ParsedUnit に吸収する。
 これにより後続のチャンク分割・埋め込み・保存は元の形式を知る必要がない。
 """
 from dataclasses import dataclass, field
@@ -9,24 +9,20 @@ from dataclasses import dataclass, field
 PAGE = "page"
 SLIDE = "slide"
 DOCUMENT = "document"
-
-_LABEL_FORMATS = {PAGE: "p.{}", SLIDE: "スライド{}"}
+SECTION = "section"
 
 
 @dataclass(frozen=True)
 class ParsedUnit:
-    """パーサーが返す最小単位。1ページ、1スライド、または文書全体。"""
+    """パーサーが返す最小単位。1ページ、1スライド、1見出し、または文書全体。"""
 
     text: str
     location_type: str
     location: int
     ocr: bool = False
-
-    @property
-    def label(self) -> str:
-        """出典表示に使う位置ラベル。位置概念がない形式では空文字を返す。"""
-        fmt = _LABEL_FORMATS.get(self.location_type)
-        return fmt.format(self.location) if fmt else ""
+    # Markdownの見出し文字列。出典を「ファイル名 ＞ 設置情報」と表示するために運ぶ。
+    # 位置の一意性は location（通し番号）が持ち、heading は表示専用である。
+    heading: str = ""
 
 
 @dataclass(frozen=True)

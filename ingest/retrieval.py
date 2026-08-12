@@ -10,10 +10,13 @@ from ingest.embedder import embed_query
 SEARCH_RESULT_COUNT = 4
 
 # 検索結果を採用するcosine距離のしきい値（0に近いほど類似）。
-# scripts/check_retrieval.py の実測（bge-m3 / 279チャンク。MIN_CHUNK_CHARS導入で
-# 内容のない1字チャンクを取り除いた後の再測定）:
+# scripts/check_retrieval.py の実測（bge-m3 / 約460チャンク、うち家電製品仕様書
+# 181チャンク。社内文書と製品カタログが混在した状態で、機種の照会と条件による
+# 絞り込みの両方を含む質問で再測定した）:
 #   関連する質問の最大距離 = 0.459、圏外の質問の最小距離 = 0.549
-# この2つの間を取っている。扱う資料を入れ替えたら再度実測して調整すること。
+# 家電製品の質問はいずれも0.286〜0.361に収まり、279チャンク時点の最大・最小
+# （社内文書のみの質問由来）を更新しなかった。この2つの間を取っている。
+# 扱う資料を入れ替えたら再度実測して調整すること。
 # 挨拶のような意味的に空な入力（実測 0.412〜0.436）は距離では切り分けられない。
 # コーパスの重心付近に落ちるためで、これは ingest/prompting.py の
 # 「根拠がなければ答えない」プロンプトが受け持つ。
@@ -28,7 +31,10 @@ class Hit:
 
     @property
     def citation(self) -> str:
-        """「ファイル名 p.48（OCR）」の形式で出典を組み立てる。"""
+        """「ファイル名 p.48（OCR）」の形式で出典を組み立てる。
+
+        出典整形はここが唯一の置き場所である。位置種別を増やすときはこのメソッドだけを直す。
+        """
         source = self.metadata.get("source", "")
         location_type = self.metadata.get("location_type")
         location = self.metadata.get("location")
@@ -36,6 +42,11 @@ class Hit:
             source = f"{source} p.{location}"
         elif location_type == "slide":
             source = f"{source} スライド{location}"
+        elif location_type == "section":
+            # 見出し文字列で示す。通し番号（location）は利用者にとって意味がない。
+            heading = self.metadata.get("heading")
+            if heading:
+                source = f"{source} ＞ {heading}"
         if self.metadata.get("ocr"):
             source = f"{source}（OCR）"
         return source
