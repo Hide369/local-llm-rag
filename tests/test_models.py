@@ -1,24 +1,25 @@
-from ingest.models import Chunk, ParsedUnit
-
-
-def test_page_unit_label():
-    unit = ParsedUnit(text="本文", location_type="page", location=48)
-    assert unit.label == "p.48"
-
-
-def test_slide_unit_label():
-    unit = ParsedUnit(text="本文", location_type="slide", location=12)
-    assert unit.label == "スライド12"
-
-
-def test_document_unit_has_no_label():
-    """docxのようにページ概念を持たない形式では位置ラベルを出さない。"""
-    unit = ParsedUnit(text="本文", location_type="document", location=0)
-    assert unit.label == ""
+from ingest.models import SECTION, Chunk, ParsedUnit
 
 
 def test_unit_is_not_ocr_by_default():
     assert ParsedUnit(text="本文", location_type="page", location=1).ocr is False
+
+
+def test_unit_has_no_heading_by_default():
+    """ページやスライド由来のユニットは見出しを持たない。"""
+    assert ParsedUnit(text="本文", location_type="page", location=1).heading == ""
+
+
+def test_section_unit_keeps_its_heading():
+    """Markdownの見出しは出典表示に使うため、ユニットが運ぶ必要がある。"""
+    unit = ParsedUnit(
+        text="本文", location_type=SECTION, location=3, heading="設置情報"
+    )
+    assert unit.heading == "設置情報"
+
+
+def test_section_location_type_is_section():
+    assert SECTION == "section"
 
 
 def test_chunk_holds_id_text_and_metadata():
