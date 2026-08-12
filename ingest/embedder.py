@@ -79,7 +79,7 @@ def embed_query(text: str, session=None) -> list[float]:
 def check_ollama(session=None) -> None:
     """取り込み開始前の疎通確認。
 
-    260チャンクの処理を始めてから落ちるのを防ぐため、先に一度だけ確認する。
+    279チャンクの処理を始めてから落ちるのを防ぐため、先に一度だけ確認する。
     """
     own_session = session is None
     session = session or new_session()
