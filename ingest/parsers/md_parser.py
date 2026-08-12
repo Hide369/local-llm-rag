@@ -24,7 +24,7 @@ def _read_lines(path: Path) -> list[str]:
     既定が CP932 で日本語の読み込みに必ず失敗するため。
 
     utf-8 ではなく utf-8-sig を使うのは、BOM付きファイルだとBOM文字（U+FEFF）が
-    先頭行の '---' にくっつき、_drop_frontmatter が先頭のフロントマター境界を
+    先頭行の '---' にくっつき、_split_frontmatter が先頭のフロントマター境界を
     認識できず、フロントマターの生のYAMLがそのまま索引されてしまうため。
     BOMなしのファイルはutf-8-sigでも同じ結果になるので、常にこちらを使ってよい。
     """
@@ -32,29 +32,68 @@ def _read_lines(path: Path) -> list[str]:
     return text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
 
 
-def _drop_frontmatter(lines: list[str]) -> list[str]:
-    """先頭のYAMLフロントマターを取り除く。
+def _scalar(value: str):
+    """YAMLのスカラー値をPythonの型に直す。採用しない値には None を返す。
 
-    model_id と product_name はH1前置で全ユニットに行き渡り、その他の属性は
-    本文の散文が保持している。YAMLの生テキストを埋め込むより散文のほうが
-    日本語の質問との類似度が出るため、索引には入れない。
+    数値に見えるものを int / float にするのは、ChromaDB の where が
+    数値比較をするため。文字列のまま入れると $lte が黙って効かなくなる。
+    """
+    text = value.strip()
+    if not text or text.startswith("["):
+        return None  # 配列は where が部分一致を扱えず、実用にならない
+    try:
+        return int(text)
+    except ValueError:
+        pass
+    try:
+        return float(text)
+    except ValueError:
+        return text
+
+
+def _parse_attributes(lines: list[str]) -> dict:
+    """`key: value` の平らな行だけを拾う。
+
+    字下げされた行は入れ子の属性であり、平らなメタデータには載せられないので飛ばす。
+    """
+    attributes: dict = {}
+    for line in lines:
+        if line[:1].isspace():
+            continue
+        key, separator, value = line.partition(":")
+        if not separator:
+            continue
+        scalar = _scalar(value)
+        if key.strip() and scalar is not None:
+            attributes[key.strip()] = scalar
+    return attributes
+
+
+def _split_frontmatter(lines: list[str]) -> tuple[dict, list[str]]:
+    """先頭のYAMLフロントマターを属性として取り出し、本文と分けて返す。
+
+    フロントマターを埋め込みテキストに入れない判断は当初から変えていない。
+    YAMLの生テキストより散文のほうが日本語の質問との類似度が出るためである。
+    変えたのは「捨てる」ことのほうで、noise_wash_db は30製品中24製品で本文に
+    一度も現れず、捨てると索引から永久に失われることが実測で分かった。
     """
     if not lines or lines[0].strip() != "---":
-        return lines
+        return {}, lines
     for index in range(1, len(lines)):
         if lines[index].strip() == "---":
-            return lines[index + 1 :]
-    return lines  # 閉じられていないなら本文とみなす
+            return _parse_attributes(lines[1:index]), lines[index + 1 :]
+    return {}, lines  # 閉じられていないなら本文とみなす
 
 
 def parse_md(path: Path) -> list[ParsedUnit]:
+    attributes, body_lines = _split_frontmatter(_read_lines(path))
     title = ""
     sections: list[tuple[str, list[str]]] = []
     heading: str = ""
     body: list[str] = []
     in_fence = False
 
-    for line in _drop_frontmatter(_read_lines(path)):
+    for line in body_lines:
         if line.startswith(_FENCE):
             in_fence = not in_fence
         elif not in_fence:
@@ -81,6 +120,7 @@ def parse_md(path: Path) -> list[ParsedUnit]:
                 # チャンクIDが衝突するのを防ぐため、IDの一意性を文書構造に依存させない。
                 location=len(units) + 1,
                 heading=section_heading,
+                attributes=attributes,
             )
         )
     return units

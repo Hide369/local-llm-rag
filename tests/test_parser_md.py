@@ -5,6 +5,9 @@ from ingest.parsers.md_parser import parse_md
 
 SAMPLE = """---
 model_id: UD-0900i
+price_tier: スタンダード
+washing_capacity_kg: 9.0
+noise_wash_db: 27
 tags: [IoT, スマホ連携]
 ---
 
@@ -132,3 +135,54 @@ def test_heading_inside_a_code_fence_does_not_split(tmp_path):
     units = parse_md(_write(tmp_path, text))
     assert [u.heading for u in units] == ["手順"]
     assert "## これは見出しではない" in units[0].text
+
+
+def test_scalar_frontmatter_becomes_attributes(sample):
+    """noise_wash_db は30製品中24製品で本文に一度も現れない。
+    ここで拾わないと索引から永久に失われる。"""
+    units = parse_md(sample)
+    assert units[0].attributes["model_id"] == "UD-0900i"
+    assert units[0].attributes["price_tier"] == "スタンダード"
+
+
+def test_numeric_attributes_keep_numeric_types(sample):
+    """文字列のままだと ChromaDB の $lte が働かず、絞り込みが静かに失敗する。"""
+    attributes = parse_md(sample)[0].attributes
+    assert attributes["noise_wash_db"] == 27
+    assert isinstance(attributes["noise_wash_db"], int)
+    assert attributes["washing_capacity_kg"] == 9.0
+    assert isinstance(attributes["washing_capacity_kg"], float)
+
+
+def test_array_attributes_are_skipped(sample):
+    """ChromaDBのメタデータはスカラーしか持てず、where も部分一致を扱えない。"""
+    assert "tags" not in parse_md(sample)[0].attributes
+
+
+def test_every_unit_carries_the_same_attributes(sample):
+    """どのセクションがヒットしても絞り込めるよう、全ユニットに乗せる。"""
+    units = parse_md(sample)
+    assert [u.attributes for u in units] == [units[0].attributes] * len(units)
+
+
+def test_attributes_are_still_not_in_the_unit_text(sample):
+    """メタデータとして持つようになっても、埋め込みテキストには入れない。"""
+    assert all("model_id" not in u.text for u in parse_md(sample))
+    assert all("noise_wash_db" not in u.text for u in parse_md(sample))
+
+
+def test_nested_yaml_keys_are_skipped(tmp_path):
+    """字下げされた行は入れ子の属性であり、平らなメタデータには載せられない。"""
+    text = "---\nouter:\n  inner: 1\n---\n\n# タイトル\n\n## 節\n\n本文がここにあります。\n"
+    assert "inner" not in parse_md(_write(tmp_path, text))[0].attributes
+
+
+def test_file_without_frontmatter_has_no_attributes(tmp_path):
+    path = _write(tmp_path, "# タイトル\n\n## 節\n\n本文がここにあります。\n")
+    assert parse_md(path)[0].attributes == {}
+
+
+def test_unclosed_frontmatter_yields_no_attributes(tmp_path):
+    """閉じられていないなら本文とみなす既存の判断を、属性側でも守る。"""
+    path = _write(tmp_path, "---\nmodel_id: X\n\n# タイトル\n\n本文がここにあります。\n")
+    assert parse_md(path)[0].attributes == {}

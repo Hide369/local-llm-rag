@@ -23,6 +23,10 @@ class ParsedUnit:
     # Markdownの見出し文字列。出典を「ファイル名 ＞ 設置情報」と表示するために運ぶ。
     # 位置の一意性は location（通し番号）が持ち、heading は表示専用である。
     heading: str = ""
+    # Markdownのフロントマター由来の属性。埋め込みテキストには入れず、
+    # メタデータとしてのみ運ぶ。ベクトルは「510以下」のような数値条件を
+    # 表現できないため、絞り込みは where に任せる必要がある。
+    attributes: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
