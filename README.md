@@ -2,6 +2,8 @@
 
 PDF・PowerPoint・Word・Markdown を完全ローカルでベクトルDBに取り込み、出典付きで回答するRAGチャット。
 外部サービスへの送信は一切行わない。
+「運転音26dB以下で奥行き510mmに設置できる機種」のように数値条件を含む質問は、ベクトル検索ではなく
+Markdownのフロントマター由来のメタデータで機械的に絞り込み、条件に合う資料を全件そろえた表から回答する。
 
 ## 必要なもの
 
@@ -47,9 +49,16 @@ Ollamaインスタンスを別途用意する必要がある（例: `$env:OLLAMA
 # 計38ファイル・460チャンクを処理した。OCR 23ページが時間の大半を占める）
 .\myvenv313\Scripts\python.exe -m scripts.ingest_source
 
+# Markdownだけを取り直す（フロントマターを直したときなど。OCRを伴わないため数十秒）
+.\myvenv313\Scripts\python.exe -m scripts.ingest_source --force --only-suffix .md
+
 # チャットを起動する
 .\myvenv313\Scripts\python.exe -m streamlit run rag_chat_app.py
 ```
+
+`--only-suffix` を指定したときは孤児削除（`source/` から消えた資料をDBからも消す処理）を
+行わない。対象外の拡張子のファイルがすべて孤児と判定され、他形式のチャンクが丸ごと
+消えてしまうためである。
 
 2回目以降はファイルのハッシュを見て変更分だけを処理するため数秒で終わる。
 UIサイドバーの「差分を取り込む」も同じ処理を呼ぶ。
@@ -78,6 +87,8 @@ UIサイドバーの「差分を取り込む」も同じ処理を呼ぶ。
 | パス | 役割 |
 |---|---|
 | `ingest/` | 取り込みパイプライン（UIに依存しない） |
+| `ingest/conditions.py` | 質問から絞り込み条件を抽出する（LLMに依存） |
+| `ingest/catalog.py` | 条件で資料を絞り込み仕様表に整形する（LLMに依存しない） |
 | `scripts/ingest_source.py` | 取り込みCLI |
 | `scripts/check_retrieval.py` | 関連度しきい値を決めるための距離実測 |
 | `rag_chat_app.py` | Streamlit UI |
@@ -151,6 +162,23 @@ UIサイドバーの「差分を取り込む」も同じ処理を呼ぶ。
   マークして区別している。
 - このPCはGPUを使えないため、OCRを連続実行すると熱により約2.5倍遅くなる。全38ファイルの
   フルリビルドが実測で約24分かかったのもこの影響が大きい。
+- **数値条件による絞り込みには次の限界がある。**
+  - 絞り込みが効くのはフロントマターを持つMarkdownだけである。PDF・PPTX・DOCXは
+    構造化された属性を持たないため対象外で、従来どおりベクトル検索で扱う。
+  - 条件の抽出は `llama3.1:8b` に依存しており、不等号の向きを取り違える可能性がある
+    （実測で `$lte` を `$gte` と返した例がある）。誤った向きのまま絞り込むと、
+    例外は出ずに誤った一覧が根拠として使われる。
+  - 配列属性（`tags` / `target_users`）では絞り込めない。ChromaDBの `where` が
+    リストへの部分一致を扱えないため、取り込み時にメタデータから除外している。
+  - 質問文に数値として書かれていない条件は採用しない（`ingest/conditions.py` の
+    `_grounded`）。「大容量」のような程度の表現からモデルがしきい値をでっち上げる
+    実測への対処であり、その副作用として漢数字（「二十六デシベル」）で書かれた条件は
+    読み取れずベクトル検索へ落ちる。
+  - 一覧そのものは条件に合う資料を全件そろえるが、**その一覧を読んで多段の推論を
+    する部分は `llama3.1:8b` の能力に依存する。** 実測では「条件に合う機種」と
+    「最大の洗濯容量と該当型番」には正しく答えられた一方、「条件に合う機種を挙げ、
+    かつ片方の条件だけを満たさない機種の型番と理由も述べよ」という2つの問いを
+    含む質問では、後半に答えられなかった（必要な行は一覧に並んでいる）。
 
 ## 設計資料
 
@@ -158,3 +186,5 @@ UIサイドバーの「差分を取り込む」も同じ処理を呼ぶ。
 - 実装計画: `docs/superpowers/plans/2026-08-11-document-ingestion.md`
 - 設計書（Markdown取り込み）: `docs/superpowers/specs/2026-08-12-markdown-ingestion-design.md`
 - 実装計画（Markdown取り込み）: `docs/superpowers/plans/2026-08-12-markdown-ingestion.md`
+- 設計書（メタデータによる絞り込み）: `docs/superpowers/specs/2026-08-12-metadata-filtering-design.md`
+- 実装計画（メタデータによる絞り込み）: `docs/superpowers/plans/2026-08-12-metadata-filtering.md`

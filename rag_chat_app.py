@@ -11,8 +11,8 @@ import chromadb
 import streamlit as st
 from openai import APIError, OpenAI
 
-from ingest import embedder, store
-from ingest.prompting import build_prompt, format_report
+from ingest import catalog, conditions, embedder, store
+from ingest.prompting import build_catalog_prompt, build_prompt, format_report
 from ingest.retrieval import RELEVANCE_THRESHOLD, search
 from scripts.ingest_source import DEFAULT_SOURCE_DIR, ingest_directory
 
@@ -24,6 +24,16 @@ def get_collection(db_dir):
     return store.open_collection(chromadb.PersistentClient(path=db_dir))
 
 
+@st.cache_resource
+def get_schema(_collection):
+    """絞り込みに使える属性の一覧。起動時に1回だけ集める。
+
+    先頭のアンダースコアは、Streamlitにこの引数をハッシュさせないための目印。
+    ChromaDBのコレクションはハッシュ化できない。
+    """
+    return conditions.available_keys(_collection)
+
+
 def render_hits(hits):
     if not hits:
         return
@@ -31,6 +41,14 @@ def render_hits(hits):
         for hit in hits:
             st.caption(f"{hit.citation} ／ cosine距離 {hit.distance:.3f}（しきい値 {RELEVANCE_THRESHOLD}）")
             st.write(hit.text)
+
+
+def render_evidence(message):
+    """根拠の表示。絞り込み経路は表を、検索経路はチャンクを見せる。"""
+    if message.get("table"):
+        with st.expander("絞り込んだ一覧"):
+            st.code(message["table"])
+    render_hits(message.get("hits"))
 
 
 st.set_page_config(page_title="社内文書RAGチャット")
@@ -74,9 +92,25 @@ if "messages" not in st.session_state:
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.write(message["content"])
-        render_hits(message.get("hits"))
+        render_evidence(message)
 
 client = OpenAI(api_key="ollama", base_url=f"{embedder.OLLAMA_HOST}/v1")
+
+schema = get_schema(collection)
+
+
+def ask_json(prompt: str) -> str:
+    """条件抽出用にJSONだけを返させる。
+
+    temperature=0 なのは、同じ質問で条件が揺れると再現性のない誤りになるため。
+    """
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0,
+        response_format={"type": "json_object"},
+    )
+    return response.choices[0].message.content
 
 question = st.chat_input("メッセージを入力")
 
@@ -85,14 +119,28 @@ if question:
         st.write(question)
     st.session_state.messages.append({"role": "user", "content": question})
 
-    hits = search(collection, question)
+    extraction = conditions.extract(question, schema, ask_json)
+    if extraction.failed:
+        st.warning("条件を解釈できませんでした。通常の検索で回答します。")
+
+    table = None
+    hits = []
+    if extraction.conditions:
+        matched = catalog.select(collection, extraction.conditions)
+        relaxed = catalog.relaxations(collection, extraction.conditions)
+        table = catalog.format_table(extraction.conditions, matched, relaxed)
+        user_content = build_catalog_prompt(question, table)
+    else:
+        hits = search(collection, question)
+        user_content = build_prompt(question, hits)
+
     history = (
         [{"role": "system", "content": SYSTEM_PROMPT}]
         + [
             {"role": m["role"], "content": m["content"]}
             for m in st.session_state.messages[:-1]
         ]
-        + [{"role": "user", "content": build_prompt(question, hits)}]
+        + [{"role": "user", "content": user_content}]
     )
 
     with st.chat_message("assistant"):
@@ -111,11 +159,11 @@ if question:
                         yield chunk.choices[0].delta.content
 
             answer = st.write_stream(tokens())
-            render_hits(hits)
+            render_evidence({"hits": hits, "table": table})
         except APIError as error:
             st.error(f"回答を生成できませんでした: {error}")
 
     if answer is not None:
         st.session_state.messages.append(
-            {"role": "assistant", "content": answer, "hits": hits}
+            {"role": "assistant", "content": answer, "hits": hits, "table": table}
         )
