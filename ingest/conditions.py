@@ -102,6 +102,13 @@ def _normalise_operator(operator: str) -> str:
 def _valid(operator: str, value) -> bool:
     if isinstance(value, bool):  # True は 1 として比較できてしまうため弾く
         return False
+    # 空文字はここで落とす。この後の _grounded は「質問文に書かれているか」を
+    # 部分一致で見るため、空文字は常に真になって素通りする。実測（temperature 0
+    # で再現性あり）では、議事録について尋ねた「決定事項を教えてほしい」に
+    # 全属性を埋めた {"brand": {"$eq": ""}, "model_id": {"$eq": ""}, …} が返り、
+    # 家電製品の絞り込み経路へ流れて該当0件の表が根拠になった。
+    if isinstance(value, str) and not value.strip():
+        return False
     if operator in COMPARISONS:
         return isinstance(value, (int, float))
     return operator == EQUALITY and isinstance(value, (int, float, str))

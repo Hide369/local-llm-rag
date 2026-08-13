@@ -130,6 +130,28 @@ def test_a_value_absent_from_the_question_is_dropped():
     assert result.failed is False
 
 
+def test_an_empty_string_is_not_a_condition():
+    """空文字は「質問文に書かれている」判定を素通りする（"" in text は常に真）。
+
+    実測（2026-08-13・temperature 0 で再現性あり）: 会議の議事録について尋ねた
+    「決定事項を教えてほしい」に、llama3.1:8b は全属性を埋めた
+    {"brand": {"$eq": ""}, "model_id": {"$eq": ""}, …} を返した。数値のでっち上げは
+    _grounded が捨てたが、空文字の4条件はそのまま採用され、家電製品の絞り込み経路へ
+    流れた。該当0件の表を渡されたモデルは、直前の会話に出ていた型番を答えた。
+    """
+    payload = (
+        '{"price_tier": {"$eq": ""}, "noise_wash_db": {"$lte": 26}}'
+    )
+    result = extract("26dB以下の機種は", SCHEMA, _answer(payload))
+    assert result.conditions == {"noise_wash_db": {"$lte": 26}}
+
+
+def test_a_whitespace_only_string_is_not_a_condition():
+    """空白だけの値も同じ。属性に空白だけの値を持つ資料は無い。"""
+    result = extract("決定事項を教えてほしい", SCHEMA, _answer('{"price_tier": {"$eq": "　 "}}'))
+    assert result.conditions == {}
+
+
 def test_a_threshold_absent_from_the_question_is_dropped():
     """「できるだけ大容量」から washing_capacity_kg ≥ 10 を作った実測への対処。"""
     payload = '{"noise_wash_db": {"$lte": 26}, "installation_depth_min_mm": {"$lte": 999}}'
