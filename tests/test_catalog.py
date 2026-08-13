@@ -1,6 +1,7 @@
 import pytest
 
-from ingest.catalog import Product, format_table, relaxations, select
+from ingest.catalog import Product, exceeding, format_table, relaxations, select
+from ingest.conditions import Ranking
 from ingest.embedder import EMBED_DIM
 from ingest.store import open_collection
 from tests.conftest import ephemeral_client
@@ -106,12 +107,46 @@ def test_relaxations_are_empty_for_a_single_condition(collection):
 
 
 def test_format_table_shows_conditions_and_rows():
-    product = Product(source="家電製品/UD-1100iS.md", attributes={"noise_wash_db": 26})
+    product = Product(
+        source="家電製品/UD-1100iS_spec_step3.md",
+        attributes={"model_id": "UD-1100iS", "noise_wash_db": 26},
+    )
     table = format_table({"noise_wash_db": {"$lte": 26}}, [product], [])
     assert "noise_wash_db 26以下" in table
-    assert "家電製品/UD-1100iS.md" in table
     assert "noise_wash_db=26" in table
     assert "1件" in table
+
+
+def test_format_table_identifies_products_by_model_id_only():
+    """モデルは行を丸写しする。ファイル名を渡すと回答にもファイル名が出る。
+
+    実測では「UD-1100S_spec_step3.md と UD-1100iS_spec_step3.md です」と、
+    利用者に意味のない取り込み元のファイル名で製品を指した。列を末尾へ動かしても
+    行ごと写されるため、表に載せないことで断つ。
+    """
+    product = Product(
+        source="家電製品/UD-1100iS_spec_step3.md",
+        attributes={"model_id": "UD-1100iS", "noise_wash_db": 26},
+    )
+    table = format_table({"noise_wash_db": {"$lte": 26}}, [product], [])
+    assert "UD-1100iS | noise_wash_db=26" in table
+    assert ".md" not in table
+
+
+def test_format_table_does_not_repeat_the_model_id_as_an_attribute():
+    """行頭に出したものを model_id=… として繰り返す必要はない。"""
+    product = Product(
+        source="家電製品/UD-1100iS_spec_step3.md",
+        attributes={"model_id": "UD-1100iS", "noise_wash_db": 26},
+    )
+    assert "model_id=" not in format_table({"noise_wash_db": {"$lte": 26}}, [product], [])
+
+
+def test_format_table_falls_back_to_the_file_name_without_a_model_id():
+    """フロントマターに model_id が無い資料でも行は成立させる。"""
+    product = Product(source="家電製品/UD-1100iS.md", attributes={"noise_wash_db": 26})
+    table = format_table({"noise_wash_db": {"$lte": 26}}, [product], [])
+    assert "家電製品/UD-1100iS.md | noise_wash_db=26" in table
 
 
 def test_format_table_labels_the_relaxed_group():
@@ -131,6 +166,124 @@ def test_relaxed_group_states_which_condition_fails():
     table = format_table(QUIET_AND_SLIM, [], [("installation_depth_min_mm", [product])])
     assert "installation_depth_min_mm 510以下" in table
     assert "だけを満たさない" in table
+
+
+def _capacity(model, capacity, depth=510):
+    return Product(
+        source=f"家電製品/{model}_spec_step3.md",
+        attributes={
+            "model_id": model,
+            "drying_capacity_kg": 6.0,
+            "installation_depth_min_mm": depth,
+            "washing_capacity_kg": capacity,
+        },
+    )
+
+
+RANKING = Ranking(key="washing_capacity_kg", descending=True)
+DEPTH = {"installation_depth_min_mm": {"$lte": 510}}
+
+
+def test_format_table_orders_rows_by_the_ranking():
+    """最大値を探させない。並べ替えて先頭に置く。
+
+    実測: 12行の表で「最大の洗濯容量と該当型番」の正答は8回中2回。降順に並べ、
+    その属性を先頭カラムへ出すと4回中4回になった。モデルは行の先頭を掴む。
+    """
+    products = [_capacity("UD-1000S", 10.0), _capacity("UD-1100S", 11.0)]
+    rows = format_table(DEPTH, products, [], ranking=RANKING).splitlines()
+    assert rows[3].startswith("UD-1100S | washing_capacity_kg=11.0")
+    assert rows[4].startswith("UD-1000S | washing_capacity_kg=10.0")
+
+
+def test_format_table_orders_ascending_for_a_smallest_question():
+    products = [_capacity("UD-1100S", 11.0), _capacity("UD-1000S", 10.0)]
+    ranking = Ranking(key="washing_capacity_kg", descending=False)
+    rows = format_table(DEPTH, products, [], ranking=ranking).splitlines()
+    assert rows[3].startswith("UD-1000S | ")
+
+
+def test_format_table_keeps_the_source_order_without_a_ranking():
+    """並べ替えを尋ねられていない質問の表は、これまでどおり型番順で出す。"""
+    products = [_capacity("UD-1000S", 10.0), _capacity("UD-1100S", 11.0)]
+    rows = format_table(DEPTH, products, []).splitlines()
+    assert rows[3].startswith("UD-1000S | ")
+
+
+def test_format_table_shows_the_ranked_attribute_first():
+    """実測では、行の最初の数値を容量として拾い drying_capacity_kg=6.0 と答えた。"""
+    row = format_table(DEPTH, [_capacity("UD-1100S", 11.0)], [], ranking=RANKING).splitlines()[3]
+    assert row.index("washing_capacity_kg") < row.index("drying_capacity_kg")
+
+
+def test_format_table_does_not_duplicate_the_ranked_attribute():
+    row = format_table(DEPTH, [_capacity("UD-1100S", 11.0)], [], ranking=RANKING).splitlines()[3]
+    assert row.count("washing_capacity_kg=") == 1
+
+
+def _add_capacity_product(collection, model, capacity, depth):
+    source = f"家電製品/{model}.md"
+    collection.add(
+        ids=[f"{source}::0"],
+        documents=[f"{model}の本文"],
+        metadatas=[
+            {
+                "source": source,
+                "model_id": model,
+                "washing_capacity_kg": capacity,
+                "installation_depth_min_mm": depth,
+            }
+        ],
+        embeddings=[[1.0] + [0.0] * (EMBED_DIM - 1)],
+    )
+
+
+def _capacity_catalogue(collection):
+    _add_capacity_product(collection, "UD-1000S", 10.0, 510)
+    _add_capacity_product(collection, "UD-1100S", 11.0, 510)
+    _add_capacity_product(collection, "UD-1400X", 14.0, 545)  # 設置できないが大容量
+    _add_capacity_product(collection, "UD-0500M", 5.0, 545)  # 設置できず容量も小さい
+    collection.add(  # 属性を持たないPDF由来のチャンク
+        ids=["就業規則.pdf::0"],
+        documents=["本文"],
+        metadatas=[{"source": "モデル就業規則.pdf"}],
+        embeddings=[[1.0] + [0.0] * (EMBED_DIM - 1)],
+    )
+
+
+def test_exceeding_reports_what_the_condition_rules_out(collection):
+    """「もっと大容量が欲しいが、なぜ選べないのか」に答えるために要る。
+
+    条件が1つのとき relaxations は何も返さない。順位の上側だけに絞れば数件で済む。
+    """
+    _capacity_catalogue(collection)
+    matched = select(collection, DEPTH)
+    beyond = exceeding(collection, DEPTH, RANKING, matched)
+    assert [p.attributes["model_id"] for p in beyond] == ["UD-1400X"]
+
+
+def test_exceeding_is_empty_without_a_ranking(collection):
+    _capacity_catalogue(collection)
+    matched = select(collection, DEPTH)
+    assert exceeding(collection, DEPTH, None, matched) == []
+
+
+def test_exceeding_is_empty_when_nothing_matched(collection):
+    """比較の基準が無い。全件を「上回る」として並べてはいけない。"""
+    _capacity_catalogue(collection)
+    assert exceeding(collection, DEPTH, RANKING, []) == []
+
+
+def test_format_table_says_the_exceeding_group_cannot_be_chosen(collection):
+    """見出しが弱いと、モデルはこの群を条件に合う機種として混ぜて答える。"""
+    _capacity_catalogue(collection)
+    matched = select(collection, DEPTH)
+    table = format_table(
+        DEPTH, matched, [], RANKING, exceeding(collection, DEPTH, RANKING, matched)
+    )
+    assert "条件を満たさないので選べない" in table
+    assert "UD-1400X | washing_capacity_kg=14.0" in table
+    assert "installation_depth_min_mm=545" in table
 
 
 def test_format_table_says_none_when_nothing_matches():

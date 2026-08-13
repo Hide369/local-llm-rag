@@ -154,6 +154,76 @@ def _sanitise(loaded: dict, schema: dict[str, str], question: str) -> dict:
     return conditions
 
 
+@dataclass(frozen=True)
+class Ranking:
+    """「最大の洗濯容量は」で並べ替える先。key は数値属性に限る。"""
+
+    key: str
+    descending: bool
+
+
+# 最大・最小を尋ねる語。属性名（英語）と日本語を結ぶのはLLMの仕事だが、
+# 「そもそも最大最小を訊いているか」はこれで判定できる。該当しない質問で
+# LLMを呼ばずに済ませるための門番であり、1問あたり数秒を節約する。
+_SUPERLATIVES = ("最大", "最小", "最も", "最少", "最高", "最低", "一番", "いちばん")
+
+_DIRECTIONS = {"最大": True, "最小": False}
+
+
+def _ranking_prompt(question: str, keys: list[str]) -> str:
+    """並べ替え先を尋ねるプロンプト。
+
+    形式を `{"属性名": "最大"}` と書いていたときは、qwen2.5:7b-instruct が
+    プレースホルダのまま `{"属性名": "最大"}` を返した（temperature 0 で再現）。
+    llama3.1:8b は置き換えられていたため気づきにくい。キーの決め方を文で説明し、
+    例には一覧に無い架空の属性（example_kg）を使う。実在のキーを例に書くと、
+    モデルがそれをそのまま返す。
+    """
+    listed = "\n".join(f"- {key}" for key in sorted(keys))
+    return (
+        "次の質問が最大・最小を尋ねている属性を1つだけ選んでJSONで答えてください。\n"
+        "使ってよい属性は以下だけです。\n\n"
+        f"{listed}\n\n"
+        "キーには上の一覧の属性名をそのまま書き、値は「最大」か「最小」にしてください。\n"
+        '例（属性が example_kg のとき）: {"example_kg": "最大"}\n'
+        "最大・最小を尋ねていない質問には {} と答えてください。\n"
+        "説明は書かず、JSONだけを返してください。\n\n"
+        f"質問: {question}"
+    )
+
+
+def extract_ranking(question: str, schema: dict[str, str], ask) -> Ranking | None:
+    """「最大の洗濯容量は」から並べ替える属性を取り出す。取れなければ None。
+
+    これが要るのは、llama3.1:8b が表から最大値を探せないためである。実測では
+    12行の表で「最大の洗濯容量と該当型番」を8回試して正答2回、外した6回はいずれも
+    10.0kgの機種を挙げて11.0kgを見落とした。並べ替えて先頭に置くと4回中4回正答する
+    （`ingest/catalog.py` の `format_table` を参照）。探させるのではなく、
+    掴む場所に答えを置く。
+
+    数値属性だけを候補にする。文字列の大小は比較できない。
+    """
+    if not any(word in question for word in _SUPERLATIVES):
+        return None
+    numeric = [key for key, kind in schema.items() if kind == "number"]
+    if not numeric:
+        return None
+    try:
+        raw = ask(_ranking_prompt(question, numeric))
+    except Exception:  # LLM側の事情で回答生成まで巻き添えにしない
+        return None
+    try:
+        loaded = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(loaded, dict):
+        return None
+    for key, direction in loaded.items():
+        if key in numeric and direction in _DIRECTIONS:
+            return Ranking(key=key, descending=_DIRECTIONS[direction])
+    return None
+
+
 def extract(question: str, schema: dict[str, str], ask) -> Extraction:
     """質問を絞り込み条件へ変換する。失敗しても例外は投げない。"""
     if not schema:

@@ -27,15 +27,12 @@ def _where(conditions: dict) -> dict:
     return clauses[0] if len(clauses) == 1 else {"$and": clauses}
 
 
-def select(collection, conditions: dict) -> list[Product]:
-    """条件に合う資料を、1資料1件にまとめて返す。
+def _fold(found) -> list[Product]:
+    """チャンクの並びを1資料1件にまとめる。
 
     同じ製品の6セクションは同じ属性を持つ。畳まずに返すと件数を尋ねる質問に
     誤って答えることになるため、source ごとに1つにする。
     """
-    if not conditions:
-        return []
-    found = collection.get(where=_where(conditions), include=["metadatas"])
     products: dict[str, dict] = {}
     for metadata in found.get("metadatas") or []:
         source = metadata.get("source")
@@ -46,6 +43,48 @@ def select(collection, conditions: dict) -> list[Product]:
                 if key not in RESERVED_METADATA_KEYS
             }
     return [Product(source=source, attributes=products[source]) for source in sorted(products)]
+
+
+def select(collection, conditions: dict) -> list[Product]:
+    """条件に合う資料を、1資料1件にまとめて返す。"""
+    if not conditions:
+        return []
+    return _fold(collection.get(where=_where(conditions), include=["metadatas"]))
+
+
+def _ranked_value(product: Product, ranking):
+    value = product.attributes.get(ranking.key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return value
+
+
+def exceeding(collection, conditions: dict, ranking, matched: list[Product]) -> list[Product]:
+    """条件から外れるが、尋ねられた属性では合致分を上回る資料。
+
+    「もっと大容量が欲しいが、なぜそれが選べないのか」に答えるために要る。
+    条件が1つのとき relaxations は何も返さない（外した先が全件になるため）が、
+    順位の上側だけに絞れば数件で済む。実測の例では、奥行き510mm以下で最大は
+    11.0kgの2機種、その上に13.0kg・14.0kgの3機種があり、いずれも防水パン
+    545mm以上を要する。
+    """
+    if ranking is None or not conditions or not matched:
+        return []
+    best_values = [v for v in (_ranked_value(p, ranking) for p in matched) if v is not None]
+    if not best_values:
+        return []
+    limit = max(best_values) if ranking.descending else min(best_values)
+    known = {product.source for product in matched}
+    beyond = []
+    for product in _fold(collection.get(include=["metadatas"])):
+        if product.source in known:
+            continue
+        value = _ranked_value(product, ranking)
+        if value is None:
+            continue
+        if value > limit if ranking.descending else value < limit:
+            beyond.append(product)
+    return beyond
 
 
 def relaxations(collection, conditions: dict) -> list[tuple[str, list[Product]]]:
@@ -83,28 +122,73 @@ def _shown(key: str, value, conditions: dict) -> bool:
     「1つだけ条件を満たさない機種」を挙げられなかった。brand は全製品で同じ値、
     product_name は型番の言い換えであり、比較には何も足さない。
     絞り込みに使われた属性は、文字列でも残す（price_tier のような一致条件のため）。
+    model_id は行頭に出すので、属性としては繰り返さない。
     """
-    return key in conditions or key == "model_id" or isinstance(value, (int, float))
+    if key == "model_id":
+        return False
+    return key in conditions or isinstance(value, (int, float))
 
 
-def _row(product: Product, conditions: dict) -> str:
-    attributes = " | ".join(
-        f"{key}={value}"
-        for key, value in sorted(product.attributes.items())
-        if _shown(key, value, conditions)
+def _row(product: Product, conditions: dict, ranking=None) -> str:
+    """「型番 | 属性」の1行。ファイル名は載せない。
+
+    実測では、モデルは表の行をそのまま丸写しして答える（4回中3回）。行にファイル名が
+    あれば回答にも必ず出てきて、「UD-1100S_spec_step3.md です」と利用者には意味のない
+    取り込み元の名前で製品を指すことになる。列を末尾へ動かしても行ごと写されるので
+    効かず、「ファイル名で呼ぶな」という指示も llama3.1:8b には効かない
+    （ingest/answer_text.py の実測を参照）。渡さなければ書きようがない。
+
+    出典を捨てることにはならない。この一覧の1行は1つの製品仕様書であり、型番
+    UD-1100S は source/家電製品/UD-1100S_spec_step3.md と1対1で対応する。
+    利用者に見せる一覧（絞り込んだ一覧）も同じ表なので、表示も型番でそろう。
+    """
+    keys = sorted(
+        key for key, value in product.attributes.items() if _shown(key, value, conditions)
     )
-    return f"{product.source} | {attributes}"
+    if ranking is not None and ranking.key in keys:
+        # 尋ねられた属性を最初の列に出す。実測では、モデルは行の最初の数値を
+        # 「容量」として拾い、アルファベット順で先頭に来る
+        # drying_capacity_kg=6.0 を洗濯容量として答えた（4回中2回）。
+        keys.remove(ranking.key)
+        keys.insert(0, ranking.key)
+    attributes = " | ".join(f"{key}={product.attributes[key]}" for key in keys)
+    # model_id はフロントマターを持つMarkdownにしか無い。無い資料でも行が
+    # 成立するよう、そのときはファイル名を呼び名として使う。
+    name = product.attributes.get("model_id") or product.source
+    return f"{name} | {attributes}"
 
 
-def format_table(conditions: dict, matched: list[Product], relaxed: list) -> str:
+def _ordered(products: list[Product], ranking) -> list[Product]:
+    """尋ねられた属性の順に並べ替える。値を持たない資料は末尾へ回す。
+
+    モデルは表の先頭の行を掴む。探させる代わりに、掴む場所へ答えを置く。
+    """
+    if ranking is None:
+        return products
+
+    def sort_key(product):
+        value = product.attributes.get(ranking.key)
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return (1, 0.0)
+        return (0, -value if ranking.descending else value)
+
+    return sorted(products, key=sort_key)
+
+
+def format_table(
+    conditions: dict, matched: list[Product], relaxed: list, ranking=None, beyond=()
+) -> str:
     """モデルに渡す一覧を組み立てる。
 
-    各行の先頭に出典（ファイル名）を置く。散文チャンクを渡していたときと同じ形で
-    出典を示せるようにするためである。
+    行の先頭は型番で、出典（ファイル名）は載せない（`_row` 参照）。
+    ranking（`ingest/conditions.py` の `Ranking`）を渡すと、その属性の順に
+    並べ替え、列も先頭へ出す。「最大の洗濯容量は」に答えられるようにするためで、
+    渡さなければ従来どおり型番順・アルファベット順の列で出す。
     """
+    matched = _ordered(matched, ranking)
     lines = [f"条件: {_describe(conditions)}", "", f"■ 全条件に合致（{len(matched)}件）"]
     if matched:
-        lines.extend(_row(product, conditions) for product in matched)
+        lines.extend(_row(product, conditions, ranking) for product in matched)
     else:
         lines.append("該当なし")
     for dropped, products in relaxed:
@@ -119,5 +203,15 @@ def format_table(conditions: dict, matched: list[Product], relaxed: list) -> str
         lines.append(
             f"■ 「{described}」だけを満たさない（他の条件は満たす）（{len(products)}件）"
         )
-        lines.extend(_row(product, conditions) for product in products)
+        lines.extend(_row(product, conditions, ranking) for product in _ordered(products, ranking))
+    if beyond:
+        # 「条件を満たさない」ことを見出しに書く。実測では、見出しが弱いと
+        # モデルはこの群を条件に合う機種として混ぜて答える。
+        larger = "大きい" if ranking.descending else "小さい"
+        lines.append("")
+        lines.append(
+            f"■ 条件を満たさないので選べないが、{ranking.key} はこれより{larger}"
+            f"（{len(beyond)}件）"
+        )
+        lines.extend(_row(product, conditions, ranking) for product in _ordered(beyond, ranking))
     return "\n".join(lines)

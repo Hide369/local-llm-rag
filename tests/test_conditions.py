@@ -1,6 +1,7 @@
 import pytest
 
-from ingest.conditions import available_keys, extract
+from ingest import conditions
+from ingest.conditions import Ranking, available_keys, extract, extract_ranking
 from ingest.embedder import EMBED_DIM
 from ingest.store import open_collection
 from tests.conftest import ephemeral_client
@@ -181,6 +182,69 @@ def test_a_whole_number_written_without_a_decimal_point_matches():
         "洗濯容量が9キログラム以上は", SCHEMA, _answer('{"noise_wash_db": {"$gte": 9.0}}')
     )
     assert result.conditions == {"noise_wash_db": {"$gte": 9.0}}
+
+
+def test_ranking_is_not_asked_for_without_a_superlative():
+    """「最大」等の語が無ければLLMを呼ばない。1問あたり数秒を無駄にしないため。"""
+    calls = []
+
+    def spy(prompt):
+        calls.append(prompt)
+        return "{}"
+
+    assert extract_ranking("26dB以下の機種は", SCHEMA, spy) is None
+    assert calls == []
+
+
+def test_the_ranking_prompt_does_not_hand_the_model_a_placeholder_key():
+    """形式を {"属性名": "最大"} と書くと、qwen2.5:7b-instruct はそれをそのまま返した。
+
+    llama3.1:8b は置き換えていたため、モデルを変えるまで表面化しなかった。
+    例に使う属性は一覧に無い架空のもの（example_kg）にする。実在のキーを書くと、
+    どの質問でもそれを返してくる。
+    """
+    prompt = conditions._ranking_prompt("最大の洗濯容量は", ["washing_capacity_kg"])
+    assert '"属性名"' not in prompt  # JSONのキーとしてのプレースホルダは渡さない
+    assert "example_kg" in prompt  # 例は架空の属性で示す
+    assert '{"washing_capacity_kg"' not in prompt  # 実在のキーを例にすると必ずそれを返す
+
+
+def test_ranking_extracts_the_attribute_and_direction():
+    result = extract_ranking(
+        "最大の洗濯容量は", {"washing_capacity_kg": "number"}, _answer('{"washing_capacity_kg": "最大"}')
+    )
+    assert result == Ranking(key="washing_capacity_kg", descending=True)
+
+
+def test_ranking_understands_the_smallest():
+    result = extract_ranking(
+        "最も運転音が小さい機種は", SCHEMA, _answer('{"noise_wash_db": "最小"}')
+    )
+    assert result == Ranking(key="noise_wash_db", descending=False)
+
+
+def test_ranking_ignores_attributes_outside_the_schema():
+    """スキーマに無いキーで並べ替えると、その列が無い行が落ちる。"""
+    assert extract_ranking("最大の重量は", SCHEMA, _answer('{"weight_kg": "最大"}')) is None
+
+
+def test_ranking_ignores_string_attributes():
+    """文字列の大小は比較できない。"""
+    assert extract_ranking("最大のグレードは", SCHEMA, _answer('{"price_tier": "最大"}')) is None
+
+
+def test_ranking_ignores_a_broken_answer():
+    assert extract_ranking("最大の洗濯容量は", SCHEMA, _answer("これはJSONではない")) is None
+    assert extract_ranking("最大の洗濯容量は", SCHEMA, _answer("{}")) is None
+
+
+def test_ranking_survives_an_llm_failure():
+    """並べ替えが取れなくても、回答生成まで巻き添えにしない。"""
+
+    def broken(_prompt):
+        raise RuntimeError("Ollamaが落ちている")
+
+    assert extract_ranking("最大の洗濯容量は", SCHEMA, broken) is None
 
 
 def test_empty_schema_does_not_call_the_llm():
