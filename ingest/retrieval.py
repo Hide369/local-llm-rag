@@ -52,6 +52,34 @@ class Hit:
         return source
 
 
+def contextual_query(question: str, history) -> str:
+    """直前の質問を検索クエリの前に置く。
+
+    「決定事項を教えてほしい」のような追質問は、それ単独では検索できない。実測では
+    上位4件が導入ガイドPDFと就業規則で埋まり、議事録は1件も入らなかった
+    （距離0.456〜0.459）。直前の質問を継ぎ足すと第5回議事録が0.401で1位になる。
+
+    継ぎ足すのは直前の1問だけである。履歴を全部つなぐと古い話題がクエリを引っ張る。
+    話題が変わったときは継ぎ足した分が雑音になるが、実測では順位は保たれた
+    （有給休暇の質問に会議の質問を継ぎ足しても就業規則が1位。距離は0.296→0.352）。
+
+    LLMによる書き換えを使わないのは、1問あたり数秒の追加コストを避けるため。
+    llama3.1:8b はこのPCで8トークン毎秒しか出ない。
+
+    history は Streamlit の会話履歴（role/content の辞書の並び）で、今回の質問は
+    含めない。
+    """
+    previous = next(
+        (
+            message["content"]
+            for message in reversed(history)
+            if message.get("role") == "user"
+        ),
+        None,
+    )
+    return f"{previous} {question}" if previous else question
+
+
 def search(collection, query, session=None, threshold=None, n_results=SEARCH_RESULT_COUNT):
     if collection.count() == 0:
         return []

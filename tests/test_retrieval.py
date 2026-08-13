@@ -1,6 +1,6 @@
 import pytest
 
-from ingest.retrieval import Hit, search
+from ingest.retrieval import Hit, contextual_query, search
 
 
 class _FakeCollection:
@@ -76,6 +76,39 @@ def test_ocr_hits_are_marked():
     """OCR由来は小書き仮名が崩れることがあるため、根拠として示すときに明示する。"""
     hit = Hit(text="本文", distance=0.1, metadata=_meta(ocr=True))
     assert hit.citation == "a.pdf p.48（OCR）"
+
+
+def test_contextual_query_is_the_question_itself_without_history():
+    assert contextual_query("決定事項を教えてほしい", []) == "決定事項を教えてほしい"
+
+
+def test_contextual_query_prepends_the_previous_question():
+    """追質問は単独では検索できない。
+
+    実測: 「決定事項を教えてほしい」だけで引くと上位4件は導入ガイドPDFと就業規則で、
+    議事録は1件も入らなかった（距離0.456〜0.459）。直前の質問を継ぎ足すと
+    第5回議事録が0.401で1位になる。
+    """
+    history = [
+        {"role": "user", "content": "第5回会議のタイトルを教えてほしい"},
+        {"role": "assistant", "content": "「AI活用プロジェクト 第5回…」です。"},
+    ]
+    assert contextual_query("決定事項を教えてほしい", history) == (
+        "第5回会議のタイトルを教えてほしい 決定事項を教えてほしい"
+    )
+
+
+def test_contextual_query_uses_only_the_latest_previous_question():
+    """履歴を全部つなぐと、古い話題が検索を引っ張る。継ぎ足すのは直前の1問だけ。"""
+    history = [
+        {"role": "user", "content": "有給休暇は何日もらえますか"},
+        {"role": "assistant", "content": "…"},
+        {"role": "user", "content": "第5回会議のタイトルを教えてほしい"},
+        {"role": "assistant", "content": "…"},
+    ]
+    query = contextual_query("決定事項を教えてほしい", history)
+    assert query == "第5回会議のタイトルを教えてほしい 決定事項を教えてほしい"
+    assert "有給休暇" not in query
 
 
 def test_far_results_are_dropped():
