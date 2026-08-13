@@ -54,7 +54,8 @@ def render_evidence(message):
 st.set_page_config(page_title="社内文書RAGチャット")
 st.sidebar.title("設定")
 
-model = st.sidebar.text_input("モデル名", value="llama3.1:8b")
+# 既定は qwen2.5:7b-instruct。llama3.1:8b もそのまま動く（README「モデルの比較」）。
+model = st.sidebar.text_input("モデル名", value="qwen2.5:7b-instruct")
 temperature = st.sidebar.slider("Temperature", 0.0, 1.0, 0.3, 0.1)
 # サイドバーには出さない。利用者に編集させる項目ではないため。
 # 出典付き回答の指示は ingest/prompting.py が質問側に組み込む。ここは口調と
