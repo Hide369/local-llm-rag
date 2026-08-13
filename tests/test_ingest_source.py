@@ -238,6 +238,45 @@ def test_same_filename_in_two_folders_does_not_collide(source_dir, collection):
     assert collection.count() == 2
 
 
+def test_only_suffix_limits_the_files(source_dir, collection):
+    _write_docx(source_dir, "議事録.docx", "決定事項：RAGを導入するという結論です。")
+    _write_md(source_dir, "仕様.md", "# 製品\n\n## 節\n\n本文がここにあります。\n")
+    report = ingest_directory(
+        source_dir, collection, session=_FakeSession(), only_suffix=".md"
+    )
+    assert set(report.indexed) == {"仕様.md"}
+
+
+def test_only_suffix_accepts_a_bare_extension(source_dir, collection):
+    """--only-suffix md と .md を同じに扱う。書き分けを覚える理由がない。"""
+    _write_md(source_dir, "仕様.md", "# 製品\n\n## 節\n\n本文がここにあります。\n")
+    report = ingest_directory(
+        source_dir, collection, session=_FakeSession(), only_suffix="md"
+    )
+    assert set(report.indexed) == {"仕様.md"}
+
+
+def test_only_suffix_skips_orphan_pruning(source_dir, collection):
+    """ここを飛ばさないと、対象外の拡張子の資料が全部孤児として消える。"""
+    _write_docx(source_dir, "議事録.docx", "決定事項：RAGを導入するという結論です。")
+    _write_md(source_dir, "仕様.md", "# 製品\n\n## 節\n\n本文がここにあります。\n")
+    ingest_directory(source_dir, collection, session=_FakeSession())
+    report = ingest_directory(
+        source_dir, collection, session=_FakeSession(), force=True, only_suffix=".md"
+    )
+    assert report.removed == []
+    assert stored_file_hash(collection, "議事録.docx") is not None
+
+
+def test_full_run_still_prunes_orphans(source_dir, collection):
+    """部分取り込みの分岐を入れても、通常の取り込みの孤児削除は残っていること。"""
+    path = _write_docx(source_dir, "議事録.docx", "決定事項：RAGを導入するという結論です。")
+    ingest_directory(source_dir, collection, session=_FakeSession())
+    path.unlink()
+    report = ingest_directory(source_dir, collection, session=_FakeSession())
+    assert report.removed == ["議事録.docx"]
+
+
 class _FakeCollectionForMain:
     def count(self):
         return 0
@@ -278,3 +317,23 @@ def test_main_forwards_force_flag_to_ingest_directory(tmp_path, monkeypatch):
     ingest_source.main()
 
     assert received_force == [True, False]
+
+
+def test_main_forwards_only_suffix_to_ingest_directory(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_ingest_directory(source_dir, collection, on_progress=None, **kwargs):
+        captured.update(kwargs)
+        return ingest_source.IngestReport()
+
+    monkeypatch.setattr(ingest_source, "ingest_directory", fake_ingest_directory)
+    monkeypatch.setattr(ingest_source.embedder, "check_ollama", lambda: None)
+    monkeypatch.setattr(
+        ingest_source.store, "open_collection", lambda _client: _FakeCollectionForMain()
+    )
+    monkeypatch.setattr(ingest_source.chromadb, "PersistentClient", lambda path: None)
+    monkeypatch.setattr(
+        sys, "argv", ["ingest_source", "--source-dir", str(tmp_path), "--only-suffix", "md"]
+    )
+    ingest_source.main()
+    assert captured["only_suffix"] == "md"

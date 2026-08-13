@@ -1,4 +1,9 @@
-from ingest.chunker import CHUNK_SIZE, MIN_CHUNK_CHARS, chunk_units
+from ingest.chunker import (
+    CHUNK_SIZE,
+    MIN_CHUNK_CHARS,
+    RESERVED_METADATA_KEYS,
+    chunk_units,
+)
 from ingest.models import ParsedUnit
 
 
@@ -130,3 +135,48 @@ def test_heading_is_carried_into_every_chunk():
     chunks = _chunk([unit])
     assert len(chunks) > 1
     assert all(c.metadata["heading"] == "設置情報" for c in chunks)
+
+
+def test_attributes_are_added_to_metadata():
+    unit = ParsedUnit(
+        text="これは十分な長さのある本文です。",
+        location_type="section",
+        location=1,
+        attributes={"noise_wash_db": 26, "model_id": "UD-1100iS"},
+    )
+    metadata = _chunk([unit])[0].metadata
+    assert metadata["noise_wash_db"] == 26
+    assert metadata["model_id"] == "UD-1100iS"
+
+
+def test_attributes_are_carried_into_every_chunk():
+    """分割されても全チャンクが属性を持たないと、絞り込みが断片を取りこぼす。"""
+    unit = ParsedUnit(
+        text="あ" * 2000,
+        location_type="section",
+        location=1,
+        attributes={"noise_wash_db": 26},
+    )
+    chunks = _chunk([unit])
+    assert len(chunks) > 1
+    assert all(c.metadata["noise_wash_db"] == 26 for c in chunks)
+
+
+def test_reserved_keys_in_attributes_are_ignored():
+    """属性が source を上書きすると、出典表示と差分取り込みが同時に壊れる。"""
+    unit = ParsedUnit(
+        text="これは十分な長さのある本文です。",
+        location_type="section",
+        location=1,
+        attributes={"source": "偽物.md", "heading": "偽の見出し", "noise_wash_db": 26},
+    )
+    metadata = _chunk([unit])[0].metadata
+    assert metadata["source"] == "a.pdf"
+    assert metadata["heading"] == ""
+    assert metadata["noise_wash_db"] == 26
+
+
+def test_metadata_is_unchanged_for_units_without_attributes():
+    """PDF・PPTX・DOCX由来のチャンクは今までどおりのキーだけを持つ。"""
+    metadata = _chunk([_unit("これは十分な長さのある本文です。")])[0].metadata
+    assert set(metadata) == RESERVED_METADATA_KEYS
