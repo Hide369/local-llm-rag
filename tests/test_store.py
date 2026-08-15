@@ -121,15 +121,12 @@ def test_metadata_survives_a_round_trip(collection):
     assert stored["ocr"] is False
 
 
-def test_all_documents_returns_ids_and_texts_in_the_same_order():
+def test_all_documents_returns_ids_and_texts_in_the_same_order(collection):
     """BM25インデックスはIDと本文の並びが一致していることに依存する。
 
-    ここでは上の collection フィクスチャを使わず、素の ephemeral_client() を
-    直接使う。同じ固定キーのシステムを使い回す挙動（フィクスチャのdocstring
-    参照）が次のテストへ漏れないよう、後始末で明示的にクリアする。
+    collection フィクスチャが提供する例外安全なテアダウン（generator fixture
+    の teardown は assert 失敗時も実行される）を活用する。
     """
-    client = ephemeral_client()
-    collection = store.open_collection(client)
     collection.add(
         ids=["x", "y"],
         documents=["本文エックス", "本文ワイ"],
@@ -138,10 +135,14 @@ def test_all_documents_returns_ids_and_texts_in_the_same_order():
     )
     ids, documents = store.all_documents(collection)
     assert dict(zip(ids, documents)) == {"x": "本文エックス", "y": "本文ワイ"}
-    client.clear_system_cache()
 
 
-def test_all_documents_on_an_empty_collection_returns_two_empty_lists():
-    client = ephemeral_client()
-    assert store.all_documents(store.open_collection(client)) == ([], [])
-    client.clear_system_cache()
+def test_all_documents_on_an_empty_collection_returns_two_empty_lists(collection):
+    """フィクスチャが提供する新規の空 collection に対して検査する。
+
+    collection フィクスチャは pytest によってテストごとに新規生成され、
+    例外安全なテアダウン（generator fixture の teardown）で
+    EphemeralClient の共有キャッシュをクリアするため、
+    テスト間での漏れを防ぐ。
+    """
+    assert store.all_documents(collection) == ([], [])
