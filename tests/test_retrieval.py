@@ -1,21 +1,46 @@
 import pytest
 
-from ingest.retrieval import Hit, contextual_query, search
+from ingest import lexical
+from ingest.retrieval import Hit, build_index, contextual_query, search
 
 
 class _FakeCollection:
-    def __init__(self, documents, distances, metadatas):
-        self._payload = {
-            "documents": [documents],
-            "distances": [distances],
-            "metadatas": [metadatas],
-        }
+    def __init__(self, documents, distances, metadatas, ids=None, vector_limit=None):
+        self._ids = ids or [f"id-{n}" for n in range(len(documents))]
+        self._documents = documents
+        self._distances = distances
+        self._metadatas = metadatas
+        # 実Chromaは距離の昇順で返す。挿入順のまま返すと、RRFの並べ替えを検証する
+        # テストが「ベクトル1位＝BM25 1位」の自明なケースになってしまう。
+        self._order = sorted(range(len(documents)), key=lambda row: distances[row])
+        # ベクトル側が返す件数の上限。BM25だけが見つけるチャンクを作るために使う。
+        self._vector_limit = vector_limit
 
     def count(self):
-        return len(self._payload["documents"][0])
+        return len(self._documents)
 
     def query(self, query_embeddings, n_results):
-        return self._payload
+        rows = self._order[: min(n_results, self._vector_limit or n_results)]
+        return {
+            "ids": [[self._ids[row] for row in rows]],
+            "documents": [[self._documents[row] for row in rows]],
+            "distances": [[self._distances[row] for row in rows]],
+            "metadatas": [[self._metadatas[row] for row in rows]],
+        }
+
+    def get(self, ids=None, include=None):
+        # ids 省略は全件（store.all_documents がこの形で呼ぶ）。
+        # 知らないIDは黙って落とす。実Chromaも消えたIDの行は返さない。
+        rows = (
+            list(range(len(self._ids)))
+            if ids is None
+            else [self._ids.index(i) for i in ids if i in self._ids]
+        )
+        return {
+            "ids": [self._ids[row] for row in rows],
+            "documents": [self._documents[row] for row in rows],
+            "metadatas": [self._metadatas[row] for row in rows],
+        }
 
 
 def _meta(source="a.pdf", location_type="page", location=48, ocr=False, heading=""):
@@ -124,3 +149,105 @@ def test_empty_collection_returns_nothing():
 def test_hits_keep_their_distance():
     collection = _FakeCollection(["本文"], [0.25], [_meta()])
     assert search(collection, "質問", threshold=0.5)[0].distance == 0.25
+
+
+def _hybrid(documents, distances, vector_limit=None):
+    """フェイクのコレクションと、その全文から作ったBM25インデックスの対。"""
+    ids = [f"id-{n}" for n in range(len(documents))]
+    collection = _FakeCollection(
+        documents,
+        distances,
+        [_meta()] * len(documents),
+        ids=ids,
+        vector_limit=vector_limit,
+    )
+    return collection, lexical.build(ids, documents)
+
+
+def test_a_bm25_hit_is_admitted_when_the_question_is_in_domain():
+    """今回の症状そのもの。語を含むチャンクのベクトル距離がしきい値を超えていても、
+    質問自体が圏内ならBM25側が拾う。"""
+    collection, index = _hybrid(
+        ["ファインチューニングとは追加学習である", "この資料の概要です"],
+        [0.60, 0.10],
+    )
+    hits = search(collection, "ファインチューニング", index=index, threshold=0.5)
+    rescued = next(h for h in hits if h.text.startswith("ファインチューニング"))
+    assert rescued.distance == 0.60
+    assert rescued.bm25_score > 0
+
+
+def test_no_bm25_hit_is_admitted_when_the_gate_is_closed():
+    """圏外の質問。ベクトル側が1件も閾値を通らなければ、語が一致しても採用しない。
+    BM25スコアに下限を置かない代わりに、この関門が圏外を落とす。"""
+    collection, index = _hybrid(
+        ["ファインチューニングとは追加学習である", "無関係な文章"],
+        [0.60, 0.62],
+    )
+    assert search(collection, "ファインチューニング", index=index, threshold=0.5) == []
+
+
+def test_a_vector_hit_is_admitted_with_no_lexical_match():
+    """言い換えの質問はBM25では引けない。ベクトル側だけで通ること。"""
+    collection, index = _hybrid(["近い", "遠い"], [0.10, 0.90])
+    hits = search(collection, "まったく別の語", index=index, threshold=0.5)
+    assert [h.text for h in hits] == ["近い"]
+    assert hits[0].bm25_score is None
+
+
+def test_results_are_ordered_by_rrf_not_by_distance():
+    """両アームで上位のものが、ベクトル単独で1位のものより上に来る。"""
+    collection, index = _hybrid(
+        ["ファインチューニングの解説", "やや近いだけの文章"], [0.30, 0.20]
+    )
+    hits = search(collection, "ファインチューニング", index=index, threshold=0.5)
+    assert hits[0].text == "ファインチューニングの解説"
+
+
+def test_hits_carry_both_scores():
+    collection, index = _hybrid(["ファインチューニングの解説"], [0.30])
+    hit = search(collection, "ファインチューニング", index=index, threshold=0.5)[0]
+    assert hit.distance == 0.30
+    assert hit.bm25_score > 0
+    assert hit.rrf_score > 0
+
+
+def test_n_results_caps_the_output():
+    collection, index = _hybrid(
+        ["ファインチューニング一", "ファインチューニング二", "ファインチューニング三"],
+        [0.10, 0.11, 0.12],
+    )
+    hits = search(
+        collection, "ファインチューニング", index=index, threshold=0.5, n_results=2
+    )
+    assert len(hits) == 2
+
+
+def test_a_chunk_only_bm25_finds_is_fetched_from_the_collection():
+    """BM25側にしか現れないチャンクは本文もメタデータも持っていない。
+    collection.get で取りに行かないと、根拠として画面に出せない。"""
+    collection, index = _hybrid(
+        ["この資料の概要です", "ファインチューニングとは追加学習である"],
+        [0.10, 0.60],
+        vector_limit=1,
+    )
+    hits = search(collection, "ファインチューニング", index=index, threshold=0.5)
+    fetched = next(h for h in hits if h.text.startswith("ファインチューニング"))
+    assert fetched.distance is None
+    assert fetched.bm25_score > 0
+
+
+def test_a_stale_index_entry_is_skipped():
+    """インデックスは起動時のスナップショット。取り込みでチャンクが消えると
+    存在しないIDが残り、collection.get はその行を返さない。落とさず読み飛ばす。"""
+    collection, _ = _hybrid(["この資料の概要です"], [0.10])
+    stale = lexical.build(
+        ["id-0", "消えたID"],
+        ["この資料の概要です", "ファインチューニングとは追加学習である"],
+    )
+    hits = search(collection, "ファインチューニング", index=stale, threshold=0.5)
+    assert [h.text for h in hits] == ["この資料の概要です"]
+
+
+def test_build_index_over_an_empty_collection_is_safe():
+    assert build_index(_FakeCollection([], [], [])).document_count == 0

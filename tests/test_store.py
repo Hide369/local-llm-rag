@@ -1,5 +1,6 @@
 import pytest
 
+from ingest import store
 from ingest.embedder import EMBED_DIM
 from ingest.models import Chunk
 from ingest.store import (
@@ -118,3 +119,30 @@ def test_metadata_survives_a_round_trip(collection):
     assert stored["location"] == 1
     assert stored["location_type"] == "page"
     assert stored["ocr"] is False
+
+
+def test_all_documents_returns_ids_and_texts_in_the_same_order(collection):
+    """BM25インデックスはIDと本文の並びが一致していることに依存する。
+
+    collection フィクスチャが提供する例外安全なテアダウン（generator fixture
+    の teardown は assert 失敗時も実行される）を活用する。
+    """
+    collection.add(
+        ids=["x", "y"],
+        documents=["本文エックス", "本文ワイ"],
+        embeddings=[[0.1], [0.2]],
+        metadatas=[{"source": "a.pptx"}, {"source": "b.pptx"}],
+    )
+    ids, documents = store.all_documents(collection)
+    assert dict(zip(ids, documents)) == {"x": "本文エックス", "y": "本文ワイ"}
+
+
+def test_all_documents_on_an_empty_collection_returns_two_empty_lists(collection):
+    """フィクスチャが提供する新規の空 collection に対して検査する。
+
+    collection フィクスチャは pytest によってテストごとに新規生成され、
+    例外安全なテアダウン（generator fixture の teardown）で
+    EphemeralClient の共有キャッシュをクリアするため、
+    テスト間での漏れを防ぐ。
+    """
+    assert store.all_documents(collection) == ([], [])
