@@ -130,6 +130,45 @@ def test_a_follow_up_question_is_searched_with_the_previous_one(app):
     ]
 
 
+def test_the_model_is_picked_from_the_two_compared_models(app):
+    """モデル名の自由入力ではなく、READMEで比較した2モデルからの選択にする。
+
+    自由入力だと打ち間違いが生成時のAPIErrorになるまで分からなかった。
+    既定は qwen2.5:7b-instruct のまま（README「モデルの比較」）。
+    """
+    with (
+        patch("chromadb.PersistentClient", _stub_persistent_client({"source": "a.md"})),
+        patch("openai.OpenAI", _fake_openai("回答")),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+    ):
+        app.run()
+
+    assert not app.exception
+    assert app.selectbox[0].options == ["qwen2.5:7b-instruct", "llama3.1:8b"]
+    assert app.selectbox[0].value == "qwen2.5:7b-instruct"
+
+
+def test_the_picked_model_is_the_one_that_generates(app):
+    """プルダウンで選んだモデルが実際の生成に渡る。見た目だけの切り替えにしない。"""
+    openai_factory = _fake_openai("回答です。")
+    client = openai_factory.return_value
+    with (
+        patch("chromadb.PersistentClient", _stub_persistent_client({"source": "a.md"})),
+        patch("openai.OpenAI", openai_factory),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+    ):
+        app.run()
+        app.selectbox[0].set_value("llama3.1:8b").run()
+        app.chat_input[0].set_value("運転音は？").run()
+
+    assert not app.exception
+    used = [
+        call.kwargs["model"]
+        for call in client.chat.completions.create.call_args_list
+    ]
+    assert used == ["llama3.1:8b"]
+
+
 def _openai_for_the_catalog_route(condition_json, ranking_json, answer):
     """条件抽出・並べ替え抽出・生成の3種類の呼び出しを引数で見分けて返す。
 
