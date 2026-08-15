@@ -27,7 +27,12 @@ def test_punctuation_separates_segments():
 
 def test_bigrams_do_not_cross_a_boundary():
     """区切りを跨いだbigramを作ると、実在しない語で一致してしまう。"""
-    assert "犬猫" not in lexical.tokenize("犬 猫")
+    tokens = lexical.tokenize("いぬ ねこ")
+    # 同一セグメント内のbigramは作られる
+    assert "いぬ" in tokens
+    assert "ねこ" in tokens
+    # 境界を跨ぐbigramは作られない
+    assert "ぬね" not in tokens
 
 
 def test_empty_text_produces_no_tokens():
@@ -36,3 +41,55 @@ def test_empty_text_produces_no_tokens():
 
 def test_whitespace_only_text_produces_no_tokens():
     assert lexical.tokenize("  \n  ") == []
+
+
+def _index():
+    """語が一切重ならない3文書。順位の判定を明確にするため。"""
+    return lexical.build(
+        ["a", "b", "c"],
+        ["ファインチューニング", "有給休暇", "洗濯容量"],
+    )
+
+
+def test_the_document_containing_the_term_is_returned():
+    assert [doc for doc, _ in lexical.search(_index(), "ファインチューニング", limit=3)] == ["a"]
+
+
+def test_documents_sharing_no_token_score_nothing():
+    """スコア0の文書を返すと、無関係な文書がRRFの順位に紛れ込む。"""
+    assert lexical.search(_index(), "天気", limit=3) == []
+
+
+def test_empty_index_returns_nothing():
+    assert lexical.search(lexical.build([], []), "何か", limit=3) == []
+
+
+def test_a_rare_term_outscores_a_common_one():
+    """IDF。全文書に出る語は識別力を持たない。文字bigramの部分一致による
+    ノイズを押さえているのもこの項である。"""
+    index = lexical.build(["a", "b", "c"], ["共通語 希少語", "共通語", "共通語"])
+    rare = dict(lexical.search(index, "希少語", limit=3))["a"]
+    common = dict(lexical.search(index, "共通語", limit=3))["a"]
+    assert rare > common
+
+
+def test_a_shorter_document_outscores_a_longer_one():
+    """文書長による正規化。同じ1回の出現でも、短い文書のほうが主題である。"""
+    index = lexical.build(["short", "long"], ["希少語", "希少語 " + "詰め物 " * 30])
+    assert lexical.search(index, "希少語", limit=2)[0][0] == "short"
+
+
+def test_more_occurrences_score_higher():
+    index = lexical.build(["once", "twice"], ["希少語 詰め物", "希少語 希少語"])
+    assert lexical.search(index, "希少語", limit=2)[0][0] == "twice"
+
+
+def test_limit_caps_the_number_of_results():
+    index = lexical.build(["a", "b", "c"], ["希少語", "希少語", "希少語"])
+    assert len(lexical.search(index, "希少語", limit=2)) == 2
+
+
+def test_results_are_ordered_deterministically():
+    """同点の文書はID順にする。順位が揺れるとRRFの結果が再現しなくなる。"""
+    index = lexical.build(["c", "a", "b"], ["希少語", "希少語", "希少語"])
+    assert [doc for doc, _ in lexical.search(index, "希少語", limit=3)] == ["a", "b", "c"]
