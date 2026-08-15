@@ -125,6 +125,12 @@ UIサイドバーの「差分を取り込む」も同じ処理を呼ぶ。
 | `EMBED_BATCH_SIZE` | 8 | `ingest/embedder.py` |
 | `DEFAULT_OLLAMA_HOST` | `http://127.0.0.1:11434` | `ingest/embedder.py` |
 | `RELEVANCE_THRESHOLD` | 0.50 | `ingest/retrieval.py` |
+| `CANDIDATE_COUNT` | 30 | `ingest/retrieval.py` |
+| `RRF_K` | 60 | `ingest/retrieval.py` |
+| `BM25_K1` | 1.2 | `ingest/lexical.py` |
+| `BM25_B` | 0.75 | `ingest/lexical.py` |
+| `ROW_TOLERANCE` | 228600 | `ingest/parsers/pptx_parser.py` |
+| `GROUP_TARGET_CHARS` | 200 | `ingest/parsers/pptx_parser.py` |
 
 ## テスト
 

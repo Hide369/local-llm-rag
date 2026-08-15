@@ -22,6 +22,10 @@ SEARCH_RESULT_COUNT = 4
 # 挨拶のような意味的に空な入力（実測 0.349〜0.381）は距離では切り分けられない。
 # コーパスの重心付近に落ちるためで、これは ingest/prompting.py の
 # 「根拠がなければ答えない」プロンプトが受け持つ。
+# この分離はPPTXの再分割に依存している。テキストボックス単位に分割したことで
+# 関連する質問の距離が下がり（「ファインチューニング」は0.523→0.456）、この
+# しきい値の内側に収まった。将来の資料入れ替えでこの分離が0.456／0.522ほど
+# きれいに離れなければ、ゲートは元々救おうとしていたケースを取りこぼす。
 RELEVANCE_THRESHOLD = 0.50
 
 # 各アームから取る候補数。融合してから採否を決めるため、しきい値付近のチャンクが
@@ -145,6 +149,12 @@ def search(
     # 圏内判定はベクトル側だけで行う。Chromaは距離の昇順で返すので、
     # 1件でも閾値を通っていればこの質問は圏内である。
     in_domain = any(distance <= limit for distance, _, _ in vector_rows.values())
+    if not in_domain:
+        # 圏外ならこの先の結果は必ず空になる（near は distance <= limit を要求し、
+        # BM25分岐は in_domain を要求するため、どのチャンクも通らない）。ここで
+        # 打ち切っても結果は変わらないが、無駄なBM25検索と collection.get の
+        # 往復を省ける。ゲートを判定条件の奥に埋めず、ここで可視化する意味もある。
+        return []
 
     lexical_ranked = lexical.search(index, query, CANDIDATE_COUNT) if index else []
     lexical_scores = dict(lexical_ranked)
@@ -161,7 +171,7 @@ def search(
         ):
             vector_rows[chunk_id] = (None, text, metadata)
 
-    hits = []
+    pairs: list[tuple[str, Hit]] = []
     for chunk_id in set(vector_ranks) | set(lexical_ranks):
         row = vector_rows.get(chunk_id)
         # インデックスは起動時のスナップショットである。取り込みで消えたチャンクの
@@ -178,25 +188,31 @@ def search(
             rrf_score += 1 / (RRF_K + vector_ranks[chunk_id])
         if chunk_id in lexical_ranks:
             rrf_score += 1 / (RRF_K + lexical_ranks[chunk_id])
-        hits.append(
-            Hit(
-                text=text,
-                distance=distance,
-                metadata=metadata,
-                bm25_score=score,
-                rrf_score=rrf_score,
+        pairs.append(
+            (
+                chunk_id,
+                Hit(
+                    text=text,
+                    distance=distance,
+                    metadata=metadata,
+                    bm25_score=score,
+                    rrf_score=rrf_score,
+                ),
             )
         )
-    # 同点はベクトル距離の昇順、次にBM25スコアの降順で決める。並びを決定的に
-    # しないと、同じ質問で根拠の順序が変わって再現しなくなる。
-    hits.sort(
-        key=lambda hit: (
-            -hit.rrf_score,
-            hit.distance if hit.distance is not None else 99.0,
-            -(hit.bm25_score or 0.0),
+    # 同点はベクトル距離の昇順、次にBM25スコアの降順、最後にチャンクIDで決める。
+    # 上位2つだけでは埋まらない残りの同点が、`set(vector_ranks) | set(lexical_ranks)`
+    # というsetの反復順（PYTHONHASHSEEDに依存する）に落ちてしまう。並びを
+    # 決定的にしないと、同じ質問で根拠の順序が変わって再現しなくなる。
+    pairs.sort(
+        key=lambda pair: (
+            -pair[1].rrf_score,
+            pair[1].distance if pair[1].distance is not None else 99.0,
+            -(pair[1].bm25_score or 0.0),
+            pair[0],
         )
     )
-    return hits[:n_results]
+    return [hit for _, hit in pairs[:n_results]]
 
 
 def build_index(collection):

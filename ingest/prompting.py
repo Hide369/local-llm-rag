@@ -13,7 +13,7 @@ def build_prompt(question: str, hits) -> str:
     次のターン以降に古いコンテキストが混ざる。
 
     しきい値0.50は「関連度が高い」ことまでは保証しない。挨拶のような
-    意味的に空な入力は、コーパスの重心付近に落ちて距離0.41前後になり、
+    意味的に空な入力は、コーパスの重心付近に落ちて距離0.349〜0.381になり、
     しきい値では弾けない（ingest/retrieval.pyのコメント参照）。そのため
     ここでは、根拠が質問に無関係なら使わずにその旨を答えるようモデルに
     明示的に指示する。距離やUI側でのフィルタでは解決しない問題であり、
@@ -91,11 +91,16 @@ def format_hit_caption(hit) -> str:
 
     BM25だけで当たったヒットは距離を持たず、ベクトルだけで当たったヒットは
     スコアを持たない。素直に書式化すると 'None' が画面に出る。
+
+    distance が None のヒットは「しきい値を超えた」のではなく、ベクトル側の
+    CANDIDATE_COUNT件の候補に入らず距離を測っていない。31位で距離0.49という
+    こともあり得るため、「圏外」と書くと測定していない事実を測定した事実
+    であるかのように誤って伝える。
     """
     distance = (
         f"cosine距離 {hit.distance:.3f}（しきい値 {RELEVANCE_THRESHOLD}）"
         if hit.distance is not None
-        else "cosine距離 圏外（BM25で採用）"
+        else "cosine距離 未計測（BM25で採用）"
     )
     score = (
         f"BM25 {hit.bm25_score:.2f}" if hit.bm25_score is not None else "BM25 一致なし"

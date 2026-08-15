@@ -133,8 +133,9 @@ def test_caption_shows_the_citation_and_both_scores():
 
 
 def test_caption_handles_a_hit_found_only_by_bm25():
-    """ゲート方式では、距離がしきい値を超えたチャンクもBM25側の一致で採用される。
-    そのヒットは距離を持たないため、素直に書式化すると 'None' が画面に出る。"""
+    """ゲート方式では、ベクトル側の候補に入らなかったチャンクもBM25側の一致で
+    採用される。そのヒットは距離を測っていないため、素直に書式化すると
+    'None' が画面に出る。"""
     caption = format_hit_caption(_slide_hit(None, 4.25))
     assert "None" not in caption
     assert "4.25" in caption
