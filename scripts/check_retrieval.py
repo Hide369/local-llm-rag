@@ -1,12 +1,22 @@
-"""BM25_FLOORを決めるために、ベクトルとBM25の両アームを実測する。
+"""ハイブリッド検索のしきい値と回帰ケースを実測する。
 
-関連する質問の最大距離 < 圏外の質問の最小距離 が成り立てば足切りが機能する。
-成り立たない場合はチャンクサイズか埋め込みモデルの見直しが必要。
+判定は2つある。
+
+1. ゲートの分離: 関連する質問の最大距離 ≤ RELEVANCE_THRESHOLD < 圏外の質問の最小距離。
+   ベクトル側は圏内・圏外を分ける唯一の関門なので、ここが崩れると圏外の質問にも
+   回答してしまう。成り立たない場合はしきい値の再調整か、チャンクサイズ・
+   埋め込みモデルの見直しが必要。
+2. 回帰ケース: 設計書 第1節の2問で、BM25側の上位に期待する出典が入ること。
+   圏内と判定された質問のBM25ヒットはスコアを問わず採用されるため、これがそのまま
+   「欲しいチャンクが根拠に入るか」になる。
+
+数値のBM25_FLOORは設けない。理由は main() 末尾のコメントを参照。
 
 挨拶のような意味的に空な入力は、コーパスの重心付近に埋め込まれるため、際どい
-（弱い）関連質問と距離だけでは分離できない。これは実測で確認された構造的な
-限界であり、合否判定の対象には含めない。この入力は Task 10 の
-ingest/prompting.py にある「根拠がなければ答えない」プロンプトが受け持つ。
+（弱い）関連質問と距離だけでは分離できない。これは実測で確認された構造的な限界で
+あり、合否判定の対象には含めない。挨拶は元からベクトル側のゲートを通っており
+（実測0.349〜0.381）、ゲート方式でもこの扱いは変わらない。この入力は
+ingest/prompting.py の「根拠がなければ答えない」プロンプトが受け持つ。
 """
 import chromadb
 
@@ -33,7 +43,8 @@ RELEVANT = [
     "一人暮らし向けのコンパクトな洗濯機を教えてください",
     # ハイブリッド検索の回帰ケース（spec 1）。いずれも
     # 「生成AI活用セミナー.pptx スライド11」が出典として期待される。
-    # 前者はベクトル4位・距離0.514で足切りされ、後者はベクトル最良が0.523で全滅していた。
+    # 前者はベクトル4位で足切りされ、後者はベクトル最良が全滅していた。
+    # 再チャンク化後の実測では両方ともゲートを通る（0.414 / 0.456）。詳しくは REGRESSION を参照。
     "ファインチューニングについて教えてほしい",
     "ファインチューニング",
 ]
@@ -53,6 +64,17 @@ GREETINGS = [
     "ありがとう",
 ]
 
+# 設計書 第1節の発端となった2問。ゲート方式では圏内と判定された質問のBM25ヒットが
+# スコアを問わず採用されるため、BM25側の上位に期待する出典が入るかがそのまま合否になる。
+# ベクトル側だけでは スライド11 は4位0.529で足切りされ、この2問は救えなかった。
+# RELEVANT にも入れてあるのは、距離の分離判定にこの2問も含めるためである。
+REGRESSION = [
+    "ファインチューニングについて教えてほしい",
+    "ファインチューニング",
+]
+REGRESSION_EXPECTED = "生成AI活用セミナー.pptx スライド11"
+REGRESSION_TOP_N = 3
+
 
 def _vector_best(collection, question, session):
     """ベクトル側の最良ヒット。距離と出典を返す。"""
@@ -68,17 +90,33 @@ def _vector_best(collection, question, session):
     return hit.distance, hit.citation
 
 
+def _lexical_top(collection, index, question, limit):
+    """BM25側の上位を (出典, スコア) の並びで返す。スコアの高い順。
+
+    collection.get はIDの並び順を保証しないため、取得したメタデータを引き当てて
+    lexical.search が返した順に組み直す。
+    """
+    ranked = lexical.search(index, question, limit=limit)
+    if not ranked:
+        return []
+    found = collection.get(
+        ids=[chunk_id for chunk_id, _ in ranked], include=["documents", "metadatas"]
+    )
+    metadata_by_id = dict(zip(found["ids"], found["metadatas"]))
+    return [
+        (Hit(text="", distance=None, metadata=metadata_by_id[chunk_id]).citation, score)
+        for chunk_id, score in ranked
+        if chunk_id in metadata_by_id
+    ]
+
+
 def _lexical_best(collection, index, question):
     """BM25側の最良ヒット。スコアと出典を返す。該当なしは (0.0, "—")。"""
-    ranked = lexical.search(index, question, limit=1)
-    if not ranked:
+    top = _lexical_top(collection, index, question, 1)
+    if not top:
         return 0.0, "—"
-    chunk_id, score = ranked[0]
-    found = collection.get(ids=[chunk_id], include=["documents", "metadatas"])
-    hit = Hit(
-        text=found["documents"][0], distance=None, metadata=found["metadatas"][0]
-    )
-    return score, hit.citation
+    citation, score = top[0]
+    return score, citation
 
 
 def _report(collection, index, session, title, questions):
@@ -124,26 +162,44 @@ def main() -> int:
     relevant_max_distance = max(distance for distance, _ in relevant)
     out_of_domain_min_distance = min(distance for distance, _ in out_of_domain)
     out_of_domain_max_bm25 = max(score for _, score in out_of_domain)
-    # ベクトル側の足切りを通らない関連質問は、BM25側が拾わなければ救えない。
-    rescued = [score for distance, score in relevant if distance > RELEVANCE_THRESHOLD]
+
+    print(f"\n=== 回帰ケース（BM25側の上位{REGRESSION_TOP_N}件）===")
+    regression_ok = True
+    for question in REGRESSION:
+        top = _lexical_top(collection, index, question, REGRESSION_TOP_N)
+        hit = any(citation.startswith(REGRESSION_EXPECTED) for citation, _ in top)
+        regression_ok = regression_ok and hit
+        print(f"  {question} — {'OK' if hit else 'NG'}")
+        for rank, (citation, score) in enumerate(top, start=1):
+            print(f"      {rank}. {score:6.2f}  {citation}")
 
     print(f"\n関連の最大距離: {relevant_max_distance:.3f}")
     print(f"圏外の最小距離: {out_of_domain_min_distance:.3f}")
-    print(f"圏外の最大BM25: {out_of_domain_max_bm25:.2f}")
-    if rescued:
-        print(f"BM25で救う必要がある関連質問の最小BM25: {min(rescued):.2f}")
+    # 数値のBM25_FLOORを設けない理由の記録。床は一応引ける（圏外の最大BM25 <
+    # 回帰ケースのBM25スコア）が、BM25スコアは正規化されておらずクエリ長にほぼ
+    # 比例するため、長い圏外質問ひとつで容易に逆転する。ゲート方式は距離だけで
+    # 圏外を落とすのでこの脆さを持たない。将来また床を検討する人のために測定値を残す。
+    print(f"圏外の最大BM25（参考。床は設けない）: {out_of_domain_max_bm25:.2f}")
 
-    if not rescued:
-        print("ベクトル側だけで全件通っています。BM25_FLOOR は現状の値のままで構いません。")
-        return 0
-    if out_of_domain_max_bm25 < min(rescued):
-        print(f"分離できています。推奨 BM25_FLOOR: {(out_of_domain_max_bm25 + min(rescued)) / 2:.2f}")
-        return 0
-    print(
-        "BM25では分離できていません。spec 16 の縮退構成"
-        "（ベクトル側を圏内判定のゲートに使う）へ切り替えてください。"
-    )
-    return 1
+    # 実測が分離しているだけでは足りない。実際のゲートは RELEVANCE_THRESHOLD で
+    # 切るので、その定数が実測値の間に収まっていることまで確かめる。
+    separated = relevant_max_distance <= RELEVANCE_THRESHOLD < out_of_domain_min_distance
+    if separated:
+        print(
+            f"ゲートは分離できています: {relevant_max_distance:.3f} ≤ "
+            f"{RELEVANCE_THRESHOLD} < {out_of_domain_min_distance:.3f}"
+        )
+    else:
+        print(
+            f"ゲートが分離できていません（RELEVANCE_THRESHOLD={RELEVANCE_THRESHOLD}）。"
+            "しきい値の再調整か、チャンクサイズ・埋め込みモデルの見直しが必要です。"
+        )
+    if not regression_ok:
+        print(
+            f"回帰ケースが失敗しています。BM25側の上位{REGRESSION_TOP_N}件に "
+            f"{REGRESSION_EXPECTED} が入りません。"
+        )
+    return 0 if separated and regression_ok else 1
 
 
 if __name__ == "__main__":
