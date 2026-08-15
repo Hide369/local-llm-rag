@@ -36,8 +36,8 @@ def tokenize(text: str) -> list[str]:
     return tokens
 
 
-# Okapi BM25の標準的な値。実データで調整が要るのは BM25_FLOOR のほうであり、
-# ここは動かさない。
+# Okapi BM25の標準的な値。実データで調整が要るのは ingest/retrieval.py の圏内判定
+# （RELEVANCE_THRESHOLD）のほうであり、ここは動かさない。
 BM25_K1 = 1.2
 BM25_B = 0.75
 
