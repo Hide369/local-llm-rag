@@ -180,3 +180,25 @@ def test_metadata_is_unchanged_for_units_without_attributes():
     """PDF・PPTX・DOCX由来のチャンクは今までどおりのキーだけを持つ。"""
     metadata = _chunk([_unit("これは十分な長さのある本文です。")])[0].metadata
     assert set(metadata) == RESERVED_METADATA_KEYS
+
+
+def test_units_sharing_a_location_get_distinct_ids():
+    """PPTXは1スライドが複数ユニットになる（spec 7.5）。IDが衝突すると
+    ChromaDBが黙って上書きし、チャンクが消える。例外は出ない。"""
+    units = [
+        _unit("スライドの前半について述べた文章です。", location=11, location_type="slide"),
+        _unit("スライドの後半について述べた文章です。", location=11, location_type="slide"),
+    ]
+    chunks = _chunk(units)
+    assert len(chunks) == 2
+    assert len({chunk.id for chunk in chunks}) == 2
+    assert [chunk.metadata["chunk_index"] for chunk in chunks] == [0, 1]
+
+
+def test_each_location_numbers_its_chunks_from_zero():
+    """ロケーションが違えば0から振り直す。既存形式のIDを変えないための境界。"""
+    units = [
+        _unit("1ページ目の文章です。ここに本文が入ります。", location=1),
+        _unit("2ページ目の文章です。ここに本文が入ります。", location=2),
+    ]
+    assert [chunk.metadata["chunk_index"] for chunk in _chunk(units)] == [0, 0]

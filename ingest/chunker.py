@@ -4,6 +4,8 @@
 実測では就業規則841字/ページ、PPTX304字/スライド、画像PDF約1,673字/ページであり、
 議事録(551〜615字)は分割されず1件1チャンクに収まる。
 """
+from collections import Counter
+
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from ingest.models import Chunk, ParsedUnit
@@ -66,13 +68,23 @@ def chunk_units(
 
     ユニットをまたいで結合しない。結合するとチャンクがページ境界を越え、
     「何ページ目の記述か」を一意に示せなくなる。
+
+    チャンク番号はユニット内ではなく (location_type, location) ごとの通し番号に
+    する。PPTXは1スライドが複数ユニットになるため（spec 7.5）、ユニット内で
+    0から振り直すとIDが衝突し、ChromaDBが例外を出さずに上書きしてチャンクを失う。
+    1ロケーション1ユニットの他形式では 0,1,2… の並びが従来と変わらないため、
+    既存チャンクのIDは1件も変化しない。
     """
     chunks: list[Chunk] = []
+    numbers: Counter = Counter()
     for unit in units:
         text = unit.text.strip()
         if not text:
             continue
-        for index, part in enumerate(_split(text)):
+        location_key = (unit.location_type, unit.location)
+        for part in _split(text):
+            index = numbers[location_key]
+            numbers[location_key] += 1
             chunks.append(
                 Chunk(
                     id=f"{source}::{unit.location_type}{unit.location}::{index}",
