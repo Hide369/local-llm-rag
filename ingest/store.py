@@ -55,3 +55,15 @@ def delete_orphans(collection, known_sources: set[str]) -> list[str]:
     for source in orphans:
         collection.delete(where={"source": source})
     return orphans
+
+
+def all_documents(collection) -> tuple[list[str], list[str]]:
+    """全チャンクのIDと本文を、並びを揃えて返す。
+
+    BM25インデックスをディスクに持たず起動時に組み直すため、その入力を
+    ここから供給する。DBを唯一の情報源に保つための経路である。
+    """
+    if collection.count() == 0:
+        return [], []
+    found = collection.get(include=["documents"])
+    return found["ids"], found["documents"]

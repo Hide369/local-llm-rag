@@ -5,6 +5,7 @@
 """
 from dataclasses import dataclass
 
+from ingest import lexical, store
 from ingest.embedder import embed_query
 
 SEARCH_RESULT_COUNT = 4
@@ -95,3 +96,12 @@ def search(collection, query, session=None, threshold=None, n_results=SEARCH_RES
         for text, distance, metadata in hits
         if text and distance <= limit
     ]
+
+
+def build_index(collection):
+    """DBの全チャンクからBM25インデックスを組む。
+
+    永続化しないのは、DBとファイルで状態が二重管理になると差分取り込みの
+    たびに食い違い、例外も出ないまま検索結果が古くなるためである。
+    """
+    return lexical.build(*store.all_documents(collection))
