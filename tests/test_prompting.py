@@ -1,4 +1,9 @@
-from ingest.prompting import build_catalog_prompt, build_prompt, format_report
+from ingest.prompting import (
+    build_catalog_prompt,
+    build_prompt,
+    format_hit_caption,
+    format_report,
+)
 from ingest.retrieval import Hit
 from scripts.ingest_source import IngestReport
 
@@ -103,3 +108,40 @@ def test_catalog_prompt_forbids_inventing_values():
     """表に無い数値を補われると、絞り込みで正確にした意味が消える。"""
     prompt = build_catalog_prompt("26dB以下は", "表")
     assert "推測" in prompt
+
+
+def _slide_hit(distance, bm25_score):
+    return Hit(
+        text="本文",
+        distance=distance,
+        metadata={
+            "source": "生成AI活用セミナー.pptx",
+            "location_type": "slide",
+            "location": 11,
+            "ocr": False,
+            "heading": "",
+        },
+        bm25_score=bm25_score,
+    )
+
+
+def test_caption_shows_the_citation_and_both_scores():
+    caption = format_hit_caption(_slide_hit(0.312, 4.25))
+    assert "生成AI活用セミナー.pptx スライド11" in caption
+    assert "0.312" in caption
+    assert "4.25" in caption
+
+
+def test_caption_handles_a_hit_found_only_by_bm25():
+    """ゲート方式では、距離がしきい値を超えたチャンクもBM25側の一致で採用される。
+    そのヒットは距離を持たないため、素直に書式化すると 'None' が画面に出る。"""
+    caption = format_hit_caption(_slide_hit(None, 4.25))
+    assert "None" not in caption
+    assert "4.25" in caption
+
+
+def test_caption_handles_a_hit_found_only_by_the_vector_arm():
+    """言い換えの質問は語が一致しない。BM25側が空でも壊れないこと。"""
+    caption = format_hit_caption(_slide_hit(0.312, None))
+    assert "None" not in caption
+    assert "0.312" in caption

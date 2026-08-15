@@ -12,8 +12,13 @@ import streamlit as st
 from openai import APIError, OpenAI
 
 from ingest import answer_text, catalog, conditions, embedder, store
-from ingest.prompting import build_catalog_prompt, build_prompt, format_report
-from ingest.retrieval import RELEVANCE_THRESHOLD, contextual_query, search
+from ingest.prompting import (
+    build_catalog_prompt,
+    build_prompt,
+    format_hit_caption,
+    format_report,
+)
+from ingest.retrieval import build_index, contextual_query, search
 from scripts.ingest_source import DEFAULT_SOURCE_DIR, ingest_directory
 
 DB_DIR = str(Path(__file__).parent / "chroma_db")
@@ -34,12 +39,27 @@ def get_schema(_collection):
     return conditions.available_keys(_collection)
 
 
+@st.cache_resource
+def get_index(_collection, chunk_count):
+    """BM25インデックスをDBから組む。
+
+    ディスクに持たないため起動のたびに作り直す。DBとファイルで状態が二重管理に
+    なると差分取り込みのたびに食い違い、例外も出ないまま検索結果が古くなるためで、
+    ingest/store.py の「信頼できる情報源は常にDBひとつにする」方針に揃えてある。
+
+    chunk_count を引数に取るのは、差分取り込みでチャンク数が変わったときに
+    キャッシュを無効化するため。先頭のアンダースコアはStreamlitにこの引数を
+    ハッシュさせないための目印で、ChromaDBのコレクションはハッシュ化できない。
+    """
+    return build_index(_collection)
+
+
 def render_hits(hits):
     if not hits:
         return
     with st.expander(f"参考にした情報（{len(hits)}件）"):
         for hit in hits:
-            st.caption(f"{hit.citation} ／ cosine距離 {hit.distance:.3f}（しきい値 {RELEVANCE_THRESHOLD}）")
+            st.caption(format_hit_caption(hit))
             st.write(hit.text)
 
 
@@ -66,6 +86,7 @@ SYSTEM_PROMPT = (
 )
 
 collection = get_collection(DB_DIR)
+index = get_index(collection, collection.count())
 st.sidebar.metric("インデックス済みチャンク", collection.count())
 
 st.sidebar.divider()
@@ -79,6 +100,8 @@ if st.sidebar.button("差分を取り込む"):
         with st.spinner("取り込み中…"):
             report = ingest_directory(DEFAULT_SOURCE_DIR, collection)
         st.sidebar.success(format_report(report))
+        # 取り込んだ資料がベクトル検索でだけ引ける状態になるのを防ぐ。
+        get_index.clear()
         st.rerun()
 
 if st.sidebar.button("会話履歴をリセット"):
@@ -154,7 +177,7 @@ if question:
             # モデルへ渡す質問は生のままにする。会話履歴は history で渡しており、
             # 継ぎ足した文字列まで質問として見せると同じ問いが二重になる。
             query = contextual_query(question, st.session_state.messages[:-1])
-            hits = search(collection, query)
+            hits = search(collection, query, index=index)
             user_content = build_prompt(question, hits)
     except embedder.EmbeddingError as error:
         search_error = error
