@@ -74,8 +74,13 @@ def render_evidence(message):
 st.set_page_config(page_title="社内文書RAGチャット")
 st.sidebar.title("設定")
 
-# 既定は qwen2.5:7b-instruct。llama3.1:8b もそのまま動く（README「モデルの比較」）。
-model = st.sidebar.text_input("モデル名", value="qwen2.5:7b-instruct")
+# READMEの「モデルの比較」で実測した2モデルだけを並べる。自由入力にしていた頃は
+# 打ち間違いや未取得のモデル名が、生成時のAPIErrorになるまで分からなかった。
+# 先頭が既定値。qwen2.5:7b-instruct を先に置いてあるのは、条件抽出の取りこぼしが
+# 少ない llama3.1:8b より遅く精度も劣るという実測（README）にもかかわらず、
+# 既定を変えるのは本節の変更範囲外だからである。
+MODELS = ["qwen2.5:7b-instruct", "llama3.1:8b"]
+model = st.sidebar.selectbox("モデル名", MODELS)
 temperature = st.sidebar.slider("Temperature", 0.0, 1.0, 0.3, 0.1)
 # サイドバーには出さない。利用者に編集させる項目ではないため。
 # 出典付き回答の指示は ingest/prompting.py が質問側に組み込む。ここは口調と
