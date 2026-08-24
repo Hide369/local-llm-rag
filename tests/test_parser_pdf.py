@@ -1,5 +1,8 @@
+import io
+
 import pymupdf
 import pytest
+from PIL import Image
 
 from ingest.parsers import parse
 from ingest.parsers.pdf_parser import OCR_MIN_CHARS, parse_pdf
@@ -27,6 +30,42 @@ def text_pdf(tmp_path):
 def image_pdf(tmp_path):
     """テキストを持たない白紙ページ = 画像PDFと同じ扱いになる。"""
     return _make_pdf(tmp_path, [""])
+
+
+def _png_bytes(width, height, color="red"):
+    buf = io.BytesIO()
+    Image.new("RGB", (width, height), color).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _make_pdf_with_image(tmp_path, text, image_bytes, filename="画像入り.pdf"):
+    doc = pymupdf.open()
+    page = doc.new_page()
+    if text:
+        page.insert_text((72, 72), text, fontsize=14)
+    page.insert_image(pymupdf.Rect(50, 200, 250, 400), stream=image_bytes)
+    path = tmp_path / filename
+    doc.save(path)
+    doc.close()
+    return path
+
+
+@pytest.fixture
+def pdf_with_large_image(tmp_path):
+    return _make_pdf_with_image(
+        tmp_path,
+        "Chapter one has plenty of extractable text here.",
+        _png_bytes(300, 300),
+    )
+
+
+@pytest.fixture
+def pdf_with_small_image(tmp_path):
+    return _make_pdf_with_image(
+        tmp_path,
+        "Chapter one has plenty of extractable text here.",
+        _png_bytes(40, 40),
+    )
 
 
 def test_text_page_is_extracted_without_ocr(text_pdf):
@@ -105,3 +144,53 @@ def test_page_one_under_threshold_is_sent_to_ocr(tmp_path):
 
 def test_dispatch_handles_pdf(text_pdf):
     assert parse(text_pdf)[0].location_type == "page"
+
+
+def test_caption_image_not_called_when_not_provided(pdf_with_large_image):
+    def _fail(_bytes):
+        raise AssertionError("caption_imageが未指定なら呼ばれてはいけない")
+
+    units = parse_pdf(pdf_with_large_image, ocr_page=_fail, caption_image=None)
+    assert "[図の説明]" not in units[0].text
+    assert units[0].vlm is False
+
+
+def test_large_embedded_image_is_captioned(pdf_with_large_image):
+    def _ocr_not_called(_page):
+        raise AssertionError("テキストがあるページでOCRを呼んではいけない")
+
+    units = parse_pdf(
+        pdf_with_large_image,
+        ocr_page=_ocr_not_called,
+        caption_image=lambda _bytes: "赤い正方形の図です。",
+    )
+    assert "Chapter one" in units[0].text
+    assert "[図の説明] 赤い正方形の図です。" in units[0].text
+    assert units[0].vlm is True
+
+
+def test_small_embedded_image_is_not_captioned(pdf_with_small_image):
+    def _fail(_bytes):
+        raise AssertionError("閾値未満の画像でcaption_imageが呼ばれてはいけない")
+
+    def _ocr_not_called(_page):
+        raise AssertionError("テキストがあるページでOCRを呼んではいけない")
+
+    units = parse_pdf(pdf_with_small_image, ocr_page=_ocr_not_called, caption_image=_fail)
+    assert "[図の説明]" not in units[0].text
+    assert units[0].vlm is False
+
+
+def test_caption_failure_is_skipped_with_a_warning(pdf_with_large_image, capsys):
+    from ingest.vlm import VlmError
+
+    def _ocr_not_called(_page):
+        raise AssertionError("テキストがあるページでOCRを呼んではいけない")
+
+    def _raise(_bytes):
+        raise VlmError("boom")
+
+    units = parse_pdf(pdf_with_large_image, ocr_page=_ocr_not_called, caption_image=_raise)
+    assert "[図の説明]" not in units[0].text
+    assert units[0].vlm is False
+    assert "boom" in capsys.readouterr().err
