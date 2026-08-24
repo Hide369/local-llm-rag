@@ -4,12 +4,19 @@
 初回の取り込みは13分かかるため、CLI (python -m scripts.ingest_source) で行う。
 このUIのボタンは差分取り込み（通常は数秒）を想定している。
 """
+import os
 from datetime import datetime
 from pathlib import Path
 
 import chromadb
 import streamlit as st
+from dotenv import load_dotenv
 from openai import APIError, OpenAI
+
+# OLLAMA_HOST を ingest.embedder がインポート時に読むため、他のプロジェクト内
+# importより先に .env を読み込む必要がある。ColabのL4 GPUに繋ぐ場合、ここで
+# OLLAMA_HOST（ngrokのURL）と OLLAMA_API_KEY を上書きする。
+load_dotenv()
 
 from ingest import answer_text, catalog, conditions, embedder, store
 from ingest.prompting import (
@@ -123,7 +130,14 @@ for message in st.session_state.messages:
         st.write(message["content"])
         render_evidence(message)
 
-client = OpenAI(api_key="ollama", base_url=f"{embedder.OLLAMA_HOST}/v1")
+# OLLAMA_API_KEY はColab側のリバースプロキシ向け。api_key="ollama" はOllama自体には
+# 無視されるダミー値で、OpenAI SDKがAuthorizationヘッダーを要求するために渡している。
+_ollama_api_key = os.environ.get("OLLAMA_API_KEY")
+client = OpenAI(
+    api_key="ollama",
+    base_url=f"{embedder.OLLAMA_HOST}/v1",
+    default_headers={"X-API-Key": _ollama_api_key} if _ollama_api_key else None,
+)
 
 schema = get_schema(collection)
 

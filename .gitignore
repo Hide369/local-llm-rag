@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 
+# ColabのL4 GPUに接続するときの OLLAMA_HOST / OLLAMA_API_KEY を書く（秘密情報）
+.env
+
 # 仮想環境
 myvenv/
 myvenv313/

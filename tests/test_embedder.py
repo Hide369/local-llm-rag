@@ -139,3 +139,16 @@ def test_check_ollama_raises_when_model_missing():
     session = _FakeSession([_FakeResponse({"models": [{"name": "llama3.1:8b"}]})])
     with pytest.raises(EmbeddingError, match="bge-m3"):
         check_ollama(session=session)
+
+
+def test_new_session_has_no_api_key_header_by_default(monkeypatch):
+    monkeypatch.delenv("OLLAMA_API_KEY", raising=False)
+    session = embedder.new_session()
+    assert "X-API-Key" not in session.headers
+
+
+def test_new_session_adds_api_key_header_when_set(monkeypatch):
+    """Colab側のリバースプロキシがこのヘッダーでリクエストを認証する。"""
+    monkeypatch.setenv("OLLAMA_API_KEY", "secret123")
+    session = embedder.new_session()
+    assert session.headers["X-API-Key"] == "secret123"
