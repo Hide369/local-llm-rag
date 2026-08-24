@@ -30,8 +30,16 @@ class EmbeddingError(Exception):
 
 
 def new_session() -> requests.Session:
-    """接続を再利用するセッションを作る。使い回すことで1リクエストあたり約2秒を節約できる。"""
-    return requests.Session()
+    """接続を再利用するセッションを作る。使い回すことで1リクエストあたり約2秒を節約できる。
+
+    OLLAMA_API_KEY が設定されていれば X-API-Key ヘッダーを付ける。ColabのL4 GPUに
+    立てたリバースプロキシなど、認証つきのOllamaエンドポイントに繋ぐ場合に使う。
+    """
+    session = requests.Session()
+    api_key = os.environ.get("OLLAMA_API_KEY")
+    if api_key:
+        session.headers["X-API-Key"] = api_key
+    return session
 
 
 def _post_batch(session, texts: list[str]) -> list[list[float]]:

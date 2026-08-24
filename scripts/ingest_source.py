@@ -15,6 +15,11 @@ from datetime import date
 from pathlib import Path
 
 import chromadb
+from dotenv import load_dotenv
+
+# OLLAMA_HOST を ingest.embedder がインポート時に読むため、他のプロジェクト内
+# importより先に .env を読み込む必要がある。
+load_dotenv()
 
 from ingest import embedder, store
 from ingest.chunker import chunk_units

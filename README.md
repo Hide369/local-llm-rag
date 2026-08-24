@@ -1,7 +1,8 @@
 # ローカル文書RAGチャット
 
 PDF・PowerPoint・Word・Markdown を完全ローカルでベクトルDBに取り込み、出典付きで回答するRAGチャット。
-外部サービスへの送信は一切行わない。
+既定では外部サービスへの送信は一切行わない
+（GPUを強化したい場合のみ、任意で「[ColabのL4 GPUに接続する](#colabのl4-gpuに接続する)」を使える）。
 「運転音26dB以下で奥行き510mmに設置できる機種」のように数値条件を含む質問は、ベクトル検索ではなく
 Markdownのフロントマター由来のメタデータで機械的に絞り込み、条件に合う資料を全件そろえた表から回答する。
 
@@ -37,7 +38,7 @@ Ollamaインスタンスを別途用意する必要がある（例: `$env:OLLAMA
 ## セットアップ
 
 ```powershell
-.\myvenv313\Scripts\python.exe -m pip install pymupdf python-pptx python-docx rapidocr onnxruntime langchain-text-splitters chromadb streamlit openai requests pytest
+.\myvenv313\Scripts\python.exe -m pip install pymupdf python-pptx python-docx rapidocr onnxruntime langchain-text-splitters chromadb streamlit openai requests pytest python-dotenv
 ```
 
 ## 使い方
@@ -85,6 +86,43 @@ UIサイドバーの「差分を取り込む」も同じ処理を呼ぶ。
 `python.exe` と `pythonw.exe` 以外の `Scripts\*.exe` は現在すべて壊れている。
 `.exe` を使えるようにしたい場合は該当パッケージを
 `python.exe -m pip install --force-reinstall --no-deps <package>` で入れ直す。）
+
+## ColabのL4 GPUに接続する
+
+ローカルPCのGPUが非力な場合、生成・埋め込みの両方をGoogle Colab（有料版のL4 GPU）上の
+Ollamaに肩代わりさせられる。7B〜8Bクラスのモデル（`qwen2.5:7b-instruct` /
+`llama3.1:8b` / `bge-m3`）はL4の24GB VRAMに収まる。
+
+仕組みは単純で、[ingest/embedder.py](ingest/embedder.py) と [rag_chat_app.py](rag_chat_app.py)
+が接続先を環境変数 `OLLAMA_HOST` から読む既存の仕組みをそのまま使う。Colab側にOllamaと、
+`X-API-Key` ヘッダーで認証する軽量なリバースプロキシを立て、ngrokでその1ポートだけを
+外部公開する。
+
+**手順**
+
+1. [colab/run_ollama_server.ipynb](colab/run_ollama_server.ipynb) をGoogle Colabで開く
+   （ランタイム → ランタイムのタイプを変更 → GPU: L4）
+2. [ngrok](https://ngrok.com) の無料アカウントでauthtokenを取得しておく
+3. ノートブックのセルを上から順に実行する。最後に表示される `OLLAMA_HOST`
+   （ngrokの公開URL）と `OLLAMA_API_KEY` を控える
+4. ローカルで `.env.example` を `.env` にコピーし、その2つの値を書き込む
+5. いつも通り起動する
+
+   ```powershell
+   .\myvenv313\Scripts\python.exe -m streamlit run rag_chat_app.py
+   ```
+
+   サイドバーのモデル選択に関わらず、生成・埋め込みともにColab側のOllamaで処理される。
+
+**知っておくこと**
+
+- Colabのランタイムはアイドルや時間経過で切断される。常時稼働のAPIとしてではなく、
+  使う時だけノートブックを起動する運用を前提にしている。切断されたら
+  ノートブックを再実行し、新しいURLとAPIキーで `.env` を更新する。
+- `X-API-Key` が一致しないリクエストはプロキシが401で拒否するが、ngrokのURLと
+  APIキー自体は他人に共有しないこと（Colab上の資料・会話内容に到達できてしまう）。
+- ローカルのOllamaに戻すには、`.env` の `OLLAMA_HOST` / `OLLAMA_API_KEY` を削除するか
+  コメントアウトすればよい（既定値の `http://127.0.0.1:11434` に戻る）。
 
 ## 構成
 
