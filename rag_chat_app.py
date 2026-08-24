@@ -18,7 +18,7 @@ from openai import APIError, OpenAI
 # OLLAMA_HOST（ngrokのURL）と OLLAMA_API_KEY を上書きする。
 load_dotenv()
 
-from ingest import answer_text, catalog, conditions, embedder, store
+from ingest import answer_text, catalog, conditions, embedder, store, vlm
 from ingest.prompting import (
     build_catalog_prompt,
     build_prompt,
@@ -81,12 +81,13 @@ def render_evidence(message):
 st.set_page_config(page_title="社内文書RAGチャット")
 st.sidebar.title("設定")
 
-# READMEの「モデルの比較」で実測した2モデルだけを並べる。自由入力にしていた頃は
-# 打ち間違いや未取得のモデル名が、生成時のAPIErrorになるまで分からなかった。
+# ollama pull済みのモデルだけを並べる。自由入力にしていた頃は打ち間違いや
+# 未取得のモデル名が、生成時のAPIErrorになるまで分からなかった。
 # 先頭が既定値。qwen2.5:7b-instruct を先に置いてあるのは、条件抽出の取りこぼしが
-# 少ない llama3.1:8b より遅く精度も劣るという実測（README）にもかかわらず、
-# 既定を変えるのは本節の変更範囲外だからである。
-MODELS = ["qwen2.5:7b-instruct", "llama3.1:8b"]
+# 少ない llama3.1:8b より遅く精度も劣るという実測（READMEの「モデルの比較」）にも
+# かかわらず、既定を変えるのは本節の変更範囲外だからである。gpt-oss:20bは
+# 同じ形式の実測はまだ無い（動作確認のみ）。
+MODELS = ["qwen2.5:7b-instruct", "llama3.1:8b", "gpt-oss:20b"]
 model = st.sidebar.selectbox("モデル名", MODELS)
 temperature = st.sidebar.slider("Temperature", 0.0, 1.0, 0.3, 0.1)
 # サイドバーには出さない。利用者に編集させる項目ではないため。
@@ -103,14 +104,27 @@ st.sidebar.metric("インデックス済みチャンク", collection.count())
 
 st.sidebar.divider()
 st.sidebar.caption(f"取り込み元: {DEFAULT_SOURCE_DIR.name}/")
+# 既定はOFF。VLMは画像1枚ごとに同期の/api/chat呼び出しが挟まり、画像点数の多い
+# 資料では取り込み時間が大きく伸びるため（scripts/ingest_source.pyの--with-vlmと
+# 同じ配線をチェックボックスで明示させる）。
+use_vlm = st.sidebar.checkbox(
+    "画像も説明文化する（VLM・時間がかかります）",
+    help="PDF/PPTX内の図表・写真をOllamaのVLMで説明文にして取り込みます。",
+)
 if st.sidebar.button("差分を取り込む"):
     try:
         embedder.check_ollama()
-    except embedder.EmbeddingError as error:
+        if use_vlm:
+            vlm.check_vlm()
+    except (embedder.EmbeddingError, vlm.VlmError) as error:
         st.sidebar.error(str(error))
     else:
         with st.spinner("取り込み中…"):
-            report = ingest_directory(DEFAULT_SOURCE_DIR, collection)
+            report = ingest_directory(
+                DEFAULT_SOURCE_DIR,
+                collection,
+                caption_image=vlm.caption_image if use_vlm else None,
+            )
         st.sidebar.success(format_report(report))
         # 取り込んだ資料がベクトル検索でだけ引ける状態になるのを防ぐ。
         get_index.clear()

@@ -18,8 +18,11 @@ import streamlit as st
 from streamlit.testing.v1 import AppTest
 
 import ingest.retrieval as retrieval
+from ingest import embedder as embedder_module
 from ingest import store
+from ingest import vlm as vlm_module
 from ingest.embedder import EmbeddingError
+from scripts import ingest_source
 from tests.conftest import ephemeral_client
 
 APP_PATH = Path(__file__).resolve().parent.parent / "rag_chat_app.py"
@@ -130,8 +133,8 @@ def test_a_follow_up_question_is_searched_with_the_previous_one(app):
     ]
 
 
-def test_the_model_is_picked_from_the_two_compared_models(app):
-    """モデル名の自由入力ではなく、READMEで比較した2モデルからの選択にする。
+def test_the_model_is_picked_from_the_pulled_models(app):
+    """モデル名の自由入力ではなく、pull済みモデルの固定リストからの選択にする。
 
     自由入力だと打ち間違いが生成時のAPIErrorになるまで分からなかった。
     既定は qwen2.5:7b-instruct のまま（README「モデルの比較」）。
@@ -144,7 +147,11 @@ def test_the_model_is_picked_from_the_two_compared_models(app):
         app.run()
 
     assert not app.exception
-    assert app.selectbox[0].options == ["qwen2.5:7b-instruct", "llama3.1:8b"]
+    assert app.selectbox[0].options == [
+        "qwen2.5:7b-instruct",
+        "llama3.1:8b",
+        "gpt-oss:20b",
+    ]
     assert app.selectbox[0].value == "qwen2.5:7b-instruct"
 
 
@@ -238,6 +245,84 @@ def test_products_that_fail_the_condition_are_shown_but_not_sent_to_the_model(ap
     shown = "\n".join(element.value for element in app.code)
     assert "UD-1400X" in shown
     assert "条件を満たさないので選べない" in shown
+
+
+def test_vlm_checkbox_off_by_default_does_not_pass_caption_image(app):
+    """既定はOFF。scripts/ingest_source.pyのCLI既定（VLM無効）と揃える。"""
+    calls = []
+
+    def fake_ingest_directory(*args, **kwargs):
+        calls.append(kwargs)
+        return ingest_source.IngestReport()
+
+    with (
+        patch("chromadb.PersistentClient", _stub_persistent_client({"source": "a.md"})),
+        patch.object(embedder_module, "check_ollama", lambda *a, **k: None),
+        patch.object(ingest_source, "ingest_directory", fake_ingest_directory),
+    ):
+        app.run()
+        app.button[0].click().run()
+
+    assert not app.exception
+    assert calls == [{"caption_image": None}]
+
+
+def test_vlm_checkbox_on_checks_vlm_and_passes_caption_image(app):
+    """ONならvlm.check_vlm()で疎通確認してからcaption_imageを渡す。
+
+    scripts/ingest_source.pyの--with-vlmと同じ配線（先に疎通確認、成功したら
+    vlm.caption_imageを渡す）をStreamlit側でも踏襲する。
+    """
+    calls = []
+    checked = []
+
+    def fake_ingest_directory(*args, **kwargs):
+        calls.append(kwargs)
+        return ingest_source.IngestReport()
+
+    with (
+        patch("chromadb.PersistentClient", _stub_persistent_client({"source": "a.md"})),
+        patch.object(embedder_module, "check_ollama", lambda *a, **k: None),
+        patch.object(vlm_module, "check_vlm", lambda *a, **k: checked.append(True)),
+        patch.object(ingest_source, "ingest_directory", fake_ingest_directory),
+    ):
+        app.run()
+        app.checkbox[0].set_value(True).run()
+        app.button[0].click().run()
+
+    assert not app.exception
+    assert checked == [True]
+    assert calls == [{"caption_image": vlm_module.caption_image}]
+
+
+def test_vlm_checkbox_on_but_unreachable_reports_error_without_ingesting(app):
+    """VLMの疎通確認が失敗したら、取り込みを実行せずエラーだけ表示する。
+
+    460チャンクの処理が始まってから落ちるのを防ぐ、CLI版と同じ考え方
+    （ingest/vlm.py の check_vlm のdocstring）。
+    """
+    calls = []
+
+    def fake_ingest_directory(*args, **kwargs):
+        calls.append(kwargs)
+        return ingest_source.IngestReport()
+
+    def failing_check_vlm(*a, **k):
+        raise vlm_module.VlmError("VLMモデル qwen2.5vl:7b がありません")
+
+    with (
+        patch("chromadb.PersistentClient", _stub_persistent_client({"source": "a.md"})),
+        patch.object(embedder_module, "check_ollama", lambda *a, **k: None),
+        patch.object(vlm_module, "check_vlm", failing_check_vlm),
+        patch.object(ingest_source, "ingest_directory", fake_ingest_directory),
+    ):
+        app.run()
+        app.checkbox[0].set_value(True).run()
+        app.button[0].click().run()
+
+    assert not app.exception
+    assert calls == []
+    assert any("qwen2.5vl:7b" in element.value for element in app.error)
 
 
 def test_answer_is_shown_without_the_repeated_label(app):
