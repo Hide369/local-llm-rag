@@ -244,6 +244,15 @@ def test_dispatch_routes_by_suffix(docx_path, pptx_path):
     assert parse(pptx_path)[0].location_type == "slide"
 
 
+def test_dispatch_passes_caption_image_to_pptx_only(docx_path, pptx_with_large_picture):
+    seen = []
+    parse(pptx_with_large_picture, caption_image=lambda b: seen.append(b) or "説明")
+    assert seen, "pptxにはcaption_imageが渡っているはず"
+
+    # docxはcaption_imageを受け取らないシグネチャなので、渡してもエラーにならず無視される
+    parse(docx_path, caption_image=lambda b: "説明")
+
+
 def test_dispatch_rejects_unsupported_suffix(tmp_path):
     other = tmp_path / "memo.txt"
     other.write_text("本文", encoding="utf-8")
