@@ -82,3 +82,20 @@ def test_gives_up_after_all_attempts(monkeypatch):
     session = _FakeSession([requests.ConnectionError("x")] * 4)
     with pytest.raises(VlmError):
         caption_image(b"x", session=session)
+
+
+def test_check_vlm_raises_when_unreachable():
+    session = _FakeSession([requests.ConnectionError("refused")])
+    with pytest.raises(VlmError, match="Ollama"):
+        vlm.check_vlm(session=session)
+
+
+def test_check_vlm_passes_when_model_present():
+    session = _FakeSession([_FakeResponse({"models": [{"name": VLM_MODEL}]})])
+    vlm.check_vlm(session=session)
+
+
+def test_check_vlm_raises_when_model_missing():
+    session = _FakeSession([_FakeResponse({"models": [{"name": "bge-m3:latest"}]})])
+    with pytest.raises(VlmError, match=VLM_MODEL.split(":")[0]):
+        vlm.check_vlm(session=session)

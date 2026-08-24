@@ -57,3 +57,28 @@ def caption_image(image_bytes: bytes, session=None) -> str:
     finally:
         if own_session:
             session.close()
+
+
+def check_vlm(session=None) -> None:
+    """取り込み開始前の疎通確認。モデル未pullで460チャンクの処理が始まってから
+    落ちるのを防ぐため、embedder.check_ollama() と同じ考え方で先に一度だけ確認する。
+    """
+    own_session = session is None
+    session = session or requests.Session()
+    try:
+        try:
+            response = session.get(f"{OLLAMA_HOST}/api/tags", timeout=10)
+            response.raise_for_status()
+            names = [model["name"] for model in response.json().get("models", [])]
+        except (requests.RequestException, KeyError, ValueError) as error:
+            raise VlmError(
+                f"Ollamaに接続できません（{OLLAMA_HOST}）。起動しているか確認してください: {error}"
+            ) from error
+        vlm_base = VLM_MODEL.split(":")[0]
+        if not any(name.split(":")[0] == vlm_base for name in names):
+            raise VlmError(
+                f"VLMモデル {VLM_MODEL} がありません。`ollama pull {VLM_MODEL}` を実行してください。"
+            )
+    finally:
+        if own_session:
+            session.close()
