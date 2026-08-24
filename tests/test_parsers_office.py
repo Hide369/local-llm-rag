@@ -1,6 +1,10 @@
+import io
+
 import pytest
 from docx import Document
+from PIL import Image
 from pptx import Presentation
+from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.util import Inches
 
 from ingest.parsers import UnsupportedFormatError, parse
@@ -18,6 +22,12 @@ def docx_path(tmp_path):
     path = tmp_path / "議事録.docx"
     doc.save(path)
     return path
+
+
+def _png_bytes(width, height, color="green"):
+    buf = io.BytesIO()
+    Image.new("RGB", (width, height), color).save(buf, format="PNG")
+    return buf.getvalue()
 
 
 @pytest.fixture
@@ -98,6 +108,34 @@ def rich_pptx_path(tmp_path):
     box("い" * 120, 3.0)
 
     path = tmp_path / "セミナー.pptx"
+    prs.save(path)
+    return path
+
+
+@pytest.fixture
+def pptx_with_large_picture(tmp_path):
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    box = slide.shapes.add_textbox(Inches(1), Inches(0.5), Inches(4), Inches(1))
+    box.text_frame.text = "タイトル"
+    slide.shapes.add_picture(
+        io.BytesIO(_png_bytes(800, 600)), Inches(1), Inches(2), Inches(4), Inches(3)
+    )
+    path = tmp_path / "図あり.pptx"
+    prs.save(path)
+    return path
+
+
+@pytest.fixture
+def pptx_with_small_picture(tmp_path):
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    box = slide.shapes.add_textbox(Inches(1), Inches(0.5), Inches(4), Inches(1))
+    box.text_frame.text = "タイトル"
+    slide.shapes.add_picture(
+        io.BytesIO(_png_bytes(40, 40, "blue")), Inches(0.1), Inches(0.1), Inches(0.3), Inches(0.3)
+    )
+    path = tmp_path / "小さい画像.pptx"
     prs.save(path)
     return path
 
@@ -206,8 +244,82 @@ def test_dispatch_routes_by_suffix(docx_path, pptx_path):
     assert parse(pptx_path)[0].location_type == "slide"
 
 
+def test_dispatch_passes_caption_image_to_pptx_only(docx_path, pptx_with_large_picture):
+    seen = []
+    parse(pptx_with_large_picture, caption_image=lambda b: seen.append(b) or "説明")
+    assert seen, "pptxにはcaption_imageが渡っているはず"
+
+    # docxはcaption_imageを受け取らないシグネチャなので、渡してもエラーにならず無視される
+    parse(docx_path, caption_image=lambda b: "説明")
+
+
 def test_dispatch_rejects_unsupported_suffix(tmp_path):
     other = tmp_path / "memo.txt"
     other.write_text("本文", encoding="utf-8")
     with pytest.raises(UnsupportedFormatError):
         parse(other)
+
+
+def test_caption_image_not_called_when_not_provided(pptx_with_large_picture):
+    def _fail(_bytes):
+        raise AssertionError("caption_imageが未指定なら呼ばれてはいけない")
+
+    units = parse_pptx(pptx_with_large_picture, caption_image=None)
+    assert all("[図の説明]" not in u.text for u in units)
+    assert all(u.vlm is False for u in units)
+
+
+def test_large_picture_is_captioned(pptx_with_large_picture):
+    units = parse_pptx(
+        pptx_with_large_picture, caption_image=lambda _bytes: "緑色の図表です。"
+    )
+    assert any("[図の説明] 緑色の図表です。" in u.text for u in units)
+    assert any(u.vlm for u in units)
+
+
+def test_small_picture_is_not_captioned(pptx_with_small_picture):
+    def _fail(_bytes):
+        raise AssertionError("閾値未満の画像でcaption_imageが呼ばれてはいけない")
+
+    units = parse_pptx(pptx_with_small_picture, caption_image=_fail)
+    assert all("[図の説明]" not in u.text for u in units)
+    assert all(u.vlm is False for u in units)
+
+
+def test_picture_caption_failure_is_skipped_with_a_warning(pptx_with_large_picture, capsys):
+    from ingest.vlm import VlmError
+
+    def _raise(_bytes):
+        raise VlmError("boom")
+
+    units = parse_pptx(pptx_with_large_picture, caption_image=_raise)
+    assert all("[図の説明]" not in u.text for u in units)
+    assert "boom" in capsys.readouterr().err
+    assert any("タイトル" in u.text for u in units)
+
+
+def test_decorative_caption_is_not_appended(pptx_with_large_picture):
+    units = parse_pptx(pptx_with_large_picture, caption_image=lambda _bytes: "装飾画像")
+    assert all("[図の説明]" not in u.text for u in units)
+
+
+def test_empty_caption_is_not_appended(pptx_with_large_picture):
+    units = parse_pptx(pptx_with_large_picture, caption_image=lambda _bytes: "   ")
+    assert all("[図の説明]" not in u.text for u in units)
+
+
+def test_picture_above_title_does_not_become_the_title(tmp_path):
+    """先頭（最上部）に図があるレイアウトで、キャプションがタイトル扱いされないこと。"""
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    slide.shapes.add_picture(
+        io.BytesIO(_png_bytes(800, 600)), Inches(1), Inches(0.2), Inches(4), Inches(2)
+    )
+    box = slide.shapes.add_textbox(Inches(1), Inches(3), Inches(4), Inches(1))
+    box.text_frame.text = "本当のタイトル"
+    path = tmp_path / "図が上.pptx"
+    prs.save(path)
+
+    units = parse_pptx(path, caption_image=lambda _bytes: "上部の図の説明です。")
+    assert all(u.text.startswith("本当のタイトル") for u in units)
+    assert any("[図の説明] 上部の図の説明です。" in u.text for u in units)

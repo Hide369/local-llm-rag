@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 # importより先に .env を読み込む必要がある。
 load_dotenv()
 
-from ingest import embedder, store
+from ingest import embedder, store, vlm
 from ingest.chunker import chunk_units
 from ingest.parsers import SUPPORTED_SUFFIXES, parse
 
@@ -88,6 +88,7 @@ def ingest_directory(
     on_progress=None,
     force: bool = False,
     only_suffix: str | None = None,
+    caption_image=None,
 ) -> IngestReport:
     """source_dir を走査し、変更のあった資料だけを取り込む。"""
     report = IngestReport()
@@ -109,7 +110,7 @@ def ingest_directory(
 
             notify(f"処理中: {source}")
             try:
-                units = parse(path)
+                units = parse(path, caption_image=caption_image)
                 chunks = chunk_units(units, source, current_hash, today)
                 vectors = embedder.embed_texts(
                     [chunk.text for chunk in chunks], session=session
@@ -149,6 +150,11 @@ def main() -> int:
         "--only-suffix",
         help="この拡張子のファイルだけを対象にする（例 .md）。指定時は孤児削除を行わない",
     )
+    parser.add_argument(
+        "--with-vlm",
+        action="store_true",
+        help="PDF/PPTX内の埋め込み画像をVLMで説明文化する（取り込みが大幅に遅くなる）",
+    )
     args = parser.parse_args()
 
     if not args.source_dir.is_dir():
@@ -162,6 +168,15 @@ def main() -> int:
         print(error)
         return 1
 
+    caption_image = None
+    if args.with_vlm:
+        try:
+            vlm.check_vlm()
+        except vlm.VlmError as error:
+            print(error)
+            return 1
+        caption_image = vlm.caption_image
+
     collection = store.open_collection(chromadb.PersistentClient(path=str(DB_DIR)))
     report = ingest_directory(
         args.source_dir,
@@ -169,6 +184,7 @@ def main() -> int:
         on_progress=print,
         force=args.force,
         only_suffix=args.only_suffix,
+        caption_image=caption_image,
     )
 
     print("\n--- 結果 ---")

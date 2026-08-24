@@ -25,8 +25,10 @@ _PARSERS = {
 SUPPORTED_SUFFIXES = set(_PARSERS)
 
 
-def parse(path: Path) -> list[ParsedUnit]:
+def parse(path: Path, caption_image=None) -> list[ParsedUnit]:
     parser = _PARSERS.get(path.suffix.lower())
     if parser is None:
         raise UnsupportedFormatError(f"未対応の形式です: {path.name}")
+    if path.suffix.lower() in (".pdf", ".pptx"):
+        return parser(path, caption_image=caption_image)
     return parser(path)
