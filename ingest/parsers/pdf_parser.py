@@ -10,7 +10,6 @@ from pathlib import Path
 import pymupdf
 
 from ingest.models import PAGE, ParsedUnit
-from ingest.vlm import VlmError
 
 OCR_MIN_CHARS = 30
 
@@ -21,19 +20,28 @@ MIN_IMAGE_HEIGHT = 150
 
 
 def _describe_images(doc, page, page_number: int, source_name: str, caption_image) -> list[str]:
-    """ページに埋め込まれた図・写真をVLMで説明文にする。1枚失敗しても残りは続ける。"""
+    """ページに埋め込まれた図・写真をVLMで説明文にする。1枚失敗しても残りは続ける。
+
+    画像の取り出し自体が失敗することもある（壊れたxref等）ため、取り出しと
+    caption_image呼び出しの両方を同じtryに含める。scripts/ingest_source.pyが
+    1ファイルの失敗で全体を止めないのと同じ理由で、1枚の画像の失敗が他の画像・
+    本文を道連れにしないようにする。
+    """
     captions = []
     for xref, _smask, width, height, *_rest in page.get_images(full=True):
         if width < MIN_IMAGE_WIDTH or height < MIN_IMAGE_HEIGHT:
             continue
-        image_bytes = doc.extract_image(xref)["image"]
         try:
-            captions.append(caption_image(image_bytes))
-        except VlmError as error:
+            image_bytes = doc.extract_image(xref)["image"]
+            caption = caption_image(image_bytes)
+        except Exception as error:
             print(
                 f"警告: 画像の説明取得に失敗しました（{source_name} p.{page_number}）: {error}",
                 file=sys.stderr,
             )
+            continue
+        if caption.strip() and caption.strip() != "装飾画像":
+            captions.append(caption)
     return captions
 
 

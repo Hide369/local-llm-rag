@@ -191,6 +191,63 @@ def test_caption_failure_is_skipped_with_a_warning(pdf_with_large_image, capsys)
         raise VlmError("boom")
 
     units = parse_pdf(pdf_with_large_image, ocr_page=_ocr_not_called, caption_image=_raise)
+    assert "Chapter one" in units[0].text
     assert "[図の説明]" not in units[0].text
     assert units[0].vlm is False
     assert "boom" in capsys.readouterr().err
+
+
+def test_decorative_caption_is_not_appended(pdf_with_large_image):
+    def _ocr_not_called(_page):
+        raise AssertionError("テキストがあるページでOCRを呼んではいけない")
+
+    units = parse_pdf(
+        pdf_with_large_image,
+        ocr_page=_ocr_not_called,
+        caption_image=lambda _bytes: "装飾画像",
+    )
+    assert "[図の説明]" not in units[0].text
+    assert units[0].vlm is False
+
+
+def test_empty_caption_is_not_appended(pdf_with_large_image):
+    def _ocr_not_called(_page):
+        raise AssertionError("テキストがあるページでOCRを呼んではいけない")
+
+    units = parse_pdf(
+        pdf_with_large_image,
+        ocr_page=_ocr_not_called,
+        caption_image=lambda _bytes: "   ",
+    )
+    assert "[図の説明]" not in units[0].text
+    assert units[0].vlm is False
+
+
+def test_multiple_images_one_fails_others_and_text_survive(tmp_path):
+    """1ページに複数画像があり、1枚だけ失敗しても他の画像の説明と本文は残る。"""
+    from ingest.vlm import VlmError
+
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "Chapter one has plenty of extractable text here.", fontsize=14)
+    page.insert_image(pymupdf.Rect(50, 150, 250, 300), stream=_png_bytes(300, 300, "red"))
+    page.insert_image(pymupdf.Rect(50, 350, 250, 500), stream=_png_bytes(300, 300, "blue"))
+    path = tmp_path / "複数画像.pdf"
+    doc.save(path)
+    doc.close()
+
+    calls = []
+
+    def _caption(image_bytes):
+        calls.append(image_bytes)
+        if len(calls) == 1:
+            raise VlmError("boom")
+        return "2枚目の説明です。"
+
+    def _ocr_not_called(_page):
+        raise AssertionError("テキストがあるページでOCRを呼んではいけない")
+
+    units = parse_pdf(path, ocr_page=_ocr_not_called, caption_image=_caption)
+    assert "Chapter one" in units[0].text
+    assert "[図の説明] 2枚目の説明です。" in units[0].text
+    assert units[0].vlm is True

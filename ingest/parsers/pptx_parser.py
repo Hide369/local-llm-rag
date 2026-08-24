@@ -16,7 +16,6 @@ from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.util import Emu
 
 from ingest.models import SLIDE, ParsedUnit
-from ingest.vlm import VlmError
 
 # 同じ行に並ぶ図表の要素を左から右へ並べるための丸め幅。0.25インチをEMUで表した値。
 ROW_TOLERANCE = 228600
@@ -29,6 +28,8 @@ GROUP_TARGET_CHARS = 200
 # PDFの画素サイズと違い、スライド上に配置された大きさで判定できる。実データでの
 # 実測は design docの6節を参照。未実測の仮値であり、後日調整する前提。
 MIN_PICTURE_INCHES = 1.0
+
+_CAPTION_PREFIX = "[図の説明] "
 
 
 def _walk(shapes):
@@ -65,13 +66,31 @@ def _is_captionable_picture(shape) -> bool:
 def _picture_block(shape, slide_number: int, path_name: str, caption_image) -> str | None:
     try:
         caption = caption_image(shape.image.blob)
-    except VlmError as error:
+    except Exception as error:
         print(
             f"警告: 画像の説明取得に失敗しました（{path_name} スライド{slide_number}）: {error}",
             file=sys.stderr,
         )
         return None
-    return f"[図の説明] {caption}"
+    if not caption.strip() or caption.strip() == "装飾画像":
+        return None
+    return f"{_CAPTION_PREFIX}{caption}"
+
+
+def _split_title(blocks: list[str]) -> tuple[str, list[str]]:
+    """先頭のテキストブロックをタイトルとして取り出す。
+
+    画像キャプションが先頭に来ても、それをスライドのタイトルとして全ユニットへ
+    複写してしまわないようにする（上部に図を置くレイアウトとの相互作用）。
+    """
+    for index, block in enumerate(blocks):
+        if not block.startswith(_CAPTION_PREFIX):
+            title, _, remainder = block.partition("\n")
+            body = blocks[:index] + ([remainder] if remainder else []) + blocks[index + 1 :]
+            return title, body
+    # 全ブロックが画像キャプションだった場合は先頭をそのままタイトルにする。
+    title, _, remainder = blocks[0].partition("\n")
+    return title, ([remainder] if remainder else []) + blocks[1:]
 
 
 def _clean(text: str, slide_number: int) -> str:
@@ -147,8 +166,7 @@ def parse_pptx(path: Path, caption_image=None) -> list[ParsedUnit]:
         # 先頭シェイプの1行目をタイトルとする。この資料では slide.shapes.title が
         # 43枚すべて None だった（タイトルプレースホルダを使っていない）。
         # 残りの行は捨てず、最初の本文ブロックとして扱う。
-        title, _, remainder = blocks[0].partition("\n")
-        body = ([remainder] if remainder else []) + blocks[1:]
+        title, body = _split_title(blocks)
         # タイトルを全ユニットへ複写する。分割後のチャンクが単独で何の話か
         # 分かるようにするため。「事前学習済モデルに追加学習させ、LLMを再生成する」
         # だけを見ても、何の定義か分からない。
@@ -160,7 +178,7 @@ def parse_pptx(path: Path, caption_image=None) -> list[ParsedUnit]:
                     text=text,
                     location_type=SLIDE,
                     location=number,
-                    vlm="[図の説明] " in text,
+                    vlm=_CAPTION_PREFIX in text,
                 )
             )
     return units

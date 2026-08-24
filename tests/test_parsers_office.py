@@ -296,3 +296,30 @@ def test_picture_caption_failure_is_skipped_with_a_warning(pptx_with_large_pictu
     assert all("[図の説明]" not in u.text for u in units)
     assert "boom" in capsys.readouterr().err
     assert any("タイトル" in u.text for u in units)
+
+
+def test_decorative_caption_is_not_appended(pptx_with_large_picture):
+    units = parse_pptx(pptx_with_large_picture, caption_image=lambda _bytes: "装飾画像")
+    assert all("[図の説明]" not in u.text for u in units)
+
+
+def test_empty_caption_is_not_appended(pptx_with_large_picture):
+    units = parse_pptx(pptx_with_large_picture, caption_image=lambda _bytes: "   ")
+    assert all("[図の説明]" not in u.text for u in units)
+
+
+def test_picture_above_title_does_not_become_the_title(tmp_path):
+    """先頭（最上部）に図があるレイアウトで、キャプションがタイトル扱いされないこと。"""
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    slide.shapes.add_picture(
+        io.BytesIO(_png_bytes(800, 600)), Inches(1), Inches(0.2), Inches(4), Inches(2)
+    )
+    box = slide.shapes.add_textbox(Inches(1), Inches(3), Inches(4), Inches(1))
+    box.text_frame.text = "本当のタイトル"
+    path = tmp_path / "図が上.pptx"
+    prs.save(path)
+
+    units = parse_pptx(path, caption_image=lambda _bytes: "上部の図の説明です。")
+    assert all(u.text.startswith("本当のタイトル") for u in units)
+    assert any("[図の説明] 上部の図の説明です。" in u.text for u in units)

@@ -3,13 +3,14 @@
 design: docs/superpowers/specs/2026-08-24-vlm-image-captioning-design.md
 """
 import base64
+import os
 import time
 
 import requests
 
-from ingest.embedder import OLLAMA_HOST
+from ingest.embedder import OLLAMA_HOST, new_session
 
-VLM_MODEL = "qwen2.5vl:7b"
+VLM_MODEL = os.environ.get("OLLAMA_VLM_MODEL", "qwen2.5vl:7b")
 
 CAPTION_PROMPT = (
     "この画像に写っている図表・写真の内容を、日本語で2〜3文にまとめて説明してください。"
@@ -17,7 +18,7 @@ CAPTION_PROMPT = (
 )
 
 _MAX_ATTEMPTS = 4  # embedder.pyと同じ: 初回 + 3回の再試行（1秒 → 2秒 → 4秒）
-_TIMEOUT = 120
+_TIMEOUT = 600
 
 
 class VlmError(Exception):
@@ -27,7 +28,7 @@ class VlmError(Exception):
 def caption_image(image_bytes: bytes, session=None) -> str:
     """画像1枚を日本語の説明文にする。"""
     own_session = session is None
-    session = session or requests.Session()
+    session = session or new_session()
     try:
         url = f"{OLLAMA_HOST}/api/chat"
         payload = {
@@ -40,6 +41,7 @@ def caption_image(image_bytes: bytes, session=None) -> str:
                 }
             ],
             "stream": False,
+            "keep_alive": "30m",
         }
         last_error = None
         for attempt in range(_MAX_ATTEMPTS):
@@ -64,7 +66,7 @@ def check_vlm(session=None) -> None:
     落ちるのを防ぐため、embedder.check_ollama() と同じ考え方で先に一度だけ確認する。
     """
     own_session = session is None
-    session = session or requests.Session()
+    session = session or new_session()
     try:
         try:
             response = session.get(f"{OLLAMA_HOST}/api/tags", timeout=10)
