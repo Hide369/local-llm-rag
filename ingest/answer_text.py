@@ -77,3 +77,49 @@ def without_label(chunks):
                 at_line_start = False
     if pending:
         yield strip_label(pending)
+
+
+# gpt-oss:20b などが表のセル内で複数行を示すのに <br> を使うことがある。
+# StreamlitのMarkdownレンダラーは既定でHTMLを解釈しないため、そのまま
+# 画面に文字列として出てしまう（unsafe_allow_html は文書由来のテキストを
+# そのままHTMLとして描画することになり避けたいため、タグ自体を落とす）。
+_BR_TAG = re.compile(r"<br\s*/?>", re.IGNORECASE)
+
+# "<br />" が最長（6文字）。これより長く溜めてbrタグになりえなければ、
+# ただの "<" として素通りさせる。
+_MAX_BR_CHARS = 6
+
+# 溜めている文字列が、まだ <br> 系タグになりうる途中経過かどうか。
+_PARTIAL_BR = re.compile(r"^<(b(r(\s*/?)?)?)?$", re.IGNORECASE)
+
+
+def strip_br_tags(text: str) -> str:
+    """<br> 系のHTMLタグを取り除く。改行の意図は前後の句読点に任せる。"""
+    return _BR_TAG.sub("", text)
+
+
+def strip_br(chunks):
+    """ストリームから <br> 系タグを落としながら流す。
+
+    "<br>" はトークン境界で "<" "br" ">" のように分かれて届きうるため、
+    "<" を見た時点でタグになりうる間だけ文字を溜める。
+    """
+    pending = ""
+    for chunk in chunks:
+        for ch in chunk:
+            if not pending:
+                if ch == "<":
+                    pending = ch
+                else:
+                    yield ch
+                continue
+            candidate = pending + ch
+            if _BR_TAG.fullmatch(candidate):
+                pending = ""
+            elif _PARTIAL_BR.match(candidate) and len(candidate) < _MAX_BR_CHARS:
+                pending = candidate
+            else:
+                yield candidate
+                pending = ""
+    if pending:
+        yield pending

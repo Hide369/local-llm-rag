@@ -1,10 +1,14 @@
 import pytest
 
-from ingest.answer_text import strip_label, without_label
+from ingest.answer_text import strip_br, strip_br_tags, strip_label, without_label
 
 
 def _joined(chunks):
     return "".join(without_label(chunks))
+
+
+def _br_joined(chunks):
+    return "".join(strip_br(chunks))
 
 
 def _tokenised(text):
@@ -69,3 +73,31 @@ def test_holds_back_only_the_first_few_characters_of_a_line():
     """
     emitted = list(without_label(["これは長い行の先頭で、", "続きがすぐ流れる必要がある"]))
     assert emitted[0] == "これは長い行の先頭で、"
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("①検出。<br>②判定。", "①検出。②判定。"),
+        ("①検出。<BR>②判定。", "①検出。②判定。"),
+        ("①検出。<br/>②判定。", "①検出。②判定。"),
+        ("①検出。<br />②判定。", "①検出。②判定。"),
+        ("見出し<br>本文", "見出し本文"),
+        ("普通の文には影響しない", "普通の文には影響しない"),
+    ],
+)
+def test_strips_br_tags(text, expected):
+    assert strip_br_tags(text) == expected
+
+
+def test_strip_br_does_not_depend_on_where_the_chunk_boundaries_fall():
+    text = "①検出。<br />②判定。<br>③転送。"
+    expected = "①検出。②判定。③転送。"
+    for size in range(1, len(text) + 1):
+        chunks = [text[start : start + size] for start in range(0, len(text), size)]
+        assert _br_joined(chunks) == expected, f"size={size}"
+
+
+def test_strip_br_leaves_an_unrelated_angle_bracket_alone():
+    """<br> になりえないとわかれば、溜めていた "<" ごとそのまま流す。"""
+    assert _br_joined(["a<b>c"]) == "a<b>c"

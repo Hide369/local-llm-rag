@@ -141,7 +141,7 @@ if "messages" not in st.session_state:
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
-        st.write(message["content"])
+        st.write(answer_text.strip_br_tags(message["content"]))
         render_evidence(message)
 
 # OLLAMA_API_KEY はColab側のリバースプロキシ向け。api_key="ollama" はOllama自体には
@@ -247,8 +247,11 @@ if question:
                         if chunk.choices and chunk.choices[0].delta.content:
                             yield chunk.choices[0].delta.content
 
-                # 「答え：」の言い直しはラベルだけ落とす（ingest/answer_text.py）。
-                answer = st.write_stream(answer_text.without_label(tokens()))
+                # 「答え：」の言い直しはラベルだけ落とし、表のセル内 <br> も
+                # 描画されずに残らないよう落とす（ingest/answer_text.py）。
+                answer = st.write_stream(
+                    answer_text.strip_br(answer_text.without_label(tokens()))
+                )
                 render_evidence({"hits": hits, "table": table})
             except APIError as error:
                 st.error(f"回答を生成できませんでした: {error}")
