@@ -57,6 +57,10 @@ Ollamaインスタンスを別途用意する必要がある（例: `$env:OLLAMA
 # PPTXだけを取り直す（スライドの分割ロジックを直したときなど）
 .\myvenv313\Scripts\python.exe -m scripts.ingest_source --force --only-suffix .pptx
 
+# PDF/PPTX内の図・写真もVLMで説明文化する（大幅に時間が伸びる。事前に
+# ollama pull qwen2.5vl:7b が必要。ColabのL4に接続していればそちらで処理される）
+.\myvenv313\Scripts\python.exe -m scripts.ingest_source --with-vlm
+
 # チャットを起動する
 .\myvenv313\Scripts\python.exe -m streamlit run rag_chat_app.py
 ```
