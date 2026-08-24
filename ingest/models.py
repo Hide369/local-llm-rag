@@ -20,6 +20,8 @@ class ParsedUnit:
     location_type: str
     location: int
     ocr: bool = False
+    # PDF/PPTXに埋め込まれた図表・写真をVLMで説明文化し、本文へ追記したかどうか。
+    vlm: bool = False
     # Markdownの見出し文字列。出典を「ファイル名 ＞ 設置情報」と表示するために運ぶ。
     # 位置の一意性は location（通し番号）が持ち、heading は表示専用である。
     heading: str = ""

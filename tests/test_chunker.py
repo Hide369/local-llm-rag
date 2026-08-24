@@ -101,6 +101,17 @@ def test_ocr_flag_is_carried_into_every_chunk():
     assert all(c.metadata["ocr"] is True for c in chunks)
 
 
+def test_vlm_flag_is_carried_into_every_chunk():
+    unit = ParsedUnit(text="あ" * 2000, location_type="page", location=1, vlm=True)
+    chunks = _chunk([unit])
+    assert all(c.metadata["vlm"] is True for c in chunks)
+
+
+def test_vlm_flag_defaults_to_false():
+    chunks = _chunk([_unit("これは十分な長さのある本文です。")])
+    assert chunks[0].metadata["vlm"] is False
+
+
 def test_metadata_contains_source_hash_and_date():
     chunk = _chunk([_unit("メタデータの伝播を確認するための本文です。")])[0]
     assert chunk.metadata["source"] == "a.pdf"
