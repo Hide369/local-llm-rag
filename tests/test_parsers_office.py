@@ -286,3 +286,4 @@ def test_picture_caption_failure_is_skipped_with_a_warning(pptx_with_large_pictu
     units = parse_pptx(pptx_with_large_picture, caption_image=_raise)
     assert all("[図の説明]" not in u.text for u in units)
     assert "boom" in capsys.readouterr().err
+    assert any("タイトル" in u.text for u in units)
