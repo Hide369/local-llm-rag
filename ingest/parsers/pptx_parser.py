@@ -8,12 +8,15 @@
 テキストボックスは作成者が視覚的に区切った意味のまとまりなので、これを分割の
 単位にする。実測では43スライドが80ユニット（min 11 / max 547 / avg 156字）になる。
 """
+import sys
 from pathlib import Path
 
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
+from pptx.util import Emu
 
 from ingest.models import SLIDE, ParsedUnit
+from ingest.vlm import VlmError
 
 # 同じ行に並ぶ図表の要素を左から右へ並べるための丸め幅。0.25インチをEMUで表した値。
 ROW_TOLERANCE = 228600
@@ -21,6 +24,11 @@ ROW_TOLERANCE = 228600
 # ブロックを積んでいく目標文字数。上限ではない。単独でこれを超えるシェイプ
 # （実データの最大は538字）は、それ1つで1グループになる。
 GROUP_TARGET_CHARS = 200
+
+# ロゴ・アイコン等の装飾画像を除外するための閾値（配置サイズ、インチ角）。
+# PDFの画素サイズと違い、スライド上に配置された大きさで判定できる。実データでの
+# 実測は design docの6節を参照。未実測の仮値であり、後日調整する前提。
+MIN_PICTURE_INCHES = 1.0
 
 
 def _walk(shapes):
@@ -45,6 +53,27 @@ def _position(shape):
     return (round((shape.top or 0) / ROW_TOLERANCE), shape.left or 0)
 
 
+def _is_captionable_picture(shape) -> bool:
+    if shape.shape_type != MSO_SHAPE_TYPE.PICTURE:
+        return False
+    return (
+        Emu(shape.width).inches >= MIN_PICTURE_INCHES
+        and Emu(shape.height).inches >= MIN_PICTURE_INCHES
+    )
+
+
+def _picture_block(shape, slide_number: int, path_name: str, caption_image) -> str | None:
+    try:
+        caption = caption_image(shape.image.blob)
+    except VlmError as error:
+        print(
+            f"警告: 画像の説明取得に失敗しました（{path_name} スライド{slide_number}）: {error}",
+            file=sys.stderr,
+        )
+        return None
+    return f"[図の説明] {caption}"
+
+
 def _clean(text: str, slide_number: int) -> str:
     """内容を持たない行を落とす。
 
@@ -61,17 +90,27 @@ def _clean(text: str, slide_number: int) -> str:
     return "\n".join(lines)
 
 
-def _blocks(slide, slide_number: int) -> list[str]:
+def _blocks(slide, slide_number: int, path_name: str = "", caption_image=None) -> list[str]:
     """読み順に並べた、内容のあるシェイプのテキスト。"""
-    shapes = sorted(
-        (shape for shape in _walk(slide.shapes) if shape.has_text_frame),
-        key=_position,
-    )
-    blocks = [
-        cleaned
-        for cleaned in (_clean(shape.text_frame.text, slide_number) for shape in shapes)
-        if cleaned
+    content_shapes = [
+        shape
+        for shape in _walk(slide.shapes)
+        if shape.has_text_frame
+        or (caption_image is not None and _is_captionable_picture(shape))
     ]
+    content_shapes.sort(key=_position)
+
+    blocks = []
+    for shape in content_shapes:
+        if shape.has_text_frame:
+            cleaned = _clean(shape.text_frame.text, slide_number)
+            if cleaned:
+                blocks.append(cleaned)
+        else:
+            block = _picture_block(shape, slide_number, path_name, caption_image)
+            if block is not None:
+                blocks.append(block)
+
     # ノート欄には本文に書かれていない補足や発表意図が入るため取り込む。
     # 位置情報を持たないので読み順の最後尾に置く。
     if slide.has_notes_slide:
@@ -99,10 +138,10 @@ def _group(blocks: list[str]) -> list[str]:
     return groups
 
 
-def parse_pptx(path: Path) -> list[ParsedUnit]:
+def parse_pptx(path: Path, caption_image=None) -> list[ParsedUnit]:
     units: list[ParsedUnit] = []
     for number, slide in enumerate(Presentation(path).slides, start=1):
-        blocks = _blocks(slide, number)
+        blocks = _blocks(slide, number, path_name=path.name, caption_image=caption_image)
         if not blocks:
             continue
         # 先頭シェイプの1行目をタイトルとする。この資料では slide.shapes.title が
@@ -115,11 +154,13 @@ def parse_pptx(path: Path) -> list[ParsedUnit]:
         # だけを見ても、何の定義か分からない。
         # 本文が空のスライド（章の扉）はタイトルだけで1ユニットにする。
         for group in _group(body) or [""]:
+            text = f"{title}\n{group}" if group else title
             units.append(
                 ParsedUnit(
-                    text=f"{title}\n{group}" if group else title,
+                    text=text,
                     location_type=SLIDE,
                     location=number,
+                    vlm="[図の説明] " in text,
                 )
             )
     return units
