@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from ingest import lexical, store
 from ingest.embedder import embed_query
+from ingest.synonyms import expand_query
 
 SEARCH_RESULT_COUNT = 4
 
@@ -144,6 +145,9 @@ def search(
     if collection.count() == 0:
         return []
     limit = threshold if threshold is not None else RELEVANCE_THRESHOLD
+    # 「36協定」のような表記ゆれはNFKC正規化(ingest/lexical.py)では吸収できない。
+    # ここで既知の表記をクエリに継ぎ足し、BM25とベクトルの両方に渡す。
+    query = expand_query(query)
 
     vector_ranks, vector_rows = _vector_candidates(collection, query, session)
     # 圏内判定はベクトル側だけで行う。Chromaは距離の昇順で返すので、

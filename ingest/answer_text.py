@@ -79,30 +79,53 @@ def without_label(chunks):
         yield strip_label(pending)
 
 
-# gpt-oss:20b などが表のセル内で複数行を示すのに <br> を使うことがある。
-# StreamlitのMarkdownレンダラーは既定でHTMLを解釈しないため、そのまま
-# 画面に文字列として出てしまう（unsafe_allow_html は文書由来のテキストを
-# そのままHTMLとして描画することになり避けたいため、タグ自体を落とす）。
-_BR_TAG = re.compile(r"<br\s*/?>", re.IGNORECASE)
+# gpt-oss:20b などが表のセル内で複数行や箇条書きを示すのに <br> や
+# <ul><li> を使うことがある。StreamlitのMarkdownレンダラーは既定でHTMLを
+# 解釈しないため、そのまま画面に文字列として出てしまう（unsafe_allow_html は
+# 文書由来のテキストをそのままHTMLとして描画することになり避けたいため、
+# タグ自体を落とす）。
+#
+# 表のセル内には改行を書けない（GFM表の1行が崩れる）ため、<li> は改行では
+# なく「・」に、</li> は項目の区切りの空白に置き換える。
+#
+# (完全一致, 溜めている途中でありうるか, 置き換え後の文字列) の並び。
+_TAG_PATTERNS: list[tuple[re.Pattern, re.Pattern, str]] = [
+    (
+        re.compile(r"<br\s*/?>", re.IGNORECASE),
+        re.compile(r"^<(b(r(\s*/?)?)?)?$", re.IGNORECASE),
+        "",
+    ),
+    (re.compile(r"<ul>", re.IGNORECASE), re.compile(r"^<(u(l)?)?$", re.IGNORECASE), ""),
+    (
+        re.compile(r"</ul>", re.IGNORECASE),
+        re.compile(r"^<(/(u(l)?)?)?$", re.IGNORECASE),
+        "",
+    ),
+    (re.compile(r"<li>", re.IGNORECASE), re.compile(r"^<(l(i)?)?$", re.IGNORECASE), "・"),
+    (
+        re.compile(r"</li>", re.IGNORECASE),
+        re.compile(r"^<(/(l(i)?)?)?$", re.IGNORECASE),
+        " ",
+    ),
+]
 
-# "<br />" が最長（6文字）。これより長く溜めてbrタグになりえなければ、
-# ただの "<" として素通りさせる。
-_MAX_BR_CHARS = 6
-
-# 溜めている文字列が、まだ <br> 系タグになりうる途中経過かどうか。
-_PARTIAL_BR = re.compile(r"^<(b(r(\s*/?)?)?)?$", re.IGNORECASE)
+# 対象タグの中で最長は "<br />"（6文字）。これより長く溜めてどのタグにも
+# なりえなければ、先頭の "<" をただの文字として素通りさせる。
+_MAX_TAG_CHARS = 6
 
 
-def strip_br_tags(text: str) -> str:
-    """<br> 系のHTMLタグを取り除く。改行の意図は前後の句読点に任せる。"""
-    return _BR_TAG.sub("", text)
+def strip_html_tags(text: str) -> str:
+    """<br>・<ul>・<li> 系のHTMLタグを取り除く。改行や区切りの意図は前後の句読点・空白に任せる。"""
+    for full, _partial, replacement in _TAG_PATTERNS:
+        text = full.sub(replacement, text)
+    return text
 
 
-def strip_br(chunks):
-    """ストリームから <br> 系タグを落としながら流す。
+def strip_html_tags_stream(chunks):
+    """ストリームから <br>・<ul>・<li> 系タグを落としながら流す。
 
-    "<br>" はトークン境界で "<" "br" ">" のように分かれて届きうるため、
-    "<" を見た時点でタグになりうる間だけ文字を溜める。
+    タグはトークン境界で "<" "li" ">" のように分かれて届きうるため、
+    "<" を見た時点でどれかのタグになりうる間だけ文字を溜める。
     """
     pending = ""
     for chunk in chunks:
@@ -114,9 +137,21 @@ def strip_br(chunks):
                     yield ch
                 continue
             candidate = pending + ch
-            if _BR_TAG.fullmatch(candidate):
+            full_match = next(
+                (
+                    replacement
+                    for full, _partial, replacement in _TAG_PATTERNS
+                    if full.fullmatch(candidate)
+                ),
+                None,
+            )
+            if full_match is not None:
+                if full_match:
+                    yield full_match
                 pending = ""
-            elif _PARTIAL_BR.match(candidate) and len(candidate) < _MAX_BR_CHARS:
+            elif len(candidate) < _MAX_TAG_CHARS and any(
+                partial.match(candidate) for _full, partial, _replacement in _TAG_PATTERNS
+            ):
                 pending = candidate
             else:
                 yield candidate

@@ -141,7 +141,7 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         if message.get("note"):
             st.warning(message["note"])
-        st.write(answer_text.strip_br_tags(message["content"]))
+        st.write(answer_text.strip_html_tags(message["content"]))
         render_evidence(message)
 
 schema = get_schema(collection)
@@ -240,10 +240,11 @@ if st.session_state.generating:
                 + [{"role": "user", "content": user_content}]
             )
             try:
-                # 「答え：」の言い直しはラベルだけ落とし、表のセル内 <br> も
-                # 描画されずに残らないよう落とす（ingest/answer_text.py）。
+                # 「答え：」の言い直しはラベルだけ落とし、表のセル内の
+                # <br>・<ul>・<li> も描画されずに残らないよう落とす
+                # （ingest/answer_text.py）。
                 answer = st.write_stream(
-                    answer_text.strip_br(
+                    answer_text.strip_html_tags_stream(
                         answer_text.without_label(
                             chat.stream_chat(model, history, temperature)
                         )
