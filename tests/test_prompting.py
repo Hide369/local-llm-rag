@@ -46,6 +46,18 @@ def test_prompt_instructs_the_model_to_decline_when_hits_are_irrelevant():
     assert "回答できない旨" in prompt
 
 
+def test_prompt_instructs_the_model_not_to_invent_the_subject():
+    """gpt-oss:20bの実測: 「Claude Code 法人導入ガイド」スライドの図の説明
+    （SuperPowersプラグインの紹介、主体は書かれていない）を根拠に、資料には
+    無い「弊社が提供する」という主語を勝手に補った。個別の固有名詞を教える
+    方法は他の外部ツール名には効かないため、「主体を根拠なく補わない」という
+    一般則で歯止めをかける。この指示文が失われると再発する。
+    """
+    prompt = build_prompt("SuperPowersについて教えて", [_hit()])
+    assert "提供元" in prompt or "主体" in prompt
+    assert "推測で補わない" in prompt
+
+
 def test_report_counts_chunks_files_and_skips_separately():
     report = IngestReport(
         indexed={"a.pdf": 10, "b.pdf": 7}, skipped=["c.pptx"], failed={}, removed=["d.docx"]

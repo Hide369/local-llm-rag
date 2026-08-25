@@ -4,21 +4,19 @@
 初回の取り込みは13分かかるため、CLI (python -m scripts.ingest_source) で行う。
 このUIのボタンは差分取り込み（通常は数秒）を想定している。
 """
-import os
 from datetime import datetime
 from pathlib import Path
 
 import chromadb
 import streamlit as st
 from dotenv import load_dotenv
-from openai import APIError, OpenAI
 
 # OLLAMA_HOST を ingest.embedder がインポート時に読むため、他のプロジェクト内
 # importより先に .env を読み込む必要がある。ColabのL4 GPUに繋ぐ場合、ここで
 # OLLAMA_HOST（ngrokのURL）と OLLAMA_API_KEY を上書きする。
 load_dotenv()
 
-from ingest import answer_text, catalog, conditions, embedder, store, vlm
+from ingest import answer_text, catalog, chat, conditions, embedder, store, vlm
 from ingest.prompting import (
     build_catalog_prompt,
     build_prompt,
@@ -82,12 +80,12 @@ st.set_page_config(page_title="社内文書RAGチャット")
 st.sidebar.title("設定")
 
 # ollama pull済みのモデルだけを並べる。自由入力にしていた頃は打ち間違いや
-# 未取得のモデル名が、生成時のAPIErrorになるまで分からなかった。
+# 未取得のモデル名が、生成時のchat.ChatErrorになるまで分からなかった。
 # 先頭が既定値。qwen2.5:7b-instruct を先に置いてあるのは、条件抽出の取りこぼしが
 # 少ない llama3.1:8b より遅く精度も劣るという実測（READMEの「モデルの比較」）にも
 # かかわらず、既定を変えるのは本節の変更範囲外だからである。gpt-oss:20bは
 # 同じ形式の実測はまだ無い（動作確認のみ）。
-MODELS = ["qwen2.5:7b-instruct", "llama3.1:8b", "gpt-oss:20b"]
+MODELS = ["qwen2.5:7b-instruct", "llama3.1:8b", "gpt-oss:20b", "qwen3:32b"]
 model = st.sidebar.selectbox("モデル名", MODELS)
 temperature = st.sidebar.slider("Temperature", 0.0, 1.0, 0.3, 0.1)
 # サイドバーには出さない。利用者に編集させる項目ではないため。
@@ -141,40 +139,35 @@ if "messages" not in st.session_state:
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
+        if message.get("note"):
+            st.warning(message["note"])
         st.write(answer_text.strip_br_tags(message["content"]))
         render_evidence(message)
-
-# OLLAMA_API_KEY はColab側のリバースプロキシ向け。api_key="ollama" はOllama自体には
-# 無視されるダミー値で、OpenAI SDKがAuthorizationヘッダーを要求するために渡している。
-_ollama_api_key = os.environ.get("OLLAMA_API_KEY")
-client = OpenAI(
-    api_key="ollama",
-    base_url=f"{embedder.OLLAMA_HOST}/v1",
-    default_headers={"X-API-Key": _ollama_api_key} if _ollama_api_key else None,
-)
 
 schema = get_schema(collection)
 
 
 def ask_json(prompt: str) -> str:
-    """条件抽出用にJSONだけを返させる。
+    """条件抽出用にJSONだけを返させる（ingest/chat.py、ネイティブAPI）。"""
+    return chat.ask_json(model, prompt)
 
-    temperature=0 なのは、同じ質問で条件が揺れると再現性のない誤りになるため。
-    """
-    response = client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0,
-        response_format={"type": "json_object"},
-    )
-    return response.choices[0].message.content
+if "generating" not in st.session_state:
+    st.session_state.generating = False
 
-question = st.chat_input("メッセージを入力")
+# 生成中は入力欄を無効化する。無効化しないと応答待ちの間にもう一度送信でき、
+# Streamlitが実行中のストリーミングを打ち切って新しい実行に切り替えてしまう。
+# その結果、そこまでの途中経過だけが履歴に残る（qwen3:32bのように最初の
+# 1文字まで40秒以上かかるモデルで実際に起きた）。
+question = st.chat_input("メッセージを入力", disabled=st.session_state.generating)
 
-if question:
-    with st.chat_message("user"):
-        st.write(question)
+if question and not st.session_state.generating:
     st.session_state.messages.append({"role": "user", "content": question})
+    st.session_state.pending_question = question
+    st.session_state.generating = True
+    st.rerun()
+
+if st.session_state.generating:
+    question = st.session_state.pending_question
 
     extraction = conditions.extract(question, schema, ask_json)
 
@@ -182,7 +175,7 @@ if question:
     hits = []
     user_content = None
     # ベクトル検索は埋め込みAPIを呼ぶ。Ollamaが止まっていればここで
-    # EmbeddingError になるため、生成時（下のAPIError）と同じ見せ方に揃える。
+    # EmbeddingError になるため、生成時（下のchat.ChatError）と同じ見せ方に揃える。
     # 捕まえずにいると生のトレースバックが画面に出る。
     search_error = None
     try:
@@ -218,16 +211,25 @@ if question:
     # 条件抽出の失敗を伝えるのは、その先の検索が成立したときだけにする。
     # Ollamaが止まっていれば条件抽出（LLM）も検索（埋め込み）も同じ理由で失敗し、
     # 「通常の検索で回答します」と告げた直後にその検索が落ちることになるため。
+    # 履歴のnoteとして残すのは、エラー文と同じ理由（直後のst.rerun()で
+    # このままでは画面から消えるため）。
+    note = None
     if extraction.failed and search_error is None:
-        st.warning("条件を解釈できませんでした。通常の検索で回答します。")
+        note = "条件を解釈できませんでした。通常の検索で回答します。"
+        st.warning(note)
 
     answer = None
     with st.chat_message("assistant"):
         # 疎通確認をしないため、Ollama未起動やモデル名の誤りは生成時に初めて
         # わかる。ingestボタンのエラー表示（st.sidebar.error）と同じ見せ方で、
         # 生のトレースバックの代わりにチャット欄へ短いメッセージを出す。
+        #
+        # エラー文もanswerに入れて履歴へ残す。入力欄を再有効化するための
+        # 直後のst.rerun()でこのブロックの描画は消えるため、ここでst.error()を
+        # 呼ぶだけでは再実行後に画面から跡形もなく消えてしまう。
         if search_error is not None:
-            st.error(f"検索できませんでした: {search_error}")
+            answer = f"検索できませんでした: {search_error}"
+            st.error(answer)
         else:
             history = (
                 [{"role": "system", "content": SYSTEM_PROMPT}]
@@ -238,25 +240,33 @@ if question:
                 + [{"role": "user", "content": user_content}]
             )
             try:
-                stream = client.chat.completions.create(
-                    model=model, messages=history, temperature=temperature, stream=True
-                )
-
-                def tokens():
-                    for chunk in stream:
-                        if chunk.choices and chunk.choices[0].delta.content:
-                            yield chunk.choices[0].delta.content
-
                 # 「答え：」の言い直しはラベルだけ落とし、表のセル内 <br> も
                 # 描画されずに残らないよう落とす（ingest/answer_text.py）。
                 answer = st.write_stream(
-                    answer_text.strip_br(answer_text.without_label(tokens()))
+                    answer_text.strip_br(
+                        answer_text.without_label(
+                            chat.stream_chat(model, history, temperature)
+                        )
+                    )
                 )
                 render_evidence({"hits": hits, "table": table})
-            except APIError as error:
-                st.error(f"回答を生成できませんでした: {error}")
+            except chat.ChatError as error:
+                answer = f"回答を生成できませんでした: {error}"
+                st.error(answer)
 
     if answer is not None:
         st.session_state.messages.append(
-            {"role": "assistant", "content": answer, "hits": hits, "table": table}
+            {
+                "role": "assistant",
+                "content": answer,
+                "hits": hits,
+                "table": table,
+                "note": note,
+            }
         )
+
+    # 入力欄を再度有効化する。ここで再実行しないと、次に利用者が何か操作する
+    # まで画面上は無効化されたままになる。
+    st.session_state.generating = False
+    st.session_state.pending_question = None
+    st.rerun()

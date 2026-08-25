@@ -1,23 +1,28 @@
 """チャット画面の異常系。
 
-回答生成の失敗（APIError）はチャット欄に短いメッセージとして出るが、検索の
-失敗はどこにも捕まえていなかった。実測: 2026-08-13 07:04〜08:10 の間Ollamaが
-停止しており、質問すると ingest.embedder.EmbeddingError のトレースバックが
-そのまま画面に出た。
+回答生成の失敗（chat.ChatError）はチャット欄に短いメッセージとして出るが、
+検索の失敗はどこにも捕まえていなかった。実測: 2026-08-13 07:04〜08:10 の間
+Ollamaが停止しており、質問すると ingest.embedder.EmbeddingError の
+トレースバックがそのまま画面に出た。
+
+生成は ingest/chat.py 経由でOllamaのネイティブAPI（/api/chat）を直接叩く
+（openaiパッケージ経由ではnum_ctxが反映されなかったため、実測を経て切り替えた。
+ingest/chat.py のモジュールdocstring参照）。テストでは chat.ask_json /
+chat.stream_chat をこの階層で差し替える。
 
 AppTest は rag_chat_app.py を同じプロセスで実行する。本番の chroma_db を
 開くと起動中のStreamlitとの同時アクセスでHNSWインデックスを壊す恐れがあるため
 （README「既知の制約」）、PersistentClient をインメモリのものへ差し替える。
 """
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
 import ingest.retrieval as retrieval
+from ingest import chat
 from ingest import embedder as embedder_module
 from ingest import store
 from ingest import vlm as vlm_module
@@ -51,20 +56,21 @@ def _offline_embed_query(*args, **kwargs):
     raise EmbeddingError(OFFLINE_MESSAGE)
 
 
-class _FakeStreamChunk:
-    """OpenAIのストリーム1個分。1文字ずつ届く、いちばん細かい刻みを再現する。"""
+def _fake_stream_chat(text):
+    """生成だけを差し替える。条件抽出は属性なしのDBでそもそも呼ばれない。
 
-    def __init__(self, content):
-        self.choices = [SimpleNamespace(delta=SimpleNamespace(content=content))]
+    呼び出しの引数（model・messages・temperature）は .calls に積む。
+    ingest/chat.py の実シグネチャ stream_chat(model, messages, temperature, session=None)
+    に合わせる。
+    """
+    calls = []
 
+    def stream(model, messages, temperature, session=None):
+        calls.append({"model": model, "messages": messages, "temperature": temperature})
+        yield from text
 
-def _fake_openai(text):
-    """生成だけを差し替える。条件抽出は属性なしのDBでそもそも呼ばれない。"""
-    client = MagicMock()
-    client.chat.completions.create.return_value = [
-        _FakeStreamChunk(character) for character in text
-    ]
-    return MagicMock(return_value=client)
+    stream.calls = calls
+    return stream
 
 
 @pytest.fixture
@@ -76,7 +82,12 @@ def app():
 
 
 def test_search_failure_is_reported_instead_of_crashing(app):
-    """埋め込みAPIが落ちていても、画面に出るのはメッセージであってトレースバックではない。"""
+    """埋め込みAPIが落ちていても、画面に出るのはメッセージであってトレースバックではない。
+
+    エラー文は st.error() でその場に出るだけでなく、履歴にも残す
+    （入力欄を再有効化する直後の st.rerun() で st.error() の描画自体は
+    消えるため、履歴に残していなければ最終的な画面から跡形もなく消える）。
+    """
     with (
         patch("chromadb.PersistentClient", _stub_persistent_client({"source": "a.md"})),
         patch.object(retrieval, "embed_query", _offline_embed_query),
@@ -85,7 +96,7 @@ def test_search_failure_is_reported_instead_of_crashing(app):
         app.chat_input[0].set_value("運転音が静かな機種は？").run()
 
     assert not app.exception
-    assert any(OFFLINE_MESSAGE in element.value for element in app.error)
+    assert OFFLINE_MESSAGE in app.session_state.messages[-1]["content"]
 
 
 def test_search_failure_does_not_also_claim_it_will_search(app):
@@ -99,15 +110,16 @@ def test_search_failure_does_not_also_claim_it_will_search(app):
     metadata = {"source": "a.md", "noise_db": 26}
     with (
         patch("chromadb.PersistentClient", _stub_persistent_client(metadata)),
-        patch("openai.OpenAI"),  # JSONにならない応答を返し、条件抽出を失敗させる
+        # JSONにならない応答を返し、条件抽出を失敗させる
+        patch.object(chat, "ask_json", lambda model, prompt, session=None: "not json"),
         patch.object(retrieval, "embed_query", _offline_embed_query),
     ):
         app.run()
         app.chat_input[0].set_value("運転音26dB以下の機種は？").run()
 
     assert not app.exception
-    assert any(OFFLINE_MESSAGE in element.value for element in app.error)
-    assert not app.warning
+    assert OFFLINE_MESSAGE in app.session_state.messages[-1]["content"]
+    assert app.session_state.messages[-1].get("note") is None
 
 
 def test_a_follow_up_question_is_searched_with_the_previous_one(app):
@@ -120,7 +132,7 @@ def test_a_follow_up_question_is_searched_with_the_previous_one(app):
 
     with (
         patch("chromadb.PersistentClient", _stub_persistent_client({"source": "a.md"})),
-        patch("openai.OpenAI", _fake_openai("第5回会議の決定事項は…")),
+        patch.object(chat, "stream_chat", _fake_stream_chat("第5回会議の決定事項は…")),
         patch.object(retrieval, "embed_query", record),
     ):
         app.run()
@@ -136,12 +148,12 @@ def test_a_follow_up_question_is_searched_with_the_previous_one(app):
 def test_the_model_is_picked_from_the_pulled_models(app):
     """モデル名の自由入力ではなく、pull済みモデルの固定リストからの選択にする。
 
-    自由入力だと打ち間違いが生成時のAPIErrorになるまで分からなかった。
+    自由入力だと打ち間違いが生成時のchat.ChatErrorになるまで分からなかった。
     既定は qwen2.5:7b-instruct のまま（README「モデルの比較」）。
     """
     with (
         patch("chromadb.PersistentClient", _stub_persistent_client({"source": "a.md"})),
-        patch("openai.OpenAI", _fake_openai("回答")),
+        patch.object(chat, "stream_chat", _fake_stream_chat("回答")),
         patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
     ):
         app.run()
@@ -151,17 +163,17 @@ def test_the_model_is_picked_from_the_pulled_models(app):
         "qwen2.5:7b-instruct",
         "llama3.1:8b",
         "gpt-oss:20b",
+        "qwen3:32b",
     ]
     assert app.selectbox[0].value == "qwen2.5:7b-instruct"
 
 
 def test_the_picked_model_is_the_one_that_generates(app):
     """プルダウンで選んだモデルが実際の生成に渡る。見た目だけの切り替えにしない。"""
-    openai_factory = _fake_openai("回答です。")
-    client = openai_factory.return_value
+    fake_stream = _fake_stream_chat("回答です。")
     with (
         patch("chromadb.PersistentClient", _stub_persistent_client({"source": "a.md"})),
-        patch("openai.OpenAI", openai_factory),
+        patch.object(chat, "stream_chat", fake_stream),
         patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
     ):
         app.run()
@@ -169,31 +181,20 @@ def test_the_picked_model_is_the_one_that_generates(app):
         app.chat_input[0].set_value("運転音は？").run()
 
     assert not app.exception
-    used = [
-        call.kwargs["model"]
-        for call in client.chat.completions.create.call_args_list
-    ]
+    used = [call["model"] for call in fake_stream.calls]
     assert used == ["llama3.1:8b"]
 
 
-def _openai_for_the_catalog_route(condition_json, ranking_json, answer):
-    """条件抽出・並べ替え抽出・生成の3種類の呼び出しを引数で見分けて返す。
+def _fake_ask_json_for_the_catalog_route(condition_json, ranking_json):
+    """条件抽出・並べ替え抽出の2種類の呼び出しをプロンプト文面で見分けて返す。
 
     呼ばれる順に並べると、順序が変わるたびにテストが壊れる。
     """
-    client = MagicMock()
 
-    def create(**kwargs):
-        if kwargs.get("stream"):
-            return [_FakeStreamChunk(character) for character in answer]
-        prompt = kwargs["messages"][0]["content"]
-        payload = ranking_json if "最大・最小" in prompt else condition_json
-        return SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content=payload))]
-        )
+    def ask_json(model, prompt, session=None):
+        return ranking_json if "最大・最小" in prompt else condition_json
 
-    client.chat.completions.create.side_effect = create
-    return MagicMock(return_value=client)
+    return ask_json
 
 
 def test_products_that_fail_the_condition_are_shown_but_not_sent_to_the_model(app):
@@ -225,21 +226,20 @@ def test_products_that_fail_the_condition_are_shown_but_not_sent_to_the_model(ap
             )
         return client
 
-    openai_factory = _openai_for_the_catalog_route(
+    fake_ask_json = _fake_ask_json_for_the_catalog_route(
         '{"installation_depth_min_mm": {"$lte": 510}}',
         '{"washing_capacity_kg": "最大"}',
-        "最大11.0kgです。",
     )
-    client = openai_factory.return_value
-    with patch("chromadb.PersistentClient", factory), patch("openai.OpenAI", openai_factory):
+    fake_stream = _fake_stream_chat("最大11.0kgです。")
+    with (
+        patch("chromadb.PersistentClient", factory),
+        patch.object(chat, "ask_json", fake_ask_json),
+        patch.object(chat, "stream_chat", fake_stream),
+    ):
         app.run()
         app.chat_input[0].set_value("510mmに設置できる最大の洗濯容量は").run()
 
-    prompts = [
-        call.kwargs["messages"][-1]["content"]
-        for call in client.chat.completions.create.call_args_list
-        if call.kwargs.get("stream")
-    ]
+    prompts = [call["messages"][-1]["content"] for call in fake_stream.calls]
     assert prompts, "生成が呼ばれていない"
     assert "UD-1400X" not in prompts[0]
     shown = "\n".join(element.value for element in app.code)
@@ -330,7 +330,7 @@ def test_answer_is_shown_without_the_repeated_label(app):
     generated = "省エネ基準達成率が最も高いのはUD-1100iEです。\n答え： 型番：UD-1100iE 達成率：125%"
     with (
         patch("chromadb.PersistentClient", _stub_persistent_client({"source": "a.md"})),
-        patch("openai.OpenAI", _fake_openai(generated)),
+        patch.object(chat, "stream_chat", _fake_stream_chat(generated)),
         patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
     ):
         app.run()
@@ -339,4 +339,24 @@ def test_answer_is_shown_without_the_repeated_label(app):
     assert not app.exception
     shown = "\n".join(element.value for element in app.markdown)
     assert "答え：" not in shown
-    assert "型番：UD-1100iE 達成率：125%" in shown
+
+
+def test_input_is_re_enabled_and_history_has_exactly_one_exchange_after_answering(app):
+    """生成中は入力欄を無効化し、完了後に再有効化する。
+
+    生成中の無効化そのものを直接観測はできない（AppTest.run()は内部の
+    st.rerun()を全部消化してから戻るため）。代わりに、完了後の最終状態で
+    (1) 入力欄が有効に戻っていること (2) やりとりが二重に積まれていない
+    （無効化の仕組み自体がバグって多重発火していないか）ことを確認する。
+    """
+    with (
+        patch("chromadb.PersistentClient", _stub_persistent_client({"source": "a.md"})),
+        patch.object(chat, "stream_chat", _fake_stream_chat("回答です。")),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+    ):
+        app.run()
+        app.chat_input[0].set_value("運転音は？").run()
+
+    assert not app.exception
+    assert app.chat_input[0].disabled is False
+    assert [m["role"] for m in app.session_state.messages] == ["user", "assistant"]

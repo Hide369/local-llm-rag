@@ -223,6 +223,53 @@ def test_empty_caption_is_not_appended(pdf_with_large_image):
     assert units[0].vlm is False
 
 
+def _make_image_pdf_with_image(tmp_path, image_bytes, filename="スキャン.pdf"):
+    """テキスト層を持たない、埋め込み画像だけのページ = スキャンPDFを模す。"""
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_image(pymupdf.Rect(50, 50, 550, 800), stream=image_bytes)
+    path = tmp_path / filename
+    doc.save(path)
+    doc.close()
+    return path
+
+
+def test_scanned_page_uses_vlm_caption_instead_of_ocr(tmp_path):
+    """OCRの誤認識を避けるため、VLMが使えるスキャンページはOCRを呼ばない。"""
+
+    def _ocr_not_called(_page):
+        raise AssertionError("VLMで説明文が得られたページでOCRを呼んではいけない")
+
+    path = _make_image_pdf_with_image(tmp_path, _png_bytes(600, 800))
+    units = parse_pdf(
+        path,
+        ocr_page=_ocr_not_called,
+        caption_image=lambda _bytes: "会議室のホワイトボードを撮影した写真です。",
+    )
+    assert len(units) == 1
+    assert units[0].text == "[図の説明] 会議室のホワイトボードを撮影した写真です。"
+    assert units[0].ocr is False
+    assert units[0].vlm is True
+
+
+def test_scanned_page_falls_back_to_ocr_when_vlm_yields_no_caption(tmp_path):
+    """VLMが使える設定でも、説明文が1件も得られなければOCRへフォールバックする。
+
+    装飾画像判定や閾値未満の画像で captions が空になるケースが該当する。
+    ページの中身を空にしないことを優先する。
+    """
+    path = _make_image_pdf_with_image(tmp_path, _png_bytes(600, 800))
+    units = parse_pdf(
+        path,
+        ocr_page=lambda _page: "OCRで読んだ文字",
+        caption_image=lambda _bytes: "装飾画像",
+    )
+    assert len(units) == 1
+    assert units[0].text == "OCRで読んだ文字"
+    assert units[0].ocr is True
+    assert units[0].vlm is False
+
+
 def test_multiple_images_one_fails_others_and_text_survive(tmp_path):
     """1ページに複数画像があり、1枚だけ失敗しても他の画像の説明と本文は残る。"""
     from ingest.vlm import VlmError
