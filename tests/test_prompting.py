@@ -195,3 +195,15 @@ def test_caption_keeps_the_existing_fields():
     caption = format_hit_caption(_reranked_hit(2.0))
     assert "0.312" in caption
     assert "4.25" in caption
+
+
+def test_caption_survives_an_extreme_negative_score():
+    """1/(1+exp(-x)) は x が約-710で OverflowError を投げる。この関数は検索結果
+    すべての出典行を作るため、1件の異常値で回答パネルごと消えてしまう。"""
+    caption = format_hit_caption(_reranked_hit(-1000.0))
+    assert "Reranker 0.00" in caption
+
+
+def test_caption_survives_an_extreme_positive_score():
+    caption = format_hit_caption(_reranked_hit(1000.0))
+    assert "Reranker 1.00" in caption

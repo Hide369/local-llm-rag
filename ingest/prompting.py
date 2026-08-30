@@ -93,6 +93,23 @@ def format_report(report) -> str:
     return "\n".join(lines)
 
 
+def _sigmoid(value: float) -> float:
+    """ロジットを0〜1に潰す。値域に依存しない書き方にする。
+
+    素直に 1/(1+exp(-x)) と書くと、xが約-710を下回ったところで exp が
+    OverflowError を投げる。format_hit_caption は検索結果すべての出典行を
+    組み立てるため、1件の異常なスコアで回答パネル全体が消えることになる。
+    bge-reranker-v2-m3 の実際の出力はおおむね±12に収まるが、それを保証して
+    いるものはコード上どこにも無い（ingest/reranker.py はONNXの出力を素通しし、
+    ingest/retrieval.py は RerankError しか捕まえない）。符号で分岐して
+    exp に非正の値しか渡さなければ、どんな入力でもオーバーフローしない。
+    """
+    if value >= 0:
+        return 1 / (1 + math.exp(-value))
+    exponential = math.exp(value)
+    return exponential / (1 + exponential)
+
+
 def format_hit_caption(hit) -> str:
     """出典と、どちらのアームが拾ったかを1行で示す。
 
@@ -126,7 +143,7 @@ def format_hit_caption(hit) -> str:
         f"BM25 {hit.bm25_score:.2f}" if hit.bm25_score is not None else "BM25 一致なし"
     )
     reranked = (
-        f"Reranker {1 / (1 + math.exp(-hit.rerank_score)):.2f}"
+        f"Reranker {_sigmoid(hit.rerank_score):.2f}"
         if hit.rerank_score is not None
         else "Reranker 未計測"
     )
