@@ -1,7 +1,14 @@
 import pytest
 
 from ingest import lexical
-from ingest.retrieval import Hit, build_index, contextual_query, search
+from ingest.reranker import RerankError
+from ingest.retrieval import (
+    RERANK_CANDIDATE_COUNT,
+    Hit,
+    build_index,
+    contextual_query,
+    search,
+)
 
 
 class _FakeCollection:
@@ -251,3 +258,111 @@ def test_a_stale_index_entry_is_skipped():
 
 def test_build_index_over_an_empty_collection_is_safe():
     assert build_index(_FakeCollection([], [], [])).document_count == 0
+
+
+def test_rerank_is_not_called_when_not_given():
+    """既存の呼び出しは1件も結果が変わらない（後方互換の回帰）。"""
+    collection = _FakeCollection(
+        ["あ" * 20, "い" * 20, "う" * 20],
+        [0.10, 0.20, 0.30],
+        [_meta(location=1), _meta(location=2), _meta(location=3)],
+    )
+    hits = search(collection, "質問")
+    assert [hit.metadata["location"] for hit in hits] == [1, 2, 3]
+    assert all(hit.rerank_score is None for hit in hits)
+
+
+def test_rerank_reorders_the_results():
+    """RRF 3位のチャンクをリランカーが1位に押し上げられる。"""
+    collection = _FakeCollection(
+        ["あ" * 20, "い" * 20, "う" * 20],
+        [0.10, 0.20, 0.30],
+        [_meta(location=1), _meta(location=2), _meta(location=3)],
+    )
+
+    def fake_rerank(query, texts):
+        # 距離が遠いチャンク（3番目）に最高スコアを与える
+        return [0.0, 1.0, 5.0]
+
+    hits = search(collection, "質問", rerank=fake_rerank)
+    assert [hit.metadata["location"] for hit in hits] == [3, 2, 1]
+    assert hits[0].rerank_score == 5.0
+
+
+def test_only_the_top_candidates_are_reranked():
+    """RERANK_CANDIDATE_COUNT 件までしかリランカーに渡さない。1.34秒の根拠。"""
+    count = 12
+    collection = _FakeCollection(
+        [f"本文{n}" * 10 for n in range(count)],
+        [0.10 + n * 0.01 for n in range(count)],
+        [_meta(location=n) for n in range(count)],
+    )
+    seen = []
+
+    def fake_rerank(query, texts):
+        seen.append(len(texts))
+        return [float(n) for n in range(len(texts))]
+
+    search(collection, "質問", rerank=fake_rerank)
+    assert seen == [RERANK_CANDIDATE_COUNT]
+
+
+def test_rerank_failure_falls_back_to_the_rrf_order():
+    """リランカーは増幅器であって関門ではない。失敗しても結果は残す。"""
+    collection = _FakeCollection(
+        ["あ" * 20, "い" * 20, "う" * 20],
+        [0.10, 0.20, 0.30],
+        [_meta(location=1), _meta(location=2), _meta(location=3)],
+    )
+
+    def broken_rerank(query, texts):
+        raise RerankError("模擬失敗")
+
+    hits = search(collection, "質問", rerank=broken_rerank)
+    assert [hit.metadata["location"] for hit in hits] == [1, 2, 3]
+
+
+def test_rerank_failure_leaves_the_score_unmeasured():
+    """失敗を隠さない。None は「低い」ではなく「測っていない」を意味する。"""
+    collection = _FakeCollection(
+        ["あ" * 20], [0.10], [_meta(location=1)]
+    )
+
+    def broken_rerank(query, texts):
+        raise RerankError("模擬失敗")
+
+    hits = search(collection, "質問", rerank=broken_rerank)
+    assert hits[0].rerank_score is None
+
+
+def test_rerank_does_not_open_the_gate():
+    """圏外の質問はリランカーを渡しても空のまま。ゲートは距離が単独で担う。"""
+    collection = _FakeCollection(
+        ["あ" * 20], [0.90], [_meta(location=1)]
+    )
+    called = []
+
+    def fake_rerank(query, texts):
+        called.append(1)
+        return [99.0]
+
+    assert search(collection, "質問", rerank=fake_rerank) == []
+    assert called == []
+
+
+def test_reranked_ties_are_broken_deterministically():
+    """同点でも並びが決まること。揺れると同じ質問で根拠の順序が再現しない。"""
+    collection = _FakeCollection(
+        ["あ" * 20, "い" * 20, "う" * 20],
+        [0.30, 0.10, 0.20],
+        [_meta(location=1), _meta(location=2), _meta(location=3)],
+    )
+
+    def flat_rerank(query, texts):
+        return [1.0] * len(texts)
+
+    first = search(collection, "質問", rerank=flat_rerank)
+    second = search(collection, "質問", rerank=flat_rerank)
+    assert [h.metadata["location"] for h in first] == [
+        h.metadata["location"] for h in second
+    ]
