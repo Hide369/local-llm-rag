@@ -108,13 +108,26 @@ def rerank(query: str, texts: list[str]) -> list[float]:
     if not texts:
         return []
     global _session, _tokenizer
-    if _session is None:
-        _session = _build_session()
-    if _tokenizer is None:
-        _tokenizer = _build_tokenizer()
+    # モデルの用意（ダウンロード・ONNXロード・トークナイザ構築）と、トークン化までを
+    # 外部要因の失敗とみなす。初回呼び出しのここが最も失敗しやすく、しかも
+    # spec 6.3 の「増幅器であって関門ではない」が最も要る場面である。包まずに
+    # 生の例外を出すと search() をすり抜けて画面にトレースバックが出る。
     try:
+        if _session is None:
+            _session = _build_session()
+        if _tokenizer is None:
+            _tokenizer = _build_tokenizer()
         encodings = [_tokenizer.encode(query, text) for text in texts]
-        logits = _session.run(None, _feed(encodings))[0]
+    except Exception as error:
+        raise RerankError(f"リランカーを準備できませんでした: {error}") from error
+
+    # _feed は外部依存のない純粋な計算なので、包まない。ここで落ちるのは実装の
+    # 誤りであり、RerankError にすると「モデルが使えない」と誤って報告されて
+    # RRF順への劣化が恒久化し、原因が隠れる。
+    feed = _feed(encodings)
+
+    try:
+        logits = _session.run(None, feed)[0]
     except Exception as error:
         raise RerankError(f"関連度スコアの計算に失敗しました: {error}") from error
     return [float(value) for value in np.asarray(logits).ravel()]

@@ -170,6 +170,47 @@ def test_a_failing_session_raises_rerank_error(monkeypatch):
         rerank("質問", ["本文"])
 
 
+def test_a_failing_session_build_raises_rerank_error(monkeypatch):
+    """初回ビルドの失敗も RerankError に包む。ここを外すと search() をすり抜けて
+    画面に生のトレースバックが出る（spec 6.3）。"""
+
+    def _explode():
+        raise OSError("model file is corrupt")
+
+    monkeypatch.setattr(reranker_module, "_build_session", _explode)
+    monkeypatch.setattr(
+        reranker_module, "_build_tokenizer", lambda: _FakeTokenizer([10])
+    )
+    with pytest.raises(RerankError):
+        rerank("質問", ["本文"])
+
+
+def test_a_failing_tokenizer_build_raises_rerank_error(monkeypatch):
+    def _explode():
+        raise OSError("tokenizer.json is unreadable")
+
+    monkeypatch.setattr(reranker_module, "_build_session", lambda: _FakeSession())
+    monkeypatch.setattr(reranker_module, "_build_tokenizer", _explode)
+    with pytest.raises(RerankError):
+        rerank("質問", ["本文"])
+
+
+def test_a_bug_in_feed_is_not_disguised_as_a_model_failure(monkeypatch):
+    """純粋計算の失敗を RerankError に包まない。包むと実装ミスが「モデルが
+    使えない」と誤報告され、RRF順への劣化が恒久化して原因が隠れる。"""
+    monkeypatch.setattr(reranker_module, "_build_session", lambda: _FakeSession())
+    monkeypatch.setattr(
+        reranker_module, "_build_tokenizer", lambda: _FakeTokenizer([10])
+    )
+
+    def _broken_feed(_encodings):
+        raise KeyError("input_id")
+
+    monkeypatch.setattr(reranker_module, "_feed", _broken_feed)
+    with pytest.raises(KeyError):
+        rerank("質問", ["本文"])
+
+
 # --- 定数と遅延生成 ---
 
 
