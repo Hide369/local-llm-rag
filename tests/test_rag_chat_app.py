@@ -24,6 +24,7 @@ from streamlit.testing.v1 import AppTest
 import ingest.retrieval as retrieval
 from ingest import chat
 from ingest import embedder as embedder_module
+from ingest import reranker as reranker_module
 from ingest import store
 from ingest import vlm as vlm_module
 from ingest.embedder import EmbeddingError
@@ -79,6 +80,17 @@ def app():
     # 全体で共有される。前のテストのDBを引き継がないよう毎回捨てる。
     st.cache_resource.clear()
     return AppTest.from_file(str(APP_PATH), default_timeout=60)
+
+
+@pytest.fixture(autouse=True)
+def _reranker_check_stubbed_by_default():
+    """Rerankerチェックボックスは既定ONなので、他のテストのapp.run()でも
+    ensure_reranker() が毎回走ってしまう。ネットワークにも実モデルにも触れさせない
+    よう、既定では成功したことにスタブする。リランカー自体の疎通確認を検証する
+    テストは、この既定をネストしたpatch.objectで上書きする。
+    """
+    with patch.object(reranker_module, "check_reranker", lambda: None):
+        yield
 
 
 def test_search_failure_is_reported_instead_of_crashing(app):
@@ -360,3 +372,33 @@ def test_input_is_re_enabled_and_history_has_exactly_one_exchange_after_answerin
     assert not app.exception
     assert app.chat_input[0].disabled is False
     assert [m["role"] for m in app.session_state.messages] == ["user", "assistant"]
+
+
+def test_the_reranker_checkbox_defaults_to_on():
+    """VLMは重いため既定OFFだが、リランカーは1.3秒なので常用に耐える。
+
+    ensure_reranker() は @st.cache_resource でプロセス全体に1回だけキャッシュ
+    される。前のテストが残したキャッシュを引き継ぐと、ここでpatch.objectした
+    check_reranker が実際には呼ばれず「何を検証しているのか」が崩れるため、
+    _reranker_check_stubbed_by_default フィクスチャと同じ理由で毎回クリアする。
+    """
+    st.cache_resource.clear()
+    with patch("chromadb.PersistentClient", _stub_persistent_client({"source": "a.md"})), patch.object(
+        reranker_module, "check_reranker", lambda: None
+    ):
+        app = AppTest.from_file(str(APP_PATH)).run()
+    checkbox = next(
+        box for box in app.sidebar.checkbox if "Reranker" in box.label
+    )
+    assert checkbox.value is True
+
+
+def test_a_reranker_model_failure_is_shown_in_the_sidebar():
+    """570MBの取得に失敗したとき、生のトレースバックを画面に出さない。"""
+    st.cache_resource.clear()
+    message = "リランカーのモデルを取得できません（テスト）"
+    with patch("chromadb.PersistentClient", _stub_persistent_client({"source": "a.md"})), patch.object(
+        reranker_module, "check_reranker", side_effect=reranker_module.RerankError(message)
+    ):
+        app = AppTest.from_file(str(APP_PATH)).run()
+    assert any(message in error.value for error in app.sidebar.error)
