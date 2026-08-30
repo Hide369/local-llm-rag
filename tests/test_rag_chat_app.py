@@ -83,13 +83,24 @@ def app():
 
 
 @pytest.fixture(autouse=True)
-def _reranker_check_stubbed_by_default():
+def _reranker_check_and_rerank_stubbed_by_default():
     """Rerankerチェックボックスは既定ONなので、他のテストのapp.run()でも
-    ensure_reranker() が毎回走ってしまう。ネットワークにも実モデルにも触れさせない
-    よう、既定では成功したことにスタブする。リランカー自体の疎通確認を検証する
-    テストは、この既定をネストしたpatch.objectで上書きする。
+    ensure_reranker() だけでなく search() に渡る reranker.rerank まで実際に
+    呼ばれてしまう。_stub_persistent_client は埋め込み [0.1, 0.2] の1チャンクを
+    入れており、多くのテストが embed_query を [0.1, 0.2] にモックしているため
+    distance=0で圏内判定を通り、_reranked() の head が空にならず本物の rerank()
+    （実ONNXセッション構築・hf_hub_download）が呼ばれてしまう。ネットワークにも
+    実モデルにも触れさせないよう、check_reranker と rerank の両方を既定で
+    スタブする。rerank側は [0.0]*len(texts) を返す。全件同スコアなら
+    _reranked() のsortは安定ソートなので元のRRF順のまま返り、既存テストの
+    並び順に関するアサーションには影響しない。
+    リランカー自体の疎通確認や配線を検証するテストは、この既定をネストした
+    patch.objectで上書きする。
     """
-    with patch.object(reranker_module, "check_reranker", lambda: None):
+    with (
+        patch.object(reranker_module, "check_reranker", lambda: None),
+        patch.object(reranker_module, "rerank", lambda query, texts: [0.0] * len(texts)),
+    ):
         yield
 
 
@@ -387,6 +398,7 @@ def test_the_reranker_checkbox_defaults_to_on():
         reranker_module, "check_reranker", lambda: None
     ):
         app = AppTest.from_file(str(APP_PATH)).run()
+    assert not app.exception
     checkbox = next(
         box for box in app.sidebar.checkbox if "Reranker" in box.label
     )
@@ -401,4 +413,68 @@ def test_a_reranker_model_failure_is_shown_in_the_sidebar():
         reranker_module, "check_reranker", side_effect=reranker_module.RerankError(message)
     ):
         app = AppTest.from_file(str(APP_PATH)).run()
+    assert not app.exception
     assert any(message in error.value for error in app.sidebar.error)
+
+
+def test_the_reranker_is_wired_into_search_when_the_checkbox_is_on(app):
+    """チェックボックスがONなら、search()にreranker.rerankが渡る。
+
+    ここを確認しないと、常にrerank=Noneを渡す退行（機能が画面上は何も変わらず
+    静かに無効化される）でも他のアサーションを全て通り抜けてしまう。
+    rag_chat_app.py は `from ingest.retrieval import ... search` でトップレベル
+    importしているが、AppTestはスクリプトをrun()のたびに再実行するため、
+    run()より前に ingest.retrieval.search をパッチしておけば、その回のimportで
+    差し替え後の関数が束縛される
+    （test_a_follow_up_question_is_searched_with_the_previous_one で
+    embed_query に対して使っているのと同じ仕組み）。
+    """
+    calls = []
+
+    def fake_search(
+        collection, query, index=None, session=None, threshold=None, n_results=4, rerank=None
+    ):
+        calls.append(rerank)
+        return []
+
+    with (
+        patch("chromadb.PersistentClient", _stub_persistent_client({"source": "a.md"})),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+        patch.object(retrieval, "search", fake_search),
+    ):
+        app.run()
+        app.chat_input[0].set_value("運転音は？").run()
+
+    assert not app.exception
+    assert calls == [reranker_module.rerank]
+
+
+def test_the_reranker_is_not_wired_into_search_when_the_checkbox_is_off(app):
+    """チェックボックスをOFFにしたら、search()にはrerank=Noneが渡る。
+
+    ON側だけを確認すると、常にreranker.rerankを渡す実装（OFFにしても検索結果が
+    変わらない）でもON側のテストは通ってしまう。ON/OFF両方の対で初めて
+    チェックボックスの値が実際に配線されていることが分かる。
+    """
+    calls = []
+
+    def fake_search(
+        collection, query, index=None, session=None, threshold=None, n_results=4, rerank=None
+    ):
+        calls.append(rerank)
+        return []
+
+    with (
+        patch("chromadb.PersistentClient", _stub_persistent_client({"source": "a.md"})),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+        patch.object(retrieval, "search", fake_search),
+    ):
+        app.run()
+        checkbox = next(
+            box for box in app.sidebar.checkbox if "Reranker" in box.label
+        )
+        checkbox.set_value(False).run()
+        app.chat_input[0].set_value("運転音は？").run()
+
+    assert not app.exception
+    assert calls == [None]
