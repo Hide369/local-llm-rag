@@ -3,6 +3,8 @@
 UIから呼ばれるがUIには依存しない。Streamlitスクリプトに置くと、テストが
 インポートしただけでスクリプト全体が走り本番DBを開いてしまうため、ここに分離する。
 """
+import math
+
 from ingest.retrieval import RELEVANCE_THRESHOLD
 
 
@@ -105,6 +107,15 @@ def format_hit_caption(hit) -> str:
     CANDIDATE_COUNT件の候補に入らず距離を測っていない。31位で距離0.49という
     こともあり得るため、「圏外」と書くと測定していない事実を測定した事実
     であるかのように誤って伝える。
+
+    リランカーのスコアは生のロジット（例 -10.2）ではなくシグモイドで0〜1に
+    正規化して出す。BAAIが正規化スコアとして案内する形式で、桁の直感が効く。
+    並べ替え自体は ingest/retrieval.py が生のロジットで行っており、シグモイドは
+    単調増加なので順位は変わらない。
+
+    rerank_score が None のヒットは「スコアが低い」のではなく、RRF上位
+    RERANK_CANDIDATE_COUNT 件に入らなかったか、リランカーが失敗して測れて
+    いない。distance の None と同じ理由で「未計測」と書く。
     """
     distance = (
         f"cosine距離 {hit.distance:.3f}（しきい値 {RELEVANCE_THRESHOLD}）"
@@ -114,4 +125,9 @@ def format_hit_caption(hit) -> str:
     score = (
         f"BM25 {hit.bm25_score:.2f}" if hit.bm25_score is not None else "BM25 一致なし"
     )
-    return f"{hit.citation} ／ {distance} ／ {score}"
+    reranked = (
+        f"Reranker {1 / (1 + math.exp(-hit.rerank_score)):.2f}"
+        if hit.rerank_score is not None
+        else "Reranker 未計測"
+    )
+    return f"{hit.citation} ／ {distance} ／ {score} ／ {reranked}"
