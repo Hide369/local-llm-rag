@@ -18,10 +18,18 @@
 （実測0.349〜0.381）、ゲート方式でもこの扱いは変わらない。この入力は
 ingest/prompting.py の「根拠がなければ答えない」プロンプトが受け持つ。
 """
+import argparse
+
 import chromadb
 
-from ingest import embedder, lexical, store
-from ingest.retrieval import RELEVANCE_THRESHOLD, Hit, build_index
+from ingest import embedder, lexical, reranker, store
+from ingest.retrieval import (
+    RELEVANCE_THRESHOLD,
+    RERANK_CANDIDATE_COUNT,
+    Hit,
+    build_index,
+    search,
+)
 from scripts.ingest_source import DB_DIR
 
 # 取り込んだ資料に確実に答えがある質問
@@ -136,8 +144,46 @@ def _report(collection, index, session, title, questions):
     return measured
 
 
+def _rerank_comparison(collection, index, session, questions):
+    """同じ質問をRRF順とリランカー順の両方で引き、並びの違いを出す。
+
+    「入れたが効いたか分からない」状態を避けるためにある。上位に入って
+    ほしいチャンクがRRF上位 RERANK_CANDIDATE_COUNT 件の外にあれば、
+    リランカーでは救えない。それがこの出力で見える。
+
+    スコアの分布も出す。将来リランカースコアを圏内・圏外の判定にも使うか
+    （spec 13節）を判断するとき、圏内と圏外がどれだけ離れているかが
+    そのまま材料になる。
+    """
+    print(f"\n=== RRF順 vs リランカー順（上位{RERANK_CANDIDATE_COUNT}件を測り直す）===")
+    for question in questions:
+        before = search(collection, question, index=index, session=session)
+        after = search(
+            collection, question, index=index, session=session, rerank=reranker.rerank
+        )
+        changed = [hit.citation for hit in before] != [hit.citation for hit in after]
+        print(f"\n  {question} — 並びの変化: {'あり' if changed else 'なし'}")
+        for rank, hit in enumerate(before, start=1):
+            print(f"      RRF  {rank}. {hit.citation}")
+        for rank, hit in enumerate(after, start=1):
+            score = (
+                f"{hit.rerank_score:7.3f}" if hit.rerank_score is not None else "  未計測"
+            )
+            print(f"      Rank {rank}. {score}  {hit.citation}")
+
+
 def main() -> int:
+    parser = argparse.ArgumentParser(description="検索のしきい値と回帰ケースを実測する")
+    parser.add_argument(
+        "--with-reranker",
+        action="store_true",
+        help="RRF順とリランカー順を並べて出す（初回はモデル570MBの取得が走る）",
+    )
+    args = parser.parse_args()
+
     embedder.check_ollama()
+    if args.with_reranker:
+        reranker.check_reranker()
     collection = store.open_collection(chromadb.PersistentClient(path=str(DB_DIR)))
     print(f"総チャンク数: {collection.count()}")
     index = build_index(collection)
@@ -209,6 +255,14 @@ def main() -> int:
             f"回帰ケースが失敗しています。BM25側の上位{REGRESSION_TOP_N}件に "
             f"{REGRESSION_EXPECTED} が入りません。"
         )
+
+    if args.with_reranker:
+        session = embedder.new_session()
+        try:
+            _rerank_comparison(collection, index, session, REGRESSION + RELEVANT[:4])
+        finally:
+            session.close()
+
     return 0 if separated and regression_ok else 1
 
 
