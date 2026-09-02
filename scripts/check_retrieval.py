@@ -145,6 +145,24 @@ def _report(collection, index, session, title, questions):
     return measured
 
 
+def _hit_key(hit):
+    """2つの検索結果のあいだで同じチャンクを突き合わせるための鍵。
+
+    出典（citation）だけでは足りない。citation は表示用の文字列で、
+    ingest/chunker.py がIDに含めているチャンク番号を持たないためである
+    （「生成AI活用セミナー.pptx スライド11」までしか分からない）。PPTXは
+    1スライドが複数ユニットになる（実測43スライド→80ユニット）ので、同じ
+    citation を持つ別チャンクが上位に同居するのはこのコーパスでは普通に起きる。
+    citation を鍵にすると辞書が後勝ちで潰れ、RRF順位のラベルが別のチャンクの
+    順位を指す。例外が出ないぶん気づけない。
+
+    Hit はチャンクIDを持たないため、本文を足して一意にする。citation と本文が
+    両方一致するなら、それは内容が同一のチャンクであり、どちらの順位を指しても
+    読み手の解釈は変わらない。
+    """
+    return (hit.citation, hit.text)
+
+
 def _rerank_comparison(collection, index, session, questions):
     """同じ質問をRRF順とリランカー順の両方で引き、上位 RERANK_CANDIDATE_COUNT 件を
     全件並べて違いを出す。
@@ -189,25 +207,23 @@ def _rerank_comparison(collection, index, session, questions):
         # 「並びの変化」はLLMに実際に渡る上位 SEARCH_RESULT_COUNT 件だけで判定する。
         # 一覧はRRF圏外との切り分けのため8件出すが、「答えが変わるか」を意味する
         # のは先頭4件の並びだけなので、判定はそこに絞る。
-        before_top = [hit.citation for hit in before[:SEARCH_RESULT_COUNT]]
-        after_top = [hit.citation for hit in after[:SEARCH_RESULT_COUNT]]
+        before_top = [_hit_key(hit) for hit in before[:SEARCH_RESULT_COUNT]]
+        after_top = [_hit_key(hit) for hit in after[:SEARCH_RESULT_COUNT]]
         changed = before_top != after_top
         print(
             f"\n  {question} — 並びの変化（上位{SEARCH_RESULT_COUNT}件）: "
             f"{'あり' if changed else 'なし'}"
         )
-        # 出典→RRF順位のルックアップ。リランカー順の各行にRRFでの元順位を
+        # チャンク→RRF順位のルックアップ。リランカー順の各行にRRFでの元順位を
         # 添えるために使う。
-        rrf_rank_by_citation = {
-            hit.citation: rank for rank, hit in enumerate(before, start=1)
-        }
+        rrf_rank_by_hit = {_hit_key(hit): rank for rank, hit in enumerate(before, start=1)}
         for rank, hit in enumerate(before, start=1):
             print(f"      RRF  {rank}. {hit.citation}")
         for rank, hit in enumerate(after, start=1):
             score = (
                 f"{hit.rerank_score:7.3f}" if hit.rerank_score is not None else "  未計測"
             )
-            rrf_rank = rrf_rank_by_citation.get(hit.citation)
+            rrf_rank = rrf_rank_by_hit.get(_hit_key(hit))
             # RRF順に見当たらないのは「測っていない」ではなく「そもそもRRF順の
             # 一覧に無かった」ことを意味するので、未計測とは別の表記にする。
             rrf_label = f"(RRF {rrf_rank}位)" if rrf_rank is not None else "(RRF圏外)"
