@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 # OLLAMA_HOST（ngrokのURL）と OLLAMA_API_KEY を上書きする。
 load_dotenv()
 
-from ingest import answer_text, catalog, chat, conditions, embedder, store, vlm
+from ingest import answer_text, catalog, chat, conditions, embedder, reranker, store, vlm
 from ingest.prompting import (
     build_catalog_prompt,
     build_prompt,
@@ -57,6 +57,18 @@ def get_index(_collection, chunk_count):
     ハッシュさせないための目印で、ChromaDBのコレクションはハッシュ化できない。
     """
     return build_index(_collection)
+
+
+@st.cache_resource
+def ensure_reranker():
+    """モデルが手元にあることを1回だけ確認する。
+
+    Streamlitは操作のたびにスクリプトを再実行するため、素直に書くと
+    クリックのたびに hf_hub_download が走る。キャッシュ済みでも既定では
+    リモートへ etag を問い合わせるので、そのたびに待たされることになる。
+    get_collection / get_index と同じくプロセス内1回に限定する。
+    """
+    reranker.check_reranker()
 
 
 def render_hits(hits):
@@ -127,6 +139,26 @@ if st.sidebar.button("差分を取り込む"):
         # 取り込んだ資料がベクトル検索でだけ引ける状態になるのを防ぐ。
         get_index.clear()
         st.rerun()
+
+# 既定ON。VLMが既定OFFなのは画像1枚ごとに同期のAPI呼び出しが挟まり取り込みが
+# 大幅に遅くなるためだが、リランカーは1問あたり約1.3秒（実測。8候補の中央値）
+# であり常用に耐える。
+use_reranker = st.sidebar.checkbox(
+    "Rerankerで並べ替える（+約1.3秒）",
+    value=True,
+    help="検索結果の上位8件をbge-reranker-v2-m3で測り直して並べ替えます。",
+)
+# 初回はモデルの取得に570MB・約1分かかる。質問の途中で無言で止まらないよう、
+# ここで先に確認する（embedder.check_ollama / vlm.check_vlm と同じ役割）。
+rerank_callable = None
+if use_reranker:
+    try:
+        with st.spinner("リランカーのモデルを確認中…（初回は570MBの取得に約1分）"):
+            ensure_reranker()
+    except reranker.RerankError as error:
+        st.sidebar.error(str(error))
+    else:
+        rerank_callable = reranker.rerank
 
 if st.sidebar.button("会話履歴をリセット"):
     st.session_state.messages = []
@@ -203,7 +235,7 @@ if st.session_state.generating:
             # モデルへ渡す質問は生のままにする。会話履歴は history で渡しており、
             # 継ぎ足した文字列まで質問として見せると同じ問いが二重になる。
             query = contextual_query(question, st.session_state.messages[:-1])
-            hits = search(collection, query, index=index)
+            hits = search(collection, query, index=index, rerank=rerank_callable)
             user_content = build_prompt(question, hits)
     except embedder.EmbeddingError as error:
         search_error = error

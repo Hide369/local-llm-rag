@@ -158,3 +158,52 @@ def test_caption_handles_a_hit_found_only_by_the_vector_arm():
     caption = format_hit_caption(_slide_hit(0.312, None))
     assert "None" not in caption
     assert "0.312" in caption
+
+
+def _reranked_hit(rerank_score):
+    return Hit(
+        text="本文",
+        distance=0.312,
+        metadata={
+            "source": "生成AI活用セミナー.pptx",
+            "location_type": "slide",
+            "location": 11,
+            "ocr": False,
+            "heading": "",
+        },
+        bm25_score=4.25,
+        rerank_score=rerank_score,
+    )
+
+
+def test_caption_shows_the_reranker_score_normalised():
+    """生のロジットではなくシグモイドで0〜1に正規化して見せる。桁の直感が効く。"""
+    caption = format_hit_caption(_reranked_hit(2.0))
+    assert "Reranker" in caption
+    assert "0.88" in caption  # sigmoid(2.0) = 0.8808
+
+
+def test_caption_marks_an_unmeasured_reranker_score():
+    """None は「低い」ではなく「測っていない」。distance の扱いと揃える。"""
+    caption = format_hit_caption(_reranked_hit(None))
+    assert "None" not in caption
+    assert "未計測" in caption
+
+
+def test_caption_keeps_the_existing_fields():
+    """既存の表示を壊していないこと。"""
+    caption = format_hit_caption(_reranked_hit(2.0))
+    assert "0.312" in caption
+    assert "4.25" in caption
+
+
+def test_caption_survives_an_extreme_negative_score():
+    """1/(1+exp(-x)) は x が約-710で OverflowError を投げる。この関数は検索結果
+    すべての出典行を作るため、1件の異常値で回答パネルごと消えてしまう。"""
+    caption = format_hit_caption(_reranked_hit(-1000.0))
+    assert "Reranker 0.00" in caption
+
+
+def test_caption_survives_an_extreme_positive_score():
+    caption = format_hit_caption(_reranked_hit(1000.0))
+    assert "Reranker 1.00" in caption

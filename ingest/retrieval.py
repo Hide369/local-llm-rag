@@ -3,10 +3,12 @@
 足切りをしないと、挨拶のような検索対象外の入力でも必ず最近傍が1件返ってきて、
 無関係な文書がコンテキストに紛れ込む。
 """
-from dataclasses import dataclass
+import sys
+from dataclasses import dataclass, replace
 
 from ingest import lexical, store
 from ingest.embedder import embed_query
+from ingest.reranker import RerankError
 from ingest.synonyms import expand_query
 
 SEARCH_RESULT_COUNT = 4
@@ -36,6 +38,13 @@ CANDIDATE_COUNT = 30
 # RRFの定数。順位の逆数を足し合わせるときに上位の影響を和らげる。60は慣用値。
 RRF_K = 60
 
+# リランカーへ渡す候補数。i5-1240Pでの実測は8件1.34秒・10件2.43秒
+# （spec 3.4節）。RRFが上位を絞る役目を果たしているため、これ以上増やしても
+# 伸びしろは小さい。CPUを変えたら測り直すこと。
+# この件数の外にある正解は救えない。それが分かるよう scripts/check_retrieval.py
+# の --with-reranker でRRF順とリランカー順を並べて出す。
+RERANK_CANDIDATE_COUNT = 8
+
 
 @dataclass(frozen=True)
 class Hit:
@@ -46,6 +55,10 @@ class Hit:
     # bm25_score が None になる。どちらの経路で拾ったかを画面に出すために持つ。
     bm25_score: float | None = None
     rrf_score: float = 0.0
+    # リランカーを通っていないヒットは None のままになる。None は「スコアが
+    # 低い」ではなく「測っていない」を意味する。distance の None と同じ扱いで、
+    # 画面には「未計測」と出す（ingest/prompting.py）。
+    rerank_score: float | None = None
 
     @property
     def citation(self) -> str:
@@ -125,6 +138,7 @@ def search(
     session=None,
     threshold=None,
     n_results=SEARCH_RESULT_COUNT,
+    rerank=None,
 ):
     """ベクトル検索とBM25を融合して検索する。
 
@@ -141,6 +155,14 @@ def search(
     差は6.06しかなく、長い圏外質問ひとつで逆転する。距離のほうは関連の最大0.456・
     圏外の最小0.522で分離しており、こちらを関門にするほうが堅い。
     いずれも scripts/check_retrieval.py の実測。資料を入れ替えたら再実測すること。
+
+    rerank を渡すと、RRFで並べた上位 RERANK_CANDIDATE_COUNT 件だけをクロス
+    エンコーダで測り直して並べ替える。渡さなければRRF順のまま返る。
+
+    リランカーは増幅器であって関門ではない。埋め込みが失敗すれば検索そのものが
+    成立しないが、リランカーが失敗してもRRF順の妥当な結果は残る。したがって
+    RerankError はここで捕まえてRRF順のまま返す。ただし失敗は隠さない。
+    そのヒットの rerank_score は None のままになり、画面に「未計測」と出る。
     """
     if collection.count() == 0:
         return []
@@ -216,7 +238,42 @@ def search(
             pair[0],
         )
     )
-    return [hit for _, hit in pairs[:n_results]]
+    ranked = [hit for _, hit in pairs]
+    if rerank is not None:
+        ranked = _reranked(ranked, query, rerank)
+    return ranked[:n_results]
+
+
+def _reranked(hits, query, rerank):
+    """上位 RERANK_CANDIDATE_COUNT 件を測り直して並べ替える。
+
+    並べ替えはリランカースコア単独で行う。RRFスコアとの加重和は取らない。
+    異なる尺度の合成が意味を持たないのは、cosine距離とBM25スコアを足せない
+    のと同じ理由である（このモジュール冒頭のRRFに関する説明を参照）。
+    RRFは「どの候補をリランカーに見せるか」を決める前段に徹する。
+
+    同点は元のRRF順で決める。sortが安定ソートなので、渡された並びがそのまま
+    タイブレークになる。並びが揺れると同じ質問で根拠の順序が再現しない。
+    """
+    head, tail = hits[:RERANK_CANDIDATE_COUNT], hits[RERANK_CANDIDATE_COUNT:]
+    if not head:
+        return hits
+    try:
+        scores = rerank(query, [hit.text for hit in head])
+    except RerankError as error:
+        # 握りつぶさない。RRF順の結果は返しつつ、測れなかったことを標準エラーへ
+        # 残す（ingest/parsers/pdf_parser.py が1枚の画像の失敗を報告するのと
+        # 同じ方針）。画面側は rerank_score が None のままであることで気づける。
+        print(f"警告: リランカーを使えませんでした（RRF順で返します）: {error}", file=sys.stderr)
+        return hits
+    scored = [
+        replace(hit, rerank_score=score) for hit, score in zip(head, scores)
+    ]
+    scored.sort(key=lambda hit: -hit.rerank_score)
+    # リランカーに渡さなかった分は後ろにそのまま残す。n_results で切られて
+    # 表に出ないのが通常だが、n_results を大きくした呼び出しでも件数が
+    # 減らないようにしておく。
+    return scored + tail
 
 
 def build_index(collection):

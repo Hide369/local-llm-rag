@@ -38,8 +38,11 @@ Ollamaインスタンスを別途用意する必要がある（例: `$env:OLLAMA
 ## セットアップ
 
 ```powershell
-.\myvenv313\Scripts\python.exe -m pip install pymupdf python-pptx python-docx rapidocr onnxruntime langchain-text-splitters chromadb streamlit openai requests pytest python-dotenv
+.\myvenv313\Scripts\python.exe -m pip install -r requirements.txt
 ```
+
+各パッケージの用途、Ollamaで必要なモデル、自動ダウンロードされるOCR/リランカーの
+モデルまで含めた一覧は [docs/依存関係一覧.md](docs/依存関係一覧.md) にまとめてある。
 
 ## 使い方
 
@@ -66,6 +69,14 @@ Ollamaインスタンスを別途用意する必要がある（例: `$env:OLLAMA
 # チャットを起動する
 .\myvenv313\Scripts\python.exe -m streamlit run rag_chat_app.py
 ```
+
+検索結果は既定でリランカー（`bge-reranker-v2-m3` のONNX INT8版）による並べ替えを
+通る。RRFで融合した上位8件を測り直すもので、1問あたり約1.3秒（i5-1240Pでの実測。
+8候補の中央値）増える。サイドバーのチェックボックスで切れる。
+
+初回のみモデルの取得に570MB・約1分かかる（`huggingface_hub` の既定キャッシュに
+入る）。新しいpipパッケージの追加は不要で、OCRが使う `onnxruntime` と、
+chromadbが依存として持ち込む `tokenizers` をそのまま使う。
 
 `--only-suffix` を指定したときは孤児削除（`source/` から消えた資料をDBからも消す処理）を
 行わない。対象外の拡張子のファイルがすべて孤児と判定され、他形式のチャンクが丸ごと
@@ -140,7 +151,8 @@ Ollamaに肩代わりさせられる。7B〜8Bクラスのモデル（`qwen2.5:7
 | `scripts/ingest_source.py` | 取り込みCLI |
 | `ingest/lexical.py` | BM25の全文検索（文字bigramトークナイザ含む。外部依存なし） |
 | `ingest/retrieval.py` | ベクトル検索とBM25をRRFで融合し、圏内ゲートで採否を決める |
-| `scripts/check_retrieval.py` | 関連度しきい値の距離実測とBM25側の回帰確認 |
+| `ingest/reranker.py` | RRF上位8件をbge-reranker-v2-m3で測り直す（外部サービスに依存しない） |
+| `scripts/check_retrieval.py` | 関連度しきい値の距離実測、BM25側の回帰確認、リランカーの効果比較（`--with-reranker`） |
 | `rag_chat_app.py` | Streamlit UI |
 | `udemy1.py` 〜 `udemy3.py` | 教材の各段階。`local_docs` コレクションを使い続ける |
 
@@ -171,6 +183,8 @@ Ollamaに肩代わりさせられる。7B〜8Bクラスのモデル（`qwen2.5:7
 | `RELEVANCE_THRESHOLD` | 0.50 | `ingest/retrieval.py` |
 | `CANDIDATE_COUNT` | 30 | `ingest/retrieval.py` |
 | `RRF_K` | 60 | `ingest/retrieval.py` |
+| `RERANK_CANDIDATE_COUNT` | 8 | `ingest/retrieval.py` |
+| `INTRA_OP_THREADS` | 8 | `ingest/reranker.py` |
 | `BM25_K1` | 1.2 | `ingest/lexical.py` |
 | `BM25_B` | 0.75 | `ingest/lexical.py` |
 | `ROW_TOLERANCE` | 228600 | `ingest/parsers/pptx_parser.py` |
@@ -354,6 +368,13 @@ Ollamaに肩代わりさせられる。7B〜8Bクラスのモデル（`qwen2.5:7
   保たれた（有給休暇の質問に会議の質問を継ぎ足しても就業規則が1位。距離は
   0.296→0.352に悪化）。LLMによる質問の書き換えを使わないのは、1問あたり数秒の
   追加コストを避けるためである。
+- リランカーはRRF上位8件しか見ない。9位以降にある正解は救えない。効果は
+  `python -m scripts.check_retrieval --with-reranker` で確認できる。
+- `INTRA_OP_THREADS = 8` はi5-1240P（Pコア4＋Eコア8）固有の実測値である。
+  既定の16論理コアはEコアを巻き込んで遅くなるため明示している。CPUが変われば
+  測り直すこと。
+- リランカーのONNXセッションは常駐し、メモリを約600MB使う。16GBのPCで
+  `qwen3:32b` のような大きな生成モデルと併用するときは注意が要る。
 
 ## 設計資料
 
@@ -365,3 +386,5 @@ Ollamaに肩代わりさせられる。7B〜8Bクラスのモデル（`qwen2.5:7
 - 実装計画（メタデータによる絞り込み）: `docs/superpowers/plans/2026-08-12-metadata-filtering.md`
 - 設計書（ハイブリッド検索）: `docs/superpowers/specs/2026-08-15-hybrid-retrieval-design.md`
 - 実装計画（ハイブリッド検索）: `docs/superpowers/plans/2026-08-15-hybrid-retrieval.md`
+- 設計書（Reranker）: `docs/superpowers/specs/2026-08-30-reranker-design.md`
+- 実装計画（Reranker）: `docs/superpowers/plans/2026-08-30-reranker.md`

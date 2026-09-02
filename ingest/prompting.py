@@ -3,6 +3,8 @@
 UIから呼ばれるがUIには依存しない。Streamlitスクリプトに置くと、テストが
 インポートしただけでスクリプト全体が走り本番DBを開いてしまうため、ここに分離する。
 """
+import math
+
 from ingest.retrieval import RELEVANCE_THRESHOLD
 
 
@@ -91,6 +93,23 @@ def format_report(report) -> str:
     return "\n".join(lines)
 
 
+def _sigmoid(value: float) -> float:
+    """ロジットを0〜1に潰す。値域に依存しない書き方にする。
+
+    素直に 1/(1+exp(-x)) と書くと、xが約-710を下回ったところで exp が
+    OverflowError を投げる。format_hit_caption は検索結果すべての出典行を
+    組み立てるため、1件の異常なスコアで回答パネル全体が消えることになる。
+    bge-reranker-v2-m3 の実際の出力はおおむね±12に収まるが、それを保証して
+    いるものはコード上どこにも無い（ingest/reranker.py はONNXの出力を素通しし、
+    ingest/retrieval.py は RerankError しか捕まえない）。符号で分岐して
+    exp に非正の値しか渡さなければ、どんな入力でもオーバーフローしない。
+    """
+    if value >= 0:
+        return 1 / (1 + math.exp(-value))
+    exponential = math.exp(value)
+    return exponential / (1 + exponential)
+
+
 def format_hit_caption(hit) -> str:
     """出典と、どちらのアームが拾ったかを1行で示す。
 
@@ -105,6 +124,15 @@ def format_hit_caption(hit) -> str:
     CANDIDATE_COUNT件の候補に入らず距離を測っていない。31位で距離0.49という
     こともあり得るため、「圏外」と書くと測定していない事実を測定した事実
     であるかのように誤って伝える。
+
+    リランカーのスコアは生のロジット（例 -10.2）ではなくシグモイドで0〜1に
+    正規化して出す。BAAIが正規化スコアとして案内する形式で、桁の直感が効く。
+    並べ替え自体は ingest/retrieval.py が生のロジットで行っており、シグモイドは
+    単調増加なので順位は変わらない。
+
+    rerank_score が None のヒットは「スコアが低い」のではなく、RRF上位
+    RERANK_CANDIDATE_COUNT 件に入らなかったか、リランカーが失敗して測れて
+    いない。distance の None と同じ理由で「未計測」と書く。
     """
     distance = (
         f"cosine距離 {hit.distance:.3f}（しきい値 {RELEVANCE_THRESHOLD}）"
@@ -114,4 +142,9 @@ def format_hit_caption(hit) -> str:
     score = (
         f"BM25 {hit.bm25_score:.2f}" if hit.bm25_score is not None else "BM25 一致なし"
     )
-    return f"{hit.citation} ／ {distance} ／ {score}"
+    reranked = (
+        f"Reranker {_sigmoid(hit.rerank_score):.2f}"
+        if hit.rerank_score is not None
+        else "Reranker 未計測"
+    )
+    return f"{hit.citation} ／ {distance} ／ {score} ／ {reranked}"

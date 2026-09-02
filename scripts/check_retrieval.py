@@ -18,10 +18,19 @@
 （実測0.349〜0.381）、ゲート方式でもこの扱いは変わらない。この入力は
 ingest/prompting.py の「根拠がなければ答えない」プロンプトが受け持つ。
 """
+import argparse
+
 import chromadb
 
-from ingest import embedder, lexical, store
-from ingest.retrieval import RELEVANCE_THRESHOLD, Hit, build_index
+from ingest import embedder, lexical, reranker, store
+from ingest.retrieval import (
+    RELEVANCE_THRESHOLD,
+    RERANK_CANDIDATE_COUNT,
+    SEARCH_RESULT_COUNT,
+    Hit,
+    build_index,
+    search,
+)
 from scripts.ingest_source import DB_DIR
 
 # 取り込んだ資料に確実に答えがある質問
@@ -136,8 +145,87 @@ def _report(collection, index, session, title, questions):
     return measured
 
 
+def _rerank_comparison(collection, index, session, questions):
+    """同じ質問をRRF順とリランカー順の両方で引き、上位 RERANK_CANDIDATE_COUNT 件を
+    全件並べて違いを出す。
+
+    「入れたが効いたか分からない」状態を避けるためにある。上位に入って
+    ほしいチャンクがRRF上位 RERANK_CANDIDATE_COUNT 件の外にあれば、
+    リランカーでは救えない（spec 15節の最大のリスク）。それを見るには
+    RRF順・リランカー順の両方を RERANK_CANDIDATE_COUNT 件まで測り直す必要がある。
+    SEARCH_RESULT_COUNT（4件）だけ見ていると、「そもそもRRF圏外（9位以降）
+    だったので救えなかった」のか「RRF8位以内には入っていたが4位以内へは
+    上げられなかった」のかを区別できない。
+
+    リランカー順の各行には、そのチャンクが元々RRF順で何位だったかを添える。
+    RRF順に同じ出典が見当たらない場合は「RRF圏外」と明示する。空欄にすると
+    「測っていない」のか「1位相当」なのか区別がつかず、ingest/prompting.py の
+    distance=None を「圏外」と書かない方針と同じ理由で誤解を招く。
+
+    スコアの分布も出す。将来リランカースコアを圏内・圏外の判定にも使うか
+    （spec 13節）を判断するとき、圏内と圏外がどれだけ離れているかが
+    そのまま材料になる。
+    """
+    print(f"\n=== RRF順 vs リランカー順（上位{RERANK_CANDIDATE_COUNT}件を全件表示）===")
+    for question in questions:
+        # 両方とも RERANK_CANDIDATE_COUNT 件まで測り直す。既定の n_results
+        # （SEARCH_RESULT_COUNT=4件）のままだと、RRF圏外で救えなかったのか
+        # 4位以内へ上げられなかっただけなのかが見分けられない。
+        before = search(
+            collection,
+            question,
+            index=index,
+            session=session,
+            n_results=RERANK_CANDIDATE_COUNT,
+        )
+        after = search(
+            collection,
+            question,
+            index=index,
+            session=session,
+            n_results=RERANK_CANDIDATE_COUNT,
+            rerank=reranker.rerank,
+        )
+        # 「並びの変化」はLLMに実際に渡る上位 SEARCH_RESULT_COUNT 件だけで判定する。
+        # 一覧はRRF圏外との切り分けのため8件出すが、「答えが変わるか」を意味する
+        # のは先頭4件の並びだけなので、判定はそこに絞る。
+        before_top = [hit.citation for hit in before[:SEARCH_RESULT_COUNT]]
+        after_top = [hit.citation for hit in after[:SEARCH_RESULT_COUNT]]
+        changed = before_top != after_top
+        print(
+            f"\n  {question} — 並びの変化（上位{SEARCH_RESULT_COUNT}件）: "
+            f"{'あり' if changed else 'なし'}"
+        )
+        # 出典→RRF順位のルックアップ。リランカー順の各行にRRFでの元順位を
+        # 添えるために使う。
+        rrf_rank_by_citation = {
+            hit.citation: rank for rank, hit in enumerate(before, start=1)
+        }
+        for rank, hit in enumerate(before, start=1):
+            print(f"      RRF  {rank}. {hit.citation}")
+        for rank, hit in enumerate(after, start=1):
+            score = (
+                f"{hit.rerank_score:7.3f}" if hit.rerank_score is not None else "  未計測"
+            )
+            rrf_rank = rrf_rank_by_citation.get(hit.citation)
+            # RRF順に見当たらないのは「測っていない」ではなく「そもそもRRF順の
+            # 一覧に無かった」ことを意味するので、未計測とは別の表記にする。
+            rrf_label = f"(RRF {rrf_rank}位)" if rrf_rank is not None else "(RRF圏外)"
+            print(f"      Rank {rank}. {rrf_label}  {score}  {hit.citation}")
+
+
 def main() -> int:
+    parser = argparse.ArgumentParser(description="検索のしきい値と回帰ケースを実測する")
+    parser.add_argument(
+        "--with-reranker",
+        action="store_true",
+        help="RRF順とリランカー順を並べて出す（初回はモデル570MBの取得が走る）",
+    )
+    args = parser.parse_args()
+
     embedder.check_ollama()
+    if args.with_reranker:
+        reranker.check_reranker()
     collection = store.open_collection(chromadb.PersistentClient(path=str(DB_DIR)))
     print(f"総チャンク数: {collection.count()}")
     index = build_index(collection)
@@ -209,6 +297,14 @@ def main() -> int:
             f"回帰ケースが失敗しています。BM25側の上位{REGRESSION_TOP_N}件に "
             f"{REGRESSION_EXPECTED} が入りません。"
         )
+
+    if args.with_reranker:
+        session = embedder.new_session()
+        try:
+            _rerank_comparison(collection, index, session, REGRESSION + RELEVANT[:4])
+        finally:
+            session.close()
+
     return 0 if separated and regression_ok else 1
 
 
