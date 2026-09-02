@@ -19,6 +19,7 @@
 ingest/prompting.py の「根拠がなければ答えない」プロンプトが受け持つ。
 """
 import argparse
+from collections import defaultdict, deque
 
 import chromadb
 
@@ -156,11 +157,32 @@ def _hit_key(hit):
     citation を鍵にすると辞書が後勝ちで潰れ、RRF順位のラベルが別のチャンクの
     順位を指す。例外が出ないぶん気づけない。
 
-    Hit はチャンクIDを持たないため、本文を足して一意にする。citation と本文が
-    両方一致するなら、それは内容が同一のチャンクであり、どちらの順位を指しても
-    読み手の解釈は変わらない。
+    Hit はチャンクIDを持たないため、本文を足す。ただしこれでも一意にはならない。
+    このコーパスは本文が完全一致するチャンクを166件（20.9%、34グループ、最大12重）
+    含んでおり、うち同じ citation を持つ組もある（実測: 「生成AI活用セミナー.pptx
+    スライド11」が2件）。鍵が衝突する前提で使うこと。衝突の扱いは
+    _rrf_ranks() を参照。
     """
     return (hit.citation, hit.text)
+
+
+def _rrf_ranks(before):
+    """チャンク → RRFでの順位（先入れ先出し）を返す。
+
+    同じ鍵に複数のチャンクがぶら下がるため、辞書に順位をひとつだけ持たせると
+    後勝ちで潰れる。実測では2件が「(RRF 5位)」と表示され、4位が消えた。
+    順位が抜けて見えるのは、リランカーが順位を落としたようにも読めて誤解を招く。
+
+    順位を待ち行列にして取り出すたびに消費する。リランカーの並べ替えは安定ソートで、
+    本文が同じなら必ず同スコアになるため、リランカー順での出現順は RRF順での
+    出現順と一致する。したがって先頭から順に配れば正しい順位が当たる。
+    区別のつかない同一チャンク同士でも、表示される順位の集合が {4,5} という
+    本来の集合と一致することが重要である。
+    """
+    ranks = defaultdict(deque)
+    for rank, hit in enumerate(before, start=1):
+        ranks[_hit_key(hit)].append(rank)
+    return ranks
 
 
 def _rerank_comparison(collection, index, session, questions):
@@ -216,14 +238,15 @@ def _rerank_comparison(collection, index, session, questions):
         )
         # チャンク→RRF順位のルックアップ。リランカー順の各行にRRFでの元順位を
         # 添えるために使う。
-        rrf_rank_by_hit = {_hit_key(hit): rank for rank, hit in enumerate(before, start=1)}
+        rrf_rank_by_hit = _rrf_ranks(before)
         for rank, hit in enumerate(before, start=1):
             print(f"      RRF  {rank}. {hit.citation}")
         for rank, hit in enumerate(after, start=1):
             score = (
                 f"{hit.rerank_score:7.3f}" if hit.rerank_score is not None else "  未計測"
             )
-            rrf_rank = rrf_rank_by_hit.get(_hit_key(hit))
+            queue = rrf_rank_by_hit.get(_hit_key(hit))
+            rrf_rank = queue.popleft() if queue else None
             # RRF順に見当たらないのは「測っていない」ではなく「そもそもRRF順の
             # 一覧に無かった」ことを意味するので、未計測とは別の表記にする。
             rrf_label = f"(RRF {rrf_rank}位)" if rrf_rank is not None else "(RRF圏外)"
