@@ -1,0 +1,37 @@
+# 本システムが直接importするパッケージだけを、myvenv313 に入っている実績のある
+# バージョンで固定する。推移的な依存（chromadbが引き込むgrpcio等）は挙げない。
+# 完全な再現が要る場合は `pip freeze > requirements.lock.txt` を別途取ること。
+#
+# 各パッケージの用途と使用箇所は docs/依存関係一覧.md を参照。
+# ここを変更したら docs/依存関係一覧.md の表も必ず更新すること。
+
+# 文書の解析
+pymupdf==1.28.2
+python-pptx==1.0.2
+python-docx==1.2.0
+
+# OCR（画像PDF）とリランカーの推論。onnxruntimeは両方で使う
+rapidocr==3.9.2
+onnxruntime==1.28.0
+
+# リランカー。chromadbの依存としても入るが、ingest/reranker.py が直接importする以上
+# 依存の巻き添えに任せず明示する（chromadb側が外したら黙って壊れるため）
+numpy==2.5.2
+huggingface_hub==1.27.0
+tokenizers==0.23.1
+
+# チャンク分割・ベクトルDB・UI
+langchain-text-splitters==1.1.2
+chromadb==1.0.16
+streamlit==1.61.1
+
+# Ollamaへのアクセスと設定
+requests==2.32.3
+python-dotenv==1.2.2
+
+# 教材オリジナルの udemy1〜3.py / stream.py のみが使う。本体の経路では未使用
+openai==1.99.3
+
+# テスト
+pytest==9.1.1
+pillow==12.3.0

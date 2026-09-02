@@ -38,8 +38,11 @@ Ollamaインスタンスを別途用意する必要がある（例: `$env:OLLAMA
 ## セットアップ
 
 ```powershell
-.\myvenv313\Scripts\python.exe -m pip install pymupdf python-pptx python-docx rapidocr onnxruntime langchain-text-splitters chromadb streamlit openai requests pytest python-dotenv
+.\myvenv313\Scripts\python.exe -m pip install -r requirements.txt
 ```
+
+各パッケージの用途、Ollamaで必要なモデル、自動ダウンロードされるOCR/リランカーの
+モデルまで含めた一覧は [docs/依存関係一覧.md](docs/依存関係一覧.md) にまとめてある。
 
 ## 使い方
 
