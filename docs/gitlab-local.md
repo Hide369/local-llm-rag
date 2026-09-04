@@ -45,6 +45,13 @@ Copy-Item infra\gitlab\.env.example infra\gitlab\.env
 走るため時間がかかる。実際にかかった時間は下の「実測値」を参照。2回目以降は
 reconfigureが走らないため大幅に短くなる（これも「実測値」参照）。
 
+起動できたら `http://localhost:8929` を開き、rootでサインインする。
+
+- ユーザー名: `root`
+- パスワード: 手順2で `infra\gitlab\.env` に設定した `GITLAB_ROOT_PASSWORD` の値
+
+以降の手順（インポート、PAT発行）はすべてこのrootセッションで行う。
+
 ### 4. GitHubからインポートする
 
 **「Repository by URL」インポートは使わないこと。** GitLab 19.3.1では既定で
@@ -77,8 +84,8 @@ GitLabへHTTP経由でpushすると、認証情報が無い状態ではGit Crede
 （GCM）のGUIダイアログが毎回ポップアップする。これを避けるため、Personal Access
 Token（PAT）を発行し、資格情報ストアに事前登録しておく。
 
-1. `root` でサインインし、`http://localhost:8929/-/user_settings/personal_access_tokens`
-   でPATを発行する。
+1. 「3. 起動する」でサインイン済みのrootセッションのまま、
+   `http://localhost:8929/-/user_settings/personal_access_tokens` でPATを発行する。
    - Token name: `local-mirror-sync`
    - Scopes: `write_repository`
 2. 発行されたトークンの値を、以下のコマンドで資格情報ストアに登録する
