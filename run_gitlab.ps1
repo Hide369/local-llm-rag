@@ -120,13 +120,22 @@ switch ($Command) {
         # 明示的なrefspecを組み立てる。
         $originBranchRefs = git -C $PSScriptRoot for-each-ref --format="%(refname)" refs/remotes/origin |
             Where-Object { $_ -ne "refs/remotes/origin/HEAD" }
-        if ($originBranchRefs) {
-            $refspecs = $originBranchRefs | ForEach-Object {
-                $branch = $_ -replace '^refs/remotes/origin/', ''
-                "${_}:refs/heads/$branch"
-            }
-            git -C $PSScriptRoot push gitlab $refspecs
-            if (-not $?) { throw "origin のリモート追跡ブランチから gitlab への一括pushに失敗しました。" }
+        if (-not $?) { throw "origin のブランチ一覧取得（for-each-ref）に失敗しました。" }
+
+        # 0本になるのは通常ありえない（最低でも master はあるはず）。空のrefspecで
+        # pushしても何も送られず「同期した」と見せかけるだけで意味が無いため、
+        # 黙って通過させずに異常として止める。
+        if (-not $originBranchRefs) {
+            throw "origin にブランチが1本も見つかりませんでした。直前の fetch origin --prune が正しく行われたか、origin remoteの設定を確認してください。"
+        }
+
+        $refspecs = $originBranchRefs | ForEach-Object {
+            $branch = $_ -replace '^refs/remotes/origin/', ''
+            "${_}:refs/heads/$branch"
+        }
+        git -C $PSScriptRoot push gitlab $refspecs
+        if (-not $?) {
+            throw "origin のリモート追跡ブランチから gitlab への一括pushに失敗しました。gitlab上の対象ブランチが直接変更され、GitHub側から乖離している可能性があります。gitlab側のブランチの状態を確認し、必要であれば退避・削除したうえで、もう一度 .\run_gitlab.ps1 sync を実行してください。"
         }
 
         # ローカルにしか存在しないブランチ（現在の作業ブランチ等、まだGitHubに
