@@ -1,9 +1,18 @@
 # ローカルGitLab CE。GitHubを正とするミラー先であり、必要なときだけ起動する。
 # 設計の根拠は docs/superpowers/specs/2026-09-04-local-gitlab-design.md を参照。
 
+# volume名は "<プロジェクト名>_<volume名>" になる。Task 3のrun_gitlab.ps1や
+# 運用ドキュメントは local-gitlab_gitlab_config / _logs / _data という
+# 具体的な名前に依存しているため、プロジェクト名をディレクトリ名からの推測や
+# 追跡外の.envに委ねると壊れやすい（.envが無いだけで gitlab_gitlab_config に
+# 化けてデータが消えたように見える）。ここで固定することを単一の情報源とする。
+name: local-gitlab
+
 services:
   gitlab:
-    image: gitlab/gitlab-ce:${GITLAB_VERSION}-ce.0
+    # .envが無いまま起動すると "image not found" という分かりにくいエラーに
+    # なるため、config時点で明確なメッセージを出して早期に失敗させる。
+    image: gitlab/gitlab-ce:${GITLAB_VERSION:?infra/gitlab/.envにGITLAB_VERSIONを設定してください（.env.exampleを.envにコピーして値を入れる）}-ce.0
     container_name: local-gitlab
     # external_url のホスト名と揃えないと、GitLabが生成するクローンURLがずれる。
     hostname: localhost
@@ -14,7 +23,7 @@ services:
     # 同梱PostgreSQLが既定の64mでは警告を出すため広げる。
     shm_size: '256m'
     environment:
-      GITLAB_ROOT_PASSWORD: ${GITLAB_ROOT_PASSWORD}
+      GITLAB_ROOT_PASSWORD: ${GITLAB_ROOT_PASSWORD:?infra/gitlab/.envにGITLAB_ROOT_PASSWORDを設定してください（8文字以上）}
       GITLAB_OMNIBUS_CONFIG: |
         external_url 'http://localhost:8929'
         gitlab_rails['gitlab_shell_ssh_port'] = 2224
