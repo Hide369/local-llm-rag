@@ -14,7 +14,11 @@ services:
     # なるため、config時点で明確なメッセージを出して早期に失敗させる。
     image: gitlab/gitlab-ce:${GITLAB_VERSION:?infra/gitlab/.envにGITLAB_VERSIONを設定してください（.env.exampleを.envにコピーして値を入れる）}-ce.0
     container_name: local-gitlab
-    # external_url のホスト名と揃えないと、GitLabが生成するクローンURLがずれる。
+    # クローンURLは external_url から導出されるので、この設定はクローンURLには
+    # 影響しない（以前そう書いていたのは誤り）。これはコンテナ自身のホスト名を
+    # external_url と揃えるためのもので、ログ・コンテナ内のシェルプロンプト・
+    # GitLabが出力する診断情報に出る名前が、実際にアクセスするURLと一致して
+    # 読み取りやすくなる。付けなければランダムなコンテナIDになる。
     hostname: localhost
     # 「必要なときだけ起動する」運用のため、Docker Desktopの起動に追随させない。
     # unless-stopped にするとPC起動のたびにGitLabが立ち上がり、Ollamaと
@@ -35,10 +39,20 @@ services:
         # 既定はCPUコア数に応じて増えるが、同時利用者が1人なら2で足りる。
         puma['worker_processes'] = 2
         # Phase 1ではCIを回さないため非同期ジョブ自体が少ない。
-        sidekiq['max_concurrency'] = 5
+        # キー名は sidekiq['concurrency']。以前は sidekiq['max_concurrency'] と
+        # 書いていたが、Omnibusはsidekiqハッシュ内の未知のキーを黙って捨てるため、
+        # 既定の -c 20 のまま一度も効いていなかった（gitlab.rb.templateに
+        # max_concurrency は存在せず、稼働中のsidekiq-clusterが -c 20 で
+        # 動いていることを実測で確認）。
+        sidekiq['concurrency'] = 5
     ports:
-      - "8929:8929"
-      - "2224:22"
+      # ループバックのみに束ねる。設計書9節は「localhostからしかアクセスしない」
+      # ことを根拠にTLSを省略している。既定の "8929:8929" は 0.0.0.0/:: に
+      # bindするため、同一LAN上の誰でも平文HTTPでサインイン画面に到達でき、
+      # rootパスワードがネットワークを流れてしまう。前提は仮定ではなく
+      # このbind指定で強制する。
+      - "127.0.0.1:8929:8929"
+      - "127.0.0.1:2224:22"
     volumes:
       - gitlab_config:/etc/gitlab
       - gitlab_logs:/var/log/gitlab
