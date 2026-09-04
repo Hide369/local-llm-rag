@@ -103,9 +103,43 @@ switch ($Command) {
             throw "gitlab remoteが未登録です。docs\gitlab-local.md の手順で追加してください。"
         }
 
-        # ブランチ名を手で打つと取りこぼすため、全ブランチと全タグをまとめて送る。
+        # GitHub側の最新状態をまず取り込む。--prune で、GitHub上で削除された
+        # ブランチをこちらでも追跡し続けてしまうことを防ぐ。
+        git -C $PSScriptRoot fetch origin --prune
+        if (-not $?) { throw "origin からのfetchに失敗しました。" }
+
+        # git push --all はローカルにチェックアウト済みのブランチしか送らない。
+        # 実測でこれが原因となり、GitHub上の8ブランチ中6ブランチ（ローカルに
+        # 存在しなかったfeature/fixブランチ）が無言で同期から漏れた。
+        # ミラーはローカルの作業状態ではなくGitHub（origin）の実態を反映すべき
+        # なので、origin のリモート追跡ブランチを直接 gitlab へ送る。
+        # refs/remotes/origin/* を単純にワイルドカードで渡すと、実ブランチでは
+        # ない refs/remotes/origin/HEAD（symbolic ref）まで
+        # "refs/heads/HEAD" として送ろうとして GitLab に不正なブランチ名として
+        # 拒否される（実測で確認）ため、for-each-ref で実ブランチのみを列挙して
+        # 明示的なrefspecを組み立てる。
+        $originBranchRefs = git -C $PSScriptRoot for-each-ref --format="%(refname)" refs/remotes/origin |
+            Where-Object { $_ -ne "refs/remotes/origin/HEAD" }
+        if ($originBranchRefs) {
+            $refspecs = $originBranchRefs | ForEach-Object {
+                $branch = $_ -replace '^refs/remotes/origin/', ''
+                "${_}:refs/heads/$branch"
+            }
+            git -C $PSScriptRoot push gitlab $refspecs
+            if (-not $?) { throw "origin のリモート追跡ブランチから gitlab への一括pushに失敗しました。" }
+        }
+
+        # ローカルにしか存在しないブランチ（現在の作業ブランチ等、まだGitHubに
+        # pushされていないもの）は上記だけでは送られないため、これも別途送る。
+        # ここが非fast-forwardで失敗した場合、ローカルブランチがGitHub上の
+        # 対応ブランチと乖離していることを意味する。直前のステップでGitLabは
+        # 既にGitHubと同じ状態になっているため、ここで強制pushして食い違いを
+        # 揉み消すことはしない。原因を調べて解消してから再度syncしてほしい。
         git -C $PSScriptRoot push --all gitlab
-        if (-not $?) { throw "ブランチのpushに失敗しました。" }
+        if (-not $?) {
+            throw "ローカルブランチのpushに失敗しました（非fast-forwardの可能性）。ローカルのブランチがGitHub上の同名ブランチと乖離している可能性があります。gitlab は直前のステップで既にGitHubの状態と一致しています。git fetch / git rebase 等でローカルを最新のGitHubの状態に合わせてから、もう一度 .\run_gitlab.ps1 sync を実行してください。"
+        }
+
         git -C $PSScriptRoot push --tags gitlab
         if (-not $?) { throw "タグのpushに失敗しました。" }
         Write-Host "全ブランチ・全タグを gitlab へ同期しました。"
