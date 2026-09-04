@@ -141,6 +141,14 @@ Ollamaに肩代わりさせられる。7B〜8Bクラスのモデル（`qwen2.5:7
 - ローカルのOllamaに戻すには、`.env` の `OLLAMA_HOST` / `OLLAMA_API_KEY` を削除するか
   コメントアウトすればよい（既定値の `http://127.0.0.1:11434` に戻る）。
 
+## ローカルGitLabにミラーする
+
+GitHubを正としたまま、手元のGitLab CEに全ブランチ・全タグの複製を持てる。
+GitLabはOllamaとメモリを取り合うため常時起動はせず、必要なときだけ
+`.\run_gitlab.ps1 up` で立ち上げて使う。
+
+セットアップと運用の手順は [docs/gitlab-local.md](docs/gitlab-local.md) を参照。
+
 ## 構成
 
 | パス | 役割 |
@@ -155,6 +163,8 @@ Ollamaに肩代わりさせられる。7B〜8Bクラスのモデル（`qwen2.5:7
 | `scripts/check_retrieval.py` | 関連度しきい値の距離実測、BM25側の回帰確認、リランカーの効果比較（`--with-reranker`） |
 | `rag_chat_app.py` | Streamlit UI |
 | `udemy1.py` 〜 `udemy3.py` | 教材の各段階。`local_docs` コレクションを使い続ける |
+| `infra/gitlab/` | ローカルGitLab CEのDocker定義（アプリ本体には非依存） |
+| `run_gitlab.ps1` | ローカルGitLabの起動・停止・同期 |
 
 このプロジェクトのコレクション（`local_docs_v2`、bge-m3 / 1024次元）は、教材が使う
 `local_docs`（nomic-embed-text / 768次元）とは別名で `chroma_db/` 内に共存している。
@@ -388,3 +398,5 @@ Ollamaに肩代わりさせられる。7B〜8Bクラスのモデル（`qwen2.5:7
 - 実装計画（ハイブリッド検索）: `docs/superpowers/plans/2026-08-15-hybrid-retrieval.md`
 - 設計書（Reranker）: `docs/superpowers/specs/2026-08-30-reranker-design.md`
 - 実装計画（Reranker）: `docs/superpowers/plans/2026-08-30-reranker.md`
+- 設計書（ローカルGitLab）: `docs/superpowers/specs/2026-09-04-local-gitlab-design.md`
+- 実装計画（ローカルGitLab）: `docs/superpowers/plans/2026-09-04-local-gitlab.md`
