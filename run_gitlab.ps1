@@ -27,6 +27,14 @@ function Get-GitLabHealth {
     # 不安定になるため、存在確認は docker ps で先に行う。
     $found = docker ps -a --filter "name=^$ContainerName$" --format "{{.Names}}"
     if (-not $found) { return "absent" }
+    # .State.Health.Status だけを見てはいけない。コンテナが異常終了しても
+    # このフィールドは終了直前の値（多くの場合 healthy や starting）を保持し続け、
+    # docker ps -a にも残るため、健康状態だけでは「止まっている」ことを検知できない。
+    # 実際にこの構成でコンテナが exit 255 で落ちた事例があり（docs/gitlab-local.md
+    # 「既知の不安定さ」）、その場合 up は死んだコンテナを永久にポーリングし、
+    # status は「起動処理中」と誤報する。実行中かどうかを併せて読む。
+    $running = docker inspect --format "{{.State.Running}}" $ContainerName
+    if ($running.Trim() -ne "true") { return "stopped" }
     $state = docker inspect --format "{{.State.Health.Status}}" $ContainerName
     return $state.Trim()
 }
@@ -46,6 +54,9 @@ switch ($Command) {
         while ($true) {
             $health = Get-GitLabHealth
             if ($health -eq "absent") { throw "コンテナが見つかりません。docker compose up が失敗しています。" }
+            if ($health -eq "stopped") {
+                throw "コンテナが停止しています。起動直後に異常終了した可能性があります。`ndocker compose -f $ComposeFile logs gitlab で終了理由を確認してください。"
+            }
 
             # コンテナのhealthcheckは、reconfigureが終わる前にnginxがポートを
             # 開けた時点で healthy を返すことが実測で確認できた（このマシンでは
@@ -87,6 +98,7 @@ switch ($Command) {
         $health = Get-GitLabHealth
         switch ($health) {
             "absent"  { Write-Host "GitLabコンテナは存在しません（停止中）。" }
+            "stopped" { Write-Host "GitLabコンテナは存在しますが停止しています。意図しない終了であれば docker compose -f infra\gitlab\docker-compose.yml logs gitlab で理由を確認してください。" }
             "healthy" { Write-Host ("GitLabは起動しています: {0}" -f $GitLabUrl) }
             default   { Write-Host ("GitLabは起動処理中です。状態: {0}" -f $health) }
         }
@@ -103,13 +115,23 @@ switch ($Command) {
             throw "gitlab remoteが未登録です。docs\gitlab-local.md の手順で追加してください。"
         }
 
+        # 名前が gitlab である remote が存在することだけでは不十分。誤って
+        # `git remote add gitlab https://github.com/...` のように登録されていると、
+        # 以降のブランチpushや --tags のpushがそのままGitHubへ飛ぶ。GitHubを上書き
+        # しないことはこの設計で唯一許容できない事象なので、ネットワーク操作に
+        # 入る前に宛先そのものを確認する。
+        $gitlabUrl = git -C $PSScriptRoot remote get-url gitlab
+        if ($gitlabUrl -notlike "http://localhost:8929/*") {
+            throw "gitlab remoteの宛先が想定外です（$gitlabUrl）。ローカルGitLab以外へpushしないよう中止します。"
+        }
+
         # GitHub側の最新状態をまず取り込む。--prune で、GitHub上で削除された
         # ブランチをこちらでも追跡し続けてしまうことを防ぐ。
         git -C $PSScriptRoot fetch origin --prune
         if (-not $?) { throw "origin からのfetchに失敗しました。" }
 
         # git push --all はローカルにチェックアウト済みのブランチしか送らない。
-        # 実測でこれが原因となり、GitHub上の8ブランチ中6ブランチ（ローカルに
+        # 実測でこれが原因となり、GitHub上の7ブランチ中6ブランチ（ローカルに
         # 存在しなかったfeature/fixブランチ）が無言で同期から漏れた。
         # ミラーはローカルの作業状態ではなくGitHub（origin）の実態を反映すべき
         # なので、origin のリモート追跡ブランチを直接 gitlab へ送る。
@@ -118,9 +140,12 @@ switch ($Command) {
         # "refs/heads/HEAD" として送ろうとして GitLab に不正なブランチ名として
         # 拒否される（実測で確認）ため、for-each-ref で実ブランチのみを列挙して
         # 明示的なrefspecを組み立てる。
-        $originBranchRefs = git -C $PSScriptRoot for-each-ref --format="%(refname)" refs/remotes/origin |
-            Where-Object { $_ -ne "refs/remotes/origin/HEAD" }
-        if (-not $?) { throw "origin のブランチ一覧取得（for-each-ref）に失敗しました。" }
+        # パイプラインの途中で終了コードを見ると $? は最後のコマンドレット
+        # （Where-Object）の成否を返してしまい、git 側の失敗を取り逃がす。
+        # git の結果を一度受けてから $LASTEXITCODE で判定し、絞り込みは別行で行う。
+        $originRefsRaw = git -C $PSScriptRoot for-each-ref --format="%(refname)" refs/remotes/origin
+        if ($LASTEXITCODE -ne 0) { throw "origin のブランチ一覧取得（for-each-ref）に失敗しました。" }
+        $originBranchRefs = @($originRefsRaw | Where-Object { $_ -ne "refs/remotes/origin/HEAD" })
 
         # 0本になるのは通常ありえない（最低でも master はあるはず）。空のrefspecで
         # pushしても何も送られず「同期した」と見せかけるだけで意味が無いため、
@@ -140,13 +165,34 @@ switch ($Command) {
 
         # ローカルにしか存在しないブランチ（現在の作業ブランチ等、まだGitHubに
         # pushされていないもの）は上記だけでは送られないため、これも別途送る。
-        # ここが非fast-forwardで失敗した場合、ローカルブランチがGitHub上の
-        # 対応ブランチと乖離していることを意味する。直前のステップでGitLabは
-        # 既にGitHubと同じ状態になっているため、ここで強制pushして食い違いを
-        # 揉み消すことはしない。原因を調べて解消してから再度syncしてほしい。
-        git -C $PSScriptRoot push --all gitlab
-        if (-not $?) {
-            throw "ローカルブランチのpushに失敗しました（非fast-forwardの可能性）。ローカルのブランチがGitHub上の同名ブランチと乖離している可能性があります。gitlab は直前のステップで既にGitHubの状態と一致しています。git fetch / git rebase 等でローカルを最新のGitHubの状態に合わせてから、もう一度 .\run_gitlab.ps1 sync を実行してください。"
+        #
+        # ここで `git push --all gitlab` を使ってはいけない。--all はorigin側にも
+        # 存在するブランチまで送るため、GitHubでPRをマージした直後（まだ pull して
+        # いない状態）にローカルの master が遅れていると、その古いrefのpushが
+        # 非fast-forwardで拒否され sync 全体が落ちる。タグのpushにも到達しない。
+        # しかも直前のステップでミラーは既に正しい状態になっているので、この失敗は
+        # 完全に無意味である。このリポジトリの履歴は「Merge pull request #N」で
+        # 埋まっており、PRマージは例外ではなく通常の運用そのものなので、
+        # origin に存在しないブランチだけに絞る。副次的に、ステップ2で既に送った
+        # ブランチを二重にpushする無駄も無くなる。
+        $originNames = $originBranchRefs | ForEach-Object { $_ -replace '^refs/remotes/origin/', '' }
+        $localOnlyRaw = git -C $PSScriptRoot for-each-ref --format="%(refname:short)" refs/heads
+        if ($LASTEXITCODE -ne 0) { throw "ローカルブランチ一覧の取得（for-each-ref）に失敗しました。" }
+        $localOnly = @($localOnlyRaw | Where-Object { $originNames -notcontains $_ })
+
+        # ローカル固有のブランチが0本なのは正常（全ブランチがGitHubにpush済み）。
+        # 空のまま push すると引数不足になるため、送るものがある場合だけ実行する。
+        if ($localOnly.Count -gt 0) {
+            # ここが非fast-forwardで失敗した場合、ローカル固有のはずのブランチが
+            # gitlab側で直接変更されて乖離していることを意味する。直前のステップで
+            # GitLabは既にGitHubと同じ状態になっているため、ここで強制pushして
+            # 食い違いを揉み消すことはしない。原因を調べて解消してから再度syncする。
+            git -C $PSScriptRoot push gitlab $localOnly
+            if ($LASTEXITCODE -ne 0) {
+                throw "ローカル固有ブランチのpushに失敗しました（非fast-forwardの可能性）。対象: $($localOnly -join ', ')。gitlab は直前のステップで既にGitHubの状態と一致しています。gitlab側の同名ブランチの状態を確認し、乖離を解消してから、もう一度 .\run_gitlab.ps1 sync を実行してください。"
+            }
+        } else {
+            Write-Host "ローカルにしか存在しないブランチはありません。"
         }
 
         git -C $PSScriptRoot push --tags gitlab
