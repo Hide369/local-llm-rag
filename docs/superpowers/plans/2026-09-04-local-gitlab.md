@@ -93,7 +93,9 @@ $resp = curl.exe -s "https://registry.hub.docker.com/v2/repositories/gitlab/gitl
 ($resp | ConvertFrom-Json).results | Where-Object { $_.name -match '^\d+\.\d+\.\d+-ce\.0$' } | Select-Object -First 5 -ExpandProperty name
 ```
 
-出力の先頭（最も新しい安定版）を採用する。以降この計画では採用したtagを `<VERSION>-ce.0` と表記する。**`latest` は使わない**（依存はロックするという方針のため）。
+**バージョン番号が最も大きいものを採用する。`last_updated` 順の先頭ではない。** GitLabは直近3つのマイナーバージョンに同時にパッチを出すため、更新日時で並べると `19.1.7` `19.2.5` `19.3.1` のように**古いマイナーが先頭に来る**（2026-08-26のリリースは実際にこの並びだった）。上のコマンドは更新日時順で取得しているので、返ってきた一覧からセマンティックバージョンとして最大のものを選ぶこと。
+
+以降この計画では採用したtagを `<VERSION>-ce.0` と表記する。**`latest` は使わない**（依存はロックするという方針のため）。
 
 - [ ] **Step 4: `.env.example` を作る**
 
