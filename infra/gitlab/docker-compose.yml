@@ -1,0 +1,53 @@
+# ローカルGitLab CE。GitHubを正とするミラー先であり、必要なときだけ起動する。
+# 設計の根拠は docs/superpowers/specs/2026-09-04-local-gitlab-design.md を参照。
+
+services:
+  gitlab:
+    image: gitlab/gitlab-ce:${GITLAB_VERSION}-ce.0
+    container_name: local-gitlab
+    # external_url のホスト名と揃えないと、GitLabが生成するクローンURLがずれる。
+    hostname: localhost
+    # 「必要なときだけ起動する」運用のため、Docker Desktopの起動に追随させない。
+    # unless-stopped にするとPC起動のたびにGitLabが立ち上がり、Ollamaと
+    # メモリを取り合ってしまう。
+    restart: "no"
+    # 同梱PostgreSQLが既定の64mでは警告を出すため広げる。
+    shm_size: '256m'
+    environment:
+      GITLAB_ROOT_PASSWORD: ${GITLAB_ROOT_PASSWORD}
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://localhost:8929'
+        gitlab_rails['gitlab_shell_ssh_port'] = 2224
+
+        # --- ここからメモリ抑制（16GBのPCでOllamaと共存させるため） ---
+        # 自己監視スタックを丸ごと止める。利用者が1人の環境では監視対象が
+        # 自分しかおらず、削減効果が最も大きい。
+        prometheus_monitoring['enable'] = false
+        # 既定はCPUコア数に応じて増えるが、同時利用者が1人なら2で足りる。
+        puma['worker_processes'] = 2
+        # Phase 1ではCIを回さないため非同期ジョブ自体が少ない。
+        sidekiq['max_concurrency'] = 5
+    ports:
+      - "8929:8929"
+      - "2224:22"
+    volumes:
+      - gitlab_config:/etc/gitlab
+      - gitlab_logs:/var/log/gitlab
+      - gitlab_data:/var/opt/gitlab
+    healthcheck:
+      # イメージ本体が定義する既定のhealthcheckコマンド（docker inspectで確認済み）と
+      # 揃える。CMDではなくCMD-SHELL形式で1本の文字列として定義されている。
+      test: ["CMD-SHELL", "/opt/gitlab/bin/gitlab-healthcheck --fail --max-time 10"]
+      interval: 30s
+      timeout: 15s
+      retries: 60
+      # 初回はreconfigureが走るうえ、このPCはサーマルスロットリングで
+      # 大きく遅くなる（README「既知の制約」）。既定の猶予では足りない。
+      start_period: 600s
+
+# Windowsパスへのbind mountはパーミッションとI/O性能の両面で問題が出るため
+# named volumeを使う。
+volumes:
+  gitlab_config:
+  gitlab_logs:
+  gitlab_data:
