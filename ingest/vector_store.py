@@ -116,9 +116,21 @@ class VectorStore:
         """正規化して1行ずつ書く。呼び出し側がトランザクションを持つ。
 
         正規化を最初に済ませるのは、1行も書く前に不正なベクトルを弾くため。
+        長さ検証はさらにその前に置く。`zip` は長さが揃っていないと黙って
+        短い方に切り詰める。`replace` の中でこれが起きると、DELETEで旧チャンクを
+        消した後に新チャンクの一部だけを書いてコミットしてしまい、「帳簿は
+        進んだのに実体が欠けている」という今回捨てたはずの壊れ方を作ってしまう。
         """
         if not ids:
             return
+        lengths = {
+            "ids": len(ids),
+            "documents": len(documents),
+            "metadatas": len(metadatas),
+            "embeddings": len(embeddings),
+        }
+        if len(set(lengths.values())) != 1:
+            raise VectorStoreError(f"ids/documents/metadatas/embeddingsの件数が揃っていません: {lengths}")
         matrix = _normalised(embeddings)
         cursor.executemany(
             "INSERT OR REPLACE INTO chunks"

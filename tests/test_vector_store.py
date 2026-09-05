@@ -201,3 +201,29 @@ def test_failed_replace_leaves_the_previous_content(filled_store):
 def test_delete_removes_matching_rows(filled_store):
     filled_store.delete(where={"source": "a.md"})
     assert filled_store.get()["ids"] == ["b::1"]
+
+
+def test_add_with_mismatched_lengths_raises(empty_store):
+    """zipが黙って切り詰めると、帳簿だけ進んで実体が欠けた行ができる。"""
+    with pytest.raises(VectorStoreError):
+        empty_store.add(
+            ids=["a::1", "a::2"],
+            documents=["本文1"],
+            metadatas=[{"source": "a.md"}, {"source": "a.md"}],
+            embeddings=[_vector(1.0), _vector(2.0)],
+        )
+
+
+def test_failed_replace_with_mismatched_lengths_leaves_the_previous_content(
+    filled_store,
+):
+    """今回の修正の回帰テスト。replaceの中でzipが切り詰めても書いてはならない。"""
+    with pytest.raises(VectorStoreError):
+        filled_store.replace(
+            "a.md",
+            ids=["a::9", "a::10"],
+            documents=["差し替え後"],
+            metadatas=[{"source": "a.md"}, {"source": "a.md"}],
+            embeddings=[_vector(9.0), _vector(10.0)],
+        )
+    assert sorted(filled_store.get()["ids"]) == ["a::1", "a::2", "b::1"]
