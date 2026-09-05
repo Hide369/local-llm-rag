@@ -29,9 +29,6 @@ streamlit==1.61.1
 requests==2.32.3
 python-dotenv==1.2.2
 
-# 教材オリジナルの udemy1〜3.py / stream.py のみが使う。本体の経路では未使用
-openai==1.99.3
-
 # テスト
 pytest==9.1.1
 pillow==12.3.0

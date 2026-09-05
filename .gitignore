@@ -24,3 +24,4 @@ source/
 
 # リポジトリには含めないローカル専用スクリプト
 udemy[0-9].py
+stream.py
