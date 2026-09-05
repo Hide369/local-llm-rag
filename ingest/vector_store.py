@@ -112,29 +112,65 @@ class VectorStore:
     def count(self) -> int:
         return self._connection.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
 
-    def add(self, ids, documents, metadatas, embeddings) -> None:
+    def _insert(self, cursor, ids, documents, metadatas, embeddings) -> None:
+        """正規化して1行ずつ書く。呼び出し側がトランザクションを持つ。
+
+        正規化を最初に済ませるのは、1行も書く前に不正なベクトルを弾くため。
+        """
+        if not ids:
+            return
         matrix = _normalised(embeddings)
-        rows = [
-            (
-                chunk_id,
-                metadata.get("source", ""),
-                text,
-                json.dumps(metadata, ensure_ascii=False),
-                vector.tobytes(),
+        cursor.executemany(
+            "INSERT OR REPLACE INTO chunks"
+            " (id, source, text, metadata, embedding) VALUES (?, ?, ?, ?, ?)",
+            [
+                (
+                    chunk_id,
+                    metadata.get("source", ""),
+                    text,
+                    json.dumps(metadata, ensure_ascii=False),
+                    vector.tobytes(),
+                )
+                for chunk_id, text, metadata, vector in zip(
+                    ids, documents, metadatas, matrix
+                )
+            ],
+        )
+
+    def add(self, ids, documents, metadatas, embeddings) -> None:
+        with self._connection:
+            self._insert(
+                self._connection, ids, documents, metadatas, embeddings
             )
-            for chunk_id, text, metadata, vector in zip(
-                ids, documents, metadatas, matrix
+            self._bump_revision(self._connection)
+
+    def replace(self, source, ids, documents, metadatas, embeddings) -> None:
+        """1つの資料のチャンクを丸ごと入れ替える。ここが原子性の要である。
+
+        削除と追加を別々のトランザクションにしてはならない。間で落ちると
+        資料が消えたまま残る。全部入るか1件も入らないかにするために、
+        1つの with で囲う。
+        """
+        with self._connection:
+            self._connection.execute("DELETE FROM chunks WHERE source = ?", (source,))
+            self._insert(
+                self._connection, ids, documents, metadatas, embeddings
             )
-        ]
+            self._bump_revision(self._connection)
+
+    def delete(self, where=None) -> None:
+        targets = self.get(where=where)["ids"]
+        if not targets:
+            return
         with self._connection:
             self._connection.executemany(
-                "INSERT OR REPLACE INTO chunks"
-                " (id, source, text, metadata, embedding) VALUES (?, ?, ?, ?, ?)",
-                rows,
+                "DELETE FROM chunks WHERE id = ?", [(t,) for t in targets]
             )
-            self._connection.execute(
-                "UPDATE meta SET value = value + 1 WHERE key = 'revision'"
-            )
+            self._bump_revision(self._connection)
+
+    @staticmethod
+    def _bump_revision(cursor) -> None:
+        cursor.execute("UPDATE meta SET value = value + 1 WHERE key = 'revision'")
 
     def _rows(self):
         """(id, text, metadata) を全件返す。"""

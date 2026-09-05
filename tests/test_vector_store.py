@@ -159,3 +159,45 @@ def test_metadata_survives_the_round_trip(filled_store):
     found = filled_store.get(ids=["a::1"])
     assert found["metadatas"][0]["noise_wash_db"] == 26
     assert isinstance(found["metadatas"][0]["noise_wash_db"], int)
+
+
+def test_replace_swaps_only_that_source(filled_store):
+    filled_store.replace(
+        "a.md",
+        ids=["a::9"],
+        documents=["差し替え後"],
+        metadatas=[{"source": "a.md"}],
+        embeddings=[_vector(9.0)],
+    )
+    assert sorted(filled_store.get()["ids"]) == ["a::9", "b::1"]
+
+
+def test_replace_drops_chunks_that_no_longer_exist(filled_store):
+    """ページ数が減った資料を取り込み直したとき、末尾の古いページを残さない。"""
+    filled_store.replace(
+        "a.md", ids=[], documents=[], metadatas=[], embeddings=[]
+    )
+    assert filled_store.get()["ids"] == ["b::1"]
+
+
+def test_failed_replace_leaves_the_previous_content(filled_store):
+    """今回の障害の回帰テスト。
+
+    書き込みの途中で失敗しても、中途半端な状態を残さない。ChromaDBでは
+    「帳簿だけが進んで実体が無い」状態が作れてしまい、次にDBを開いた時点で
+    初めて壊れていることが分かった。
+    """
+    with pytest.raises(VectorStoreError):
+        filled_store.replace(
+            "a.md",
+            ids=["a::9"],
+            documents=["差し替え後"],
+            metadatas=[{"source": "a.md"}],
+            embeddings=[[0.0, 0.0, 0.0, 0.0]],
+        )
+    assert sorted(filled_store.get()["ids"]) == ["a::1", "a::2", "b::1"]
+
+
+def test_delete_removes_matching_rows(filled_store):
+    filled_store.delete(where={"source": "a.md"})
+    assert filled_store.get()["ids"] == ["b::1"]
