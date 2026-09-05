@@ -1209,7 +1209,7 @@ git rm tests/conftest.py
 - [ ] **Step 5: 全テストが通ることを確認する**
 
 Run: `myvenv313\Scripts\python.exe -m pytest -q`
-Expected: PASS（既存345件＋新規33件。deselected 3件はそのまま）
+Expected: PASS（既存340件＋新規33件。deselected 3件はそのまま）
 
 出力に faulthandler のスタックトレースが**出ないこと**も確認する。
 
@@ -1363,7 +1363,7 @@ git commit -m "feat: verify the store is readable after ingestion"
 
 ## 完了条件
 
-- 全テストが通る（既存345件＋新規33件、faulthandler のノイズが出ない）
+- 全テストが通る（既存340件＋新規33件、faulthandler のノイズが出ない）
 - `check_retrieval` のゲートが分離している
 - 差分取り込みを2回繰り返してもDBが読める
 - `requirements.txt` に `chromadb` が無い
