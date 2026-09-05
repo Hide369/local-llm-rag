@@ -227,3 +227,47 @@ def test_failed_replace_with_mismatched_lengths_leaves_the_previous_content(
             embeddings=[_vector(9.0), _vector(10.0)],
         )
     assert sorted(filled_store.get()["ids"]) == ["a::1", "a::2", "b::1"]
+
+
+def test_identical_vector_has_distance_zero(filled_store):
+    found = filled_store.search(_vector(1.0), limit=1)
+    chunk_id, distance, text, metadata = found[0]
+    assert chunk_id == "a::1"
+    assert distance == pytest.approx(0.0, abs=1e-6)
+    assert text == "あ1"
+    assert metadata["source"] == "a.md"
+
+
+def test_distance_is_one_minus_cosine_similarity():
+    """ChromaDBの hnsw:space='cosine' と同一の定義であることを固定する。"""
+    store = open_store(":memory:")
+    store.add(
+        ids=["直交", "逆向き"],
+        documents=["直交", "逆向き"],
+        metadatas=[{"source": "x"}, {"source": "x"}],
+        embeddings=[[0.0, 1.0], [-1.0, 0.0]],
+    )
+    by_id = {chunk_id: distance for chunk_id, distance, _, _ in store.search([1.0, 0.0], limit=2)}
+    assert by_id["直交"] == pytest.approx(1.0, abs=1e-6)
+    assert by_id["逆向き"] == pytest.approx(2.0, abs=1e-6)
+
+
+def test_unnormalised_query_gives_the_same_distance(filled_store):
+    """呼び出し側に正規化の責任を持たせない。長さ違いで距離が変わってはならない。"""
+    short = filled_store.search([1.0, 0.0, 0.0, 0.0], limit=1)[0][1]
+    long = filled_store.search([23.0, 0.0, 0.0, 0.0], limit=1)[0][1]
+    assert short == pytest.approx(long, abs=1e-6)
+
+
+def test_results_are_sorted_by_distance(filled_store):
+    distances = [distance for _, distance, _, _ in filled_store.search(_vector(1.0), limit=3)]
+    assert distances == sorted(distances)
+
+
+def test_search_on_empty_store_returns_nothing(empty_store):
+    assert empty_store.search([1.0, 0.0, 0.0, 0.0], limit=4) == []
+
+
+def test_limit_larger_than_the_corpus_is_safe(filled_store):
+    """CANDIDATE_COUNT=30 に対して資料が3件しかない状況は普通に起きる。"""
+    assert len(filled_store.search(_vector(1.0), limit=30)) == 3

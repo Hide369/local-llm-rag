@@ -215,3 +215,44 @@ class VectorStore:
             "documents": [row[1] for row in rows],
             "metadatas": [row[2] for row in rows],
         }
+
+    def _load_matrix(self):
+        """全ベクトルを1つの配列に読み込む。
+
+        686件×1024次元で2.8MB、総当たりの内積は実測0.19ms。索引を持たない
+        代わりに毎回この配列を使う。
+        """
+        rows = self._connection.execute(
+            "SELECT id, text, metadata, embedding FROM chunks"
+        ).fetchall()
+        if not rows:
+            return [], np.zeros((0, 0), dtype="float32")
+        entries = [
+            (chunk_id, text, json.loads(metadata)) for chunk_id, text, metadata, _ in rows
+        ]
+        matrix = np.stack(
+            [np.frombuffer(blob, dtype="float32") for _, _, _, blob in rows]
+        )
+        return entries, matrix
+
+    def search(self, vector, limit: int):
+        """cosine距離の小さい順に返す。
+
+        距離は 1 - 内積（両者をL2正規化）で、ChromaDBの hnsw:space="cosine" と
+        同一の定義である。ここを変えると ingest/retrieval.py の
+        RELEVANCE_THRESHOLD をはじめ、scripts/check_retrieval.py で積み上げた
+        実測値がすべて意味を失う。しかも例外は出ない。
+        """
+        entries, matrix = self._load_matrix()
+        if not entries:
+            return []
+        query = _normalised([vector])[0]
+        distances = 1.0 - matrix @ query
+        count = min(limit, len(entries))
+        # argpartition は上位count件を選ぶだけで並べない。そのあと選んだ分だけ整列する。
+        candidates = np.argpartition(distances, count - 1)[:count]
+        ordered = candidates[np.argsort(distances[candidates], kind="stable")]
+        return [
+            (entries[i][0], float(distances[i]), entries[i][1], entries[i][2])
+            for i in ordered
+        ]
