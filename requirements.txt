@@ -1,5 +1,5 @@
 # 本システムが直接importするパッケージだけを、myvenv313 に入っている実績のある
-# バージョンで固定する。推移的な依存（chromadbが引き込むgrpcio等）は挙げない。
+# バージョンで固定する。推移的な依存は挙げない。
 # 完全な再現が要る場合は `pip freeze > requirements.lock.txt` を別途取ること。
 #
 # 各パッケージの用途と使用箇所は docs/依存関係一覧.md を参照。
@@ -14,15 +14,16 @@ python-docx==1.2.0
 rapidocr==3.9.2
 onnxruntime==1.28.0
 
-# リランカー。chromadbの依存としても入るが、ingest/reranker.py が直接importする以上
-# 依存の巻き添えに任せず明示する（chromadb側が外したら黙って壊れるため）
-numpy==2.5.2
+# リランカーのモデル取得とトークナイズ。以前はchromadbが依存として持ち込んでいたが、
+# ingest/reranker.py が直接importする以上、上流の都合で黙って壊れないよう明示する
 huggingface_hub==1.27.0
 tokenizers==0.23.1
 
-# チャンク分割・ベクトルDB・UI
+# リランカーのスコア計算と、ベクトルストアの総当たり検索（ingest/vector_store.py）
+numpy==2.5.2
+
+# チャンク分割・UI。ベクトルの保管は標準ライブラリの sqlite3 で行うため依存は増えない
 langchain-text-splitters==1.1.2
-chromadb==1.0.16
 streamlit==1.61.1
 
 # Ollamaへのアクセスと設定
