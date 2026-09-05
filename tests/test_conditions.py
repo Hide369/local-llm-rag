@@ -3,8 +3,7 @@ import pytest
 from ingest import conditions
 from ingest.conditions import Ranking, available_keys, extract, extract_ranking
 from ingest.embedder import EMBED_DIM
-from ingest.store import open_collection
-from tests.conftest import ephemeral_client
+from ingest.store import open_store
 
 SCHEMA = {
     "noise_wash_db": "number",
@@ -15,9 +14,8 @@ SCHEMA = {
 
 @pytest.fixture
 def collection():
-    client = ephemeral_client()
-    yield open_collection(client)
-    client.clear_system_cache()
+    """インメモリのストア。ディスクには触れない。"""
+    return open_store(":memory:")
 
 
 def _answer(payload):

@@ -4,22 +4,15 @@ import pytest
 from docx import Document
 
 from ingest.embedder import EMBED_DIM
-from ingest.store import open_collection, stored_file_hash
+from ingest.store import open_store, stored_file_hash
 from scripts import ingest_source
 from scripts.ingest_source import _target_files, file_hash, ingest_directory
-from tests.conftest import ephemeral_client
 
 
 @pytest.fixture
 def collection():
-    """EphemeralClientは"ephemeral"固定キーのシステムを使い回すため、
-
-    クリアしないとテストをまたいでデータが残る
-    （tests/test_store.py と同じchromadbの既知の制約への対処）。
-    """
-    client = ephemeral_client()
-    yield open_collection(client)
-    client.clear_system_cache()
+    """インメモリのストア。ディスクには触れない。"""
+    return open_store(":memory:")
 
 
 @pytest.fixture
@@ -300,10 +293,7 @@ def test_main_forwards_force_flag_to_ingest_directory(tmp_path, monkeypatch):
     monkeypatch.setattr(ingest_source, "ingest_directory", _fake_ingest_directory)
     monkeypatch.setattr(ingest_source.embedder, "check_ollama", lambda: None)
     monkeypatch.setattr(
-        ingest_source.chromadb, "PersistentClient", lambda path: object()
-    )
-    monkeypatch.setattr(
-        ingest_source.store, "open_collection", lambda client: _FakeCollectionForMain()
+        ingest_source.store, "open_store", lambda path: _FakeCollectionForMain()
     )
 
     monkeypatch.setattr(
@@ -329,9 +319,8 @@ def test_main_forwards_only_suffix_to_ingest_directory(monkeypatch, tmp_path):
     monkeypatch.setattr(ingest_source, "ingest_directory", fake_ingest_directory)
     monkeypatch.setattr(ingest_source.embedder, "check_ollama", lambda: None)
     monkeypatch.setattr(
-        ingest_source.store, "open_collection", lambda _client: _FakeCollectionForMain()
+        ingest_source.store, "open_store", lambda path: _FakeCollectionForMain()
     )
-    monkeypatch.setattr(ingest_source.chromadb, "PersistentClient", lambda path: None)
     monkeypatch.setattr(
         sys, "argv", ["ingest_source", "--source-dir", str(tmp_path), "--only-suffix", "md"]
     )

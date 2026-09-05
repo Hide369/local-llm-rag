@@ -10,9 +10,9 @@ Ollamaが停止しており、質問すると ingest.embedder.EmbeddingError の
 ingest/chat.py のモジュールdocstring参照）。テストでは chat.ask_json /
 chat.stream_chat をこの階層で差し替える。
 
-AppTest は rag_chat_app.py を同じプロセスで実行する。本番の chroma_db を
-開くと起動中のStreamlitとの同時アクセスでHNSWインデックスを壊す恐れがあるため
-（README「既知の制約」）、PersistentClient をインメモリのものへ差し替える。
+AppTest は rag_chat_app.py を同じプロセスで実行する。本番のSQLiteストア
+（vector_store.sqlite3）を開くと起動中のStreamlitとの同時アクセスで壊す恐れが
+あるため（README「既知の制約」）、store.open_store をインメモリのものへ差し替える。
 """
 from pathlib import Path
 from unittest.mock import patch
@@ -29,26 +29,24 @@ from ingest import store
 from ingest import vlm as vlm_module
 from ingest.embedder import EmbeddingError
 from scripts import ingest_source
-from tests.conftest import ephemeral_client
 
 APP_PATH = Path(__file__).resolve().parent.parent / "rag_chat_app.py"
 
 OFFLINE_MESSAGE = "Ollamaに接続できません（テスト）"
 
 
-def _stub_persistent_client(metadata):
-    """PersistentClient の代わりに、1チャンクだけ入ったインメモリDBを返す。"""
+def _stub_open_store(metadata):
+    """store.open_store の代わりに、1チャンクだけ入ったインメモリDBを返す。"""
 
     def factory(*args, **kwargs):
-        client = ephemeral_client()
-        collection = store.open_collection(client)
+        collection = store.open_store(":memory:")
         collection.add(
             ids=["chunk-1"],
             documents=["洗濯機の運転音は26dBです。"],
             embeddings=[[0.1, 0.2]],
             metadatas=[metadata],
         )
-        return client
+        return collection
 
     return factory
 
@@ -86,7 +84,7 @@ def app():
 def _reranker_check_and_rerank_stubbed_by_default():
     """Rerankerチェックボックスは既定ONなので、他のテストのapp.run()でも
     ensure_reranker() だけでなく search() に渡る reranker.rerank まで実際に
-    呼ばれてしまう。_stub_persistent_client は埋め込み [0.1, 0.2] の1チャンクを
+    呼ばれてしまう。_stub_open_store は埋め込み [0.1, 0.2] の1チャンクを
     入れており、多くのテストが embed_query を [0.1, 0.2] にモックしているため
     distance=0で圏内判定を通り、_reranked() の head が空にならず本物の rerank()
     （実ONNXセッション構築・hf_hub_download）が呼ばれてしまう。ネットワークにも
@@ -112,7 +110,7 @@ def test_search_failure_is_reported_instead_of_crashing(app):
     消えるため、履歴に残していなければ最終的な画面から跡形もなく消える）。
     """
     with (
-        patch("chromadb.PersistentClient", _stub_persistent_client({"source": "a.md"})),
+        patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
         patch.object(retrieval, "embed_query", _offline_embed_query),
     ):
         app.run()
@@ -132,7 +130,7 @@ def test_search_failure_does_not_also_claim_it_will_search(app):
     # 数値属性を1つ持たせてスキーマを空でなくすると、条件抽出のLLM呼び出しが走る。
     metadata = {"source": "a.md", "noise_db": 26}
     with (
-        patch("chromadb.PersistentClient", _stub_persistent_client(metadata)),
+        patch("ingest.store.open_store", _stub_open_store(metadata)),
         # JSONにならない応答を返し、条件抽出を失敗させる
         patch.object(chat, "ask_json", lambda model, prompt, session=None: "not json"),
         patch.object(retrieval, "embed_query", _offline_embed_query),
@@ -154,7 +152,7 @@ def test_a_follow_up_question_is_searched_with_the_previous_one(app):
         return [0.1, 0.2]
 
     with (
-        patch("chromadb.PersistentClient", _stub_persistent_client({"source": "a.md"})),
+        patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
         patch.object(chat, "stream_chat", _fake_stream_chat("第5回会議の決定事項は…")),
         patch.object(retrieval, "embed_query", record),
     ):
@@ -176,7 +174,7 @@ def test_the_model_is_picked_from_the_pulled_models(app):
     これだけだからである（README「モデルの比較」）。
     """
     with (
-        patch("chromadb.PersistentClient", _stub_persistent_client({"source": "a.md"})),
+        patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
         patch.object(chat, "stream_chat", _fake_stream_chat("回答")),
         patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
     ):
@@ -201,7 +199,7 @@ def test_the_picked_model_is_the_one_that_generates(app):
     """
     fake_stream = _fake_stream_chat("回答です。")
     with (
-        patch("chromadb.PersistentClient", _stub_persistent_client({"source": "a.md"})),
+        patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
         patch.object(chat, "stream_chat", fake_stream),
         patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
     ):
@@ -234,8 +232,7 @@ def test_products_that_fail_the_condition_are_shown_but_not_sent_to_the_model(ap
     prompts = []
 
     def factory(*args, **kwargs):
-        client = ephemeral_client()
-        collection = store.open_collection(client)
+        collection = store.open_store(":memory:")
         for model, capacity, depth in (
             ("UD-1100S", 11.0, 510),
             ("UD-1400X", 14.0, 545),
@@ -253,7 +250,7 @@ def test_products_that_fail_the_condition_are_shown_but_not_sent_to_the_model(ap
                     }
                 ],
             )
-        return client
+        return collection
 
     fake_ask_json = _fake_ask_json_for_the_catalog_route(
         '{"installation_depth_min_mm": {"$lte": 510}}',
@@ -261,7 +258,7 @@ def test_products_that_fail_the_condition_are_shown_but_not_sent_to_the_model(ap
     )
     fake_stream = _fake_stream_chat("最大11.0kgです。")
     with (
-        patch("chromadb.PersistentClient", factory),
+        patch("ingest.store.open_store", factory),
         patch.object(chat, "ask_json", fake_ask_json),
         patch.object(chat, "stream_chat", fake_stream),
     ):
@@ -285,7 +282,7 @@ def test_vlm_checkbox_off_by_default_does_not_pass_caption_image(app):
         return ingest_source.IngestReport()
 
     with (
-        patch("chromadb.PersistentClient", _stub_persistent_client({"source": "a.md"})),
+        patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
         patch.object(embedder_module, "check_ollama", lambda *a, **k: None),
         patch.object(ingest_source, "ingest_directory", fake_ingest_directory),
     ):
@@ -310,7 +307,7 @@ def test_vlm_checkbox_on_checks_vlm_and_passes_caption_image(app):
         return ingest_source.IngestReport()
 
     with (
-        patch("chromadb.PersistentClient", _stub_persistent_client({"source": "a.md"})),
+        patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
         patch.object(embedder_module, "check_ollama", lambda *a, **k: None),
         patch.object(vlm_module, "check_vlm", lambda *a, **k: checked.append(True)),
         patch.object(ingest_source, "ingest_directory", fake_ingest_directory),
@@ -340,7 +337,7 @@ def test_vlm_checkbox_on_but_unreachable_reports_error_without_ingesting(app):
         raise vlm_module.VlmError("VLMモデル qwen2.5vl:7b がありません")
 
     with (
-        patch("chromadb.PersistentClient", _stub_persistent_client({"source": "a.md"})),
+        patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
         patch.object(embedder_module, "check_ollama", lambda *a, **k: None),
         patch.object(vlm_module, "check_vlm", failing_check_vlm),
         patch.object(ingest_source, "ingest_directory", fake_ingest_directory),
@@ -358,7 +355,7 @@ def test_answer_is_shown_without_the_repeated_label(app):
     """モデルが付ける「答え：」は表示しない。中身は残す。"""
     generated = "省エネ基準達成率が最も高いのはUD-1100iEです。\n答え： 型番：UD-1100iE 達成率：125%"
     with (
-        patch("chromadb.PersistentClient", _stub_persistent_client({"source": "a.md"})),
+        patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
         patch.object(chat, "stream_chat", _fake_stream_chat(generated)),
         patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
     ):
@@ -379,7 +376,7 @@ def test_input_is_re_enabled_and_history_has_exactly_one_exchange_after_answerin
     （無効化の仕組み自体がバグって多重発火していないか）ことを確認する。
     """
     with (
-        patch("chromadb.PersistentClient", _stub_persistent_client({"source": "a.md"})),
+        patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
         patch.object(chat, "stream_chat", _fake_stream_chat("回答です。")),
         patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
     ):
@@ -400,7 +397,7 @@ def test_the_reranker_checkbox_defaults_to_on():
     _reranker_check_stubbed_by_default フィクスチャと同じ理由で毎回クリアする。
     """
     st.cache_resource.clear()
-    with patch("chromadb.PersistentClient", _stub_persistent_client({"source": "a.md"})), patch.object(
+    with patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})), patch.object(
         reranker_module, "check_reranker", lambda: None
     ):
         app = AppTest.from_file(str(APP_PATH)).run()
@@ -415,7 +412,7 @@ def test_a_reranker_model_failure_is_shown_in_the_sidebar():
     """570MBの取得に失敗したとき、生のトレースバックを画面に出さない。"""
     st.cache_resource.clear()
     message = "リランカーのモデルを取得できません（テスト）"
-    with patch("chromadb.PersistentClient", _stub_persistent_client({"source": "a.md"})), patch.object(
+    with patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})), patch.object(
         reranker_module, "check_reranker", side_effect=reranker_module.RerankError(message)
     ):
         app = AppTest.from_file(str(APP_PATH)).run()
@@ -444,7 +441,7 @@ def test_the_reranker_is_wired_into_search_when_the_checkbox_is_on(app):
         return []
 
     with (
-        patch("chromadb.PersistentClient", _stub_persistent_client({"source": "a.md"})),
+        patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
         patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
         patch.object(retrieval, "search", fake_search),
     ):
@@ -471,7 +468,7 @@ def test_the_reranker_is_not_wired_into_search_when_the_checkbox_is_off(app):
         return []
 
     with (
-        patch("chromadb.PersistentClient", _stub_persistent_client({"source": "a.md"})),
+        patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
         patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
         patch.object(retrieval, "search", fake_search),
     ):

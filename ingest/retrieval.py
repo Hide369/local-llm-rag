@@ -113,20 +113,13 @@ def contextual_query(question: str, history) -> str:
 
 def _vector_candidates(collection, query, session):
     """(チャンクID → 順位) と、IDをキーにした (距離, 本文, メタデータ) を返す。"""
-    results = collection.query(
-        query_embeddings=[embed_query(query, session=session)],
-        n_results=CANDIDATE_COUNT,
+    found = collection.search(
+        embed_query(query, session=session), limit=CANDIDATE_COUNT
     )
-    ids = results["ids"][0]
-    ranks = {chunk_id: rank for rank, chunk_id in enumerate(ids, start=1)}
+    ranks = {chunk_id: rank for rank, (chunk_id, _, _, _) in enumerate(found, start=1)}
     rows = {
         chunk_id: (distance, text, metadata)
-        for chunk_id, distance, text, metadata in zip(
-            ids,
-            results["distances"][0],
-            results["documents"][0],
-            results["metadatas"][0],
-        )
+        for chunk_id, distance, text, metadata in found
     }
     return ranks, rows
 
@@ -172,7 +165,7 @@ def search(
     query = expand_query(query)
 
     vector_ranks, vector_rows = _vector_candidates(collection, query, session)
-    # 圏内判定はベクトル側だけで行う。Chromaは距離の昇順で返すので、
+    # 圏内判定はベクトル側だけで行う。VectorStore.searchは距離の昇順で返すので、
     # 1件でも閾値を通っていればこの質問は圏内である。
     in_domain = any(distance <= limit for distance, _, _ in vector_rows.values())
     if not in_domain:

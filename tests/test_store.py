@@ -4,29 +4,18 @@ from ingest import store
 from ingest.embedder import EMBED_DIM
 from ingest.models import Chunk
 from ingest.store import (
-    COLLECTION_NAME,
-    DISTANCE_SPACE,
     delete_orphans,
     indexed_sources,
-    open_collection,
+    open_store,
     replace_source,
     stored_file_hash,
 )
-from tests.conftest import ephemeral_client
 
 
 @pytest.fixture
 def collection():
-    """ディスクに触れないインメモリのChromaを使う。
-
-    EphemeralClientは同一プロセス内で "ephemeral" という固定キーのシステムを
-    使い回す（chromadb側の既知の制約）ため、そのままではテストをまたいで前の
-    データが残ってしまう。chromadb自身のテストスイートに倣い、テストごとに
-    system cacheをクリアして完全に独立させる。
-    """
-    client = ephemeral_client()
-    yield open_collection(client)
-    client.clear_system_cache()
+    """インメモリのストア。ディスクには触れない。"""
+    return open_store(":memory:")
 
 
 def _chunks(source, file_hash, count=2):
@@ -56,16 +45,6 @@ def _add(collection, source, file_hash, count=2):
     chunks = _chunks(source, file_hash, count)
     replace_source(collection, source, chunks, _vectors(len(chunks)))
     return chunks
-
-
-def test_collection_name_does_not_collide_with_the_course_collection():
-    """local_docs は udemy3.py が768次元で使い続けるため触らない。"""
-    assert COLLECTION_NAME == "local_docs_v2"
-
-
-def test_collection_uses_cosine(collection):
-    config = getattr(collection, "configuration_json", None) or {}
-    assert (config.get("hnsw") or {}).get("space") == DISTANCE_SPACE == "cosine"
 
 
 def test_stored_hash_is_none_for_unknown_source(collection):
@@ -122,11 +101,7 @@ def test_metadata_survives_a_round_trip(collection):
 
 
 def test_all_documents_returns_ids_and_texts_in_the_same_order(collection):
-    """BM25インデックスはIDと本文の並びが一致していることに依存する。
-
-    collection フィクスチャが提供する例外安全なテアダウン（generator fixture
-    の teardown は assert 失敗時も実行される）を活用する。
-    """
+    """BM25インデックスはIDと本文の並びが一致していることに依存する。"""
     collection.add(
         ids=["x", "y"],
         documents=["本文エックス", "本文ワイ"],
@@ -138,11 +113,4 @@ def test_all_documents_returns_ids_and_texts_in_the_same_order(collection):
 
 
 def test_all_documents_on_an_empty_collection_returns_two_empty_lists(collection):
-    """フィクスチャが提供する新規の空 collection に対して検査する。
-
-    collection フィクスチャは pytest によってテストごとに新規生成され、
-    例外安全なテアダウン（generator fixture の teardown）で
-    EphemeralClient の共有キャッシュをクリアするため、
-    テスト間での漏れを防ぐ。
-    """
     assert store.all_documents(collection) == ([], [])

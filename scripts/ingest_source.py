@@ -14,7 +14,6 @@ from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
-import chromadb
 from dotenv import load_dotenv
 
 # OLLAMA_HOST を ingest.embedder がインポート時に読むため、他のプロジェクト内
@@ -26,7 +25,7 @@ from ingest.chunker import chunk_units
 from ingest.parsers import SUPPORTED_SUFFIXES, parse
 
 DEFAULT_SOURCE_DIR = Path(__file__).resolve().parent.parent / "source"
-DB_DIR = Path(__file__).resolve().parent.parent / "chroma_db"
+DB_PATH = Path(__file__).resolve().parent.parent / store.DB_FILENAME
 
 
 @dataclass
@@ -177,7 +176,7 @@ def main() -> int:
             return 1
         caption_image = vlm.caption_image
 
-    collection = store.open_collection(chromadb.PersistentClient(path=str(DB_DIR)))
+    collection = store.open_store(str(DB_PATH))
     report = ingest_directory(
         args.source_dir,
         collection,

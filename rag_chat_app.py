@@ -7,7 +7,6 @@
 from datetime import datetime
 from pathlib import Path
 
-import chromadb
 import streamlit as st
 from dotenv import load_dotenv
 
@@ -26,12 +25,12 @@ from ingest.prompting import (
 from ingest.retrieval import build_index, contextual_query, search
 from scripts.ingest_source import DEFAULT_SOURCE_DIR, ingest_directory
 
-DB_DIR = str(Path(__file__).parent / "chroma_db")
+DB_PATH = str(Path(__file__).parent / store.DB_FILENAME)
 
 
 @st.cache_resource
-def get_collection(db_dir):
-    return store.open_collection(chromadb.PersistentClient(path=db_dir))
+def get_collection(db_path):
+    return store.open_store(db_path)
 
 
 @st.cache_resource
@@ -39,7 +38,7 @@ def get_schema(_collection):
     """絞り込みに使える属性の一覧。起動時に1回だけ集める。
 
     先頭のアンダースコアは、Streamlitにこの引数をハッシュさせないための目印。
-    ChromaDBのコレクションはハッシュ化できない。
+    VectorStoreはsqlite3.Connectionを抱えており、ハッシュ化できない。
     """
     return conditions.available_keys(_collection)
 
@@ -54,7 +53,8 @@ def get_index(_collection, chunk_count):
 
     chunk_count を引数に取るのは、差分取り込みでチャンク数が変わったときに
     キャッシュを無効化するため。先頭のアンダースコアはStreamlitにこの引数を
-    ハッシュさせないための目印で、ChromaDBのコレクションはハッシュ化できない。
+    ハッシュさせないための目印で、VectorStoreはsqlite3.Connectionを抱えており
+    ハッシュ化できない。
     """
     return build_index(_collection)
 
@@ -110,7 +110,7 @@ SYSTEM_PROMPT = (
     "日本語で回答して下さい。"
 )
 
-collection = get_collection(DB_DIR)
+collection = get_collection(DB_PATH)
 index = get_index(collection, collection.count())
 st.sidebar.metric("インデックス済みチャンク", collection.count())
 
