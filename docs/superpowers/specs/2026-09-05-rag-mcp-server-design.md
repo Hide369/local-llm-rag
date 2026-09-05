@@ -307,7 +307,7 @@ cwd = "C:\\...\\local_llm"
 
 [mcp_servers.context7]
 url = "https://mcp.context7.com/mcp"
-http_headers = { "CONTEXT7_API_KEY" = "YOUR_API_KEY" }
+env_http_headers = { "CONTEXT7_API_KEY" = "CONTEXT7_API_KEY" }
 
 [mcp_servers.playwright]
 command = "npx"
@@ -318,6 +318,15 @@ args = ["-y", "@playwright/mcp@latest"]
 `sys.path` にリポジトリルートが入らず `from ingest import ...` が
 `ModuleNotFoundError` になる（`ci_ingest.ps1` と同じ理由）。`-m` 起動と
 `cwd` の組み合わせで解決する。
+
+context7 の API キーは `http_headers` で直接書かず、`env_http_headers` で環境変数
+から取る。左辺がヘッダ名、右辺が参照する環境変数名である。`config.toml` は
+秘密情報の置き場所ではなく、`.env` と同じ扱いにはできない（`.gitignore` の対象は
+リポジトリ内のファイルであり、`~/.codex/config.toml` はその外にある）。
+
+キーは `ctx7sk-` で始まり、Context7 のダッシュボードから無償で取得できる。
+未設定でも動作するがレート制限が厳しくなるため、先方環境ではまず未設定で運用し、
+制限に当たってから取得する（11 節）。
 
 context7 に `npx` 方式ではなく `url` 方式を採るのは、Windows で `npx.cmd` の
 絶対パス指定や `SystemRoot` / `APPDATA` の明示が必要になる既知の躓きがあり
