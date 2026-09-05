@@ -341,7 +341,16 @@ def test_matrix_is_reloaded_after_a_write(filled_store):
     しまい、キャッシュが再読み込みされたかを判定できない。差し替え後のベクトルを
     別の向き（y軸）にして初めて、キャッシュが更新されていないと拾えない検索に
     なる。
+
+    さらに、この最初のsearchは「書き込み前にキャッシュを確定させる」ための
+    必須のセットアップであり、読み飛ばしてよい行ではない。これが無いと
+    _cached_revisionがNoneのままreplace後に初めてキャッシュが作られてしまい、
+    「一度もキャッシュを検証していないだけ」でテストが通ってしまう
+    （revisionを毎回見直さず最初の1回しかロードしない実装でも通ってしまう）。
     """
+    before = filled_store.search(_vector(1.0), limit=3)
+    assert [text for _, _, text, _ in before] == ["あ1", "あ2", "い1"]
+
     filled_store.replace(
         "b.md",
         ids=["b::1"],
@@ -354,10 +363,18 @@ def test_matrix_is_reloaded_after_a_write(filled_store):
 
 
 def test_a_second_connection_sees_the_first_ones_writes(tmp_path):
-    """取り込みプロセスの更新を、チャットのプロセスが拾えること。"""
+    """取り込みプロセスの更新を、チャットのプロセスが拾えること。
+
+    readerで先に一度searchしてから書き込むのは、readerのキャッシュを
+    「空の状態」で確定させるためのセットアップである。これを省くと
+    _cached_revisionがNoneのままwriterの書き込み後に初めてキャッシュが
+    作られてしまい、revisionを見直す経路を一度も通らずにテストが通って
+    しまう（最初の1回しかロードせず以降は見直さない実装でも通ってしまう）。
+    """
     path = str(tmp_path / "store.sqlite3")
     writer = open_store(path)
     reader = open_store(path)
+    assert reader.search(_vector(1.0), limit=1) == []
     writer.add(
         ids=["a::1"],
         documents=["本文"],
