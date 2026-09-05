@@ -271,3 +271,39 @@ def test_search_on_empty_store_returns_nothing(empty_store):
 def test_limit_larger_than_the_corpus_is_safe(filled_store):
     """CANDIDATE_COUNT=30 に対して資料が3件しかない状況は普通に起きる。"""
     assert len(filled_store.search(_vector(1.0), limit=30)) == 3
+
+
+def test_search_selects_the_nearest_when_limit_is_smaller_than_the_corpus():
+    """filled_storeの3ベクトルは全て同じ向き（distance=0.0）で選抜経路を検証できない。
+
+    ここでは向きの異なるベクトルを使い、argpartitionで上位limit件を選んでから
+    整列する経路（間違ったk件を返しかねない部分）を実際に通す。
+    """
+    store = open_store(":memory:")
+    store.add(
+        ids=["近い", "直交", "遠い"],
+        documents=["近い", "直交", "遠い"],
+        metadatas=[{"source": "x"}, {"source": "x"}, {"source": "x"}],
+        embeddings=[[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0]],
+    )
+    found = store.search([1.0, 0.0], limit=2)
+    assert [chunk_id for chunk_id, _, _, _ in found] == ["近い", "直交"]
+    assert [distance for _, distance, _, _ in found] == pytest.approx(
+        [0.0, 1.0], abs=1e-6
+    )
+
+
+def test_tied_distances_are_broken_by_chunk_id():
+    """同点の並びをID任せにすると、ingest/retrieval.pyのrrf_scoreに伝播して
+    根拠の順序が実行のたびに変わりうる（同ファイルが同じ理由で全順序化している）。
+    """
+    store = open_store(":memory:")
+    store.add(
+        ids=["b", "a"],
+        documents=["b", "a"],
+        metadatas=[{"source": "x"}, {"source": "x"}],
+        embeddings=[[1.0, 0.0], [1.0, 0.0]],
+    )
+    for _ in range(5):
+        found = store.search([1.0, 0.0], limit=2)
+        assert [chunk_id for chunk_id, _, _, _ in found] == ["a", "b"]

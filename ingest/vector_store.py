@@ -251,7 +251,11 @@ class VectorStore:
         count = min(limit, len(entries))
         # argpartition は上位count件を選ぶだけで並べない。そのあと選んだ分だけ整列する。
         candidates = np.argpartition(distances, count - 1)[:count]
-        ordered = candidates[np.argsort(distances[candidates], kind="stable")]
+        # 同点はチャンクIDで決める。distanceだけで並べると、同点の中の順序が
+        # argpartitionの内部実装やSELECTの物理順（rowid）に依存してしまう。
+        # ingest/retrieval.py の rrf_score 計算はこの順位を土台にしており、
+        # そこでも同じ理由（再現性）で同点をIDまで含めた全順序にしている。
+        ordered = sorted(candidates, key=lambda i: (float(distances[i]), entries[i][0]))
         return [
             (entries[i][0], float(distances[i]), entries[i][1], entries[i][2])
             for i in ordered
