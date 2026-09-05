@@ -102,3 +102,60 @@ def test_store_persists_across_connections(tmp_path):
         embeddings=[_vector(1.0)],
     )
     assert open_store(path).count() == 1
+
+
+@pytest.fixture
+def filled_store():
+    store = open_store(":memory:")
+    store.add(
+        ids=["a::1", "a::2", "b::1"],
+        documents=["あ1", "あ2", "い1"],
+        metadatas=[
+            {"source": "a.md", "noise_wash_db": 26},
+            {"source": "a.md", "noise_wash_db": 30},
+            {"source": "b.md"},
+        ],
+        embeddings=[_vector(1.0), _vector(2.0), _vector(3.0)],
+    )
+    return store
+
+
+def test_get_on_an_empty_store_returns_empty_lists(empty_store):
+    """0件でも呼び出し側が zip できる形を返すこと。"""
+    found = empty_store.get()
+    assert found == {"ids": [], "documents": [], "metadatas": []}
+
+
+def test_get_returns_everything_by_default(filled_store):
+    found = filled_store.get()
+    assert sorted(found["ids"]) == ["a::1", "a::2", "b::1"]
+    assert len(found["documents"]) == 3
+    assert len(found["metadatas"]) == 3
+
+
+def test_get_by_ids_keeps_them_aligned(filled_store):
+    found = filled_store.get(ids=["b::1", "a::1"])
+    rows = dict(zip(found["ids"], found["documents"]))
+    assert rows == {"b::1": "い1", "a::1": "あ1"}
+
+
+def test_get_ignores_unknown_ids(filled_store):
+    """BM25側のインデックスには取り込みで消えたIDが残ることがある。"""
+    found = filled_store.get(ids=["a::1", "存在しない"])
+    assert found["ids"] == ["a::1"]
+
+
+def test_get_filters_by_where(filled_store):
+    found = filled_store.get(where={"source": "a.md"})
+    assert sorted(found["ids"]) == ["a::1", "a::2"]
+
+
+def test_get_applies_limit(filled_store):
+    assert len(filled_store.get(where={"source": "a.md"}, limit=1)["ids"]) == 1
+
+
+def test_metadata_survives_the_round_trip(filled_store):
+    """JSONに落として戻すため、数値が文字列になっていないことを確かめる。"""
+    found = filled_store.get(ids=["a::1"])
+    assert found["metadatas"][0]["noise_wash_db"] == 26
+    assert isinstance(found["metadatas"][0]["noise_wash_db"], int)

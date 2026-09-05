@@ -135,3 +135,35 @@ class VectorStore:
             self._connection.execute(
                 "UPDATE meta SET value = value + 1 WHERE key = 'revision'"
             )
+
+    def _rows(self):
+        """(id, text, metadata) を全件返す。"""
+        return [
+            (chunk_id, text, json.loads(metadata))
+            for chunk_id, text, metadata in self._connection.execute(
+                "SELECT id, text, metadata FROM chunks"
+            )
+        ]
+
+    def get(self, ids=None, where=None, limit=None, include=None) -> dict:
+        """条件に合うチャンクを返す。
+
+        include は ChromaDB との互換のために受け取るが無視する。686件では
+        取捨選択に意味が無く、引数を見て分岐するほうがバグを生む。
+        """
+        rows = self._rows()
+        if ids is not None:
+            # 呼び出し側が渡した並びを保つ。lexical.search の順位を組み直す
+            # 経路（scripts/check_retrieval.py）がこの並びに依存する。
+            by_id = {chunk_id: (text, metadata) for chunk_id, text, metadata in rows}
+            rows = [
+                (chunk_id, *by_id[chunk_id]) for chunk_id in ids if chunk_id in by_id
+            ]
+        rows = [row for row in rows if matches(row[2], where)]
+        if limit is not None:
+            rows = rows[:limit]
+        return {
+            "ids": [row[0] for row in rows],
+            "documents": [row[1] for row in rows],
+            "metadatas": [row[2] for row in rows],
+        }
