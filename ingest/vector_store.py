@@ -7,6 +7,11 @@ design: docs/superpowers/specs/2026-09-05-sqlite-vector-store-design.md
 妥協ではなく、索引の破損という故障モードを持たないための選択である。
 """
 
+import json
+import sqlite3
+
+import numpy as np
+
 
 class WhereError(Exception):
     """絞り込み条件が扱えない。"""
@@ -58,3 +63,75 @@ def matches(metadata: dict, where: dict | None) -> bool:
         elif metadata.get(key) != condition:
             return False
     return True
+
+
+class VectorStoreError(Exception):
+    """ストアの操作に失敗した。"""
+
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS chunks (
+    id        TEXT PRIMARY KEY,
+    source    TEXT NOT NULL,
+    text      TEXT NOT NULL,
+    metadata  TEXT NOT NULL,
+    embedding BLOB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS chunks_source ON chunks(source);
+CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value INTEGER);
+INSERT OR IGNORE INTO meta (key, value) VALUES ('revision', 0);
+"""
+
+
+def _normalised(embeddings) -> np.ndarray:
+    """L2正規化する。cosine距離を内積で計算するための前提。
+
+    呼び出し側に正規化の責任を持たせない。片方だけ正規化された状態は例外を
+    出さず、距離だけを静かに狂わせる。
+    """
+    matrix = np.asarray(embeddings, dtype="float32")
+    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+    if not np.all(norms > 0):
+        raise VectorStoreError("ノルム0のベクトルは登録できません")
+    return matrix / norms
+
+
+def open_store(path: str) -> "VectorStore":
+    return VectorStore(path)
+
+
+class VectorStore:
+    def __init__(self, path: str):
+        # check_same_thread=False は Streamlit が @st.cache_resource で保持した
+        # 接続を別スレッドから触るため。書き込みは取り込みプロセスのみで、
+        # このプロセスは読むだけなので競合しない。
+        self._connection = sqlite3.connect(path, check_same_thread=False)
+        self._connection.executescript(_SCHEMA)
+        self._connection.commit()
+
+    def count(self) -> int:
+        return self._connection.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+
+    def add(self, ids, documents, metadatas, embeddings) -> None:
+        matrix = _normalised(embeddings)
+        rows = [
+            (
+                chunk_id,
+                metadata.get("source", ""),
+                text,
+                json.dumps(metadata, ensure_ascii=False),
+                vector.tobytes(),
+            )
+            for chunk_id, text, metadata, vector in zip(
+                ids, documents, metadatas, matrix
+            )
+        ]
+        with self._connection:
+            self._connection.executemany(
+                "INSERT OR REPLACE INTO chunks"
+                " (id, source, text, metadata, embedding) VALUES (?, ?, ?, ?, ?)",
+                rows,
+            )
+            self._connection.execute(
+                "UPDATE meta SET value = value + 1 WHERE key = 'revision'"
+            )

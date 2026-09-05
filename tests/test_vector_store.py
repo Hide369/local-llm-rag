@@ -41,3 +41,64 @@ def test_unsupported_operator_raises():
     """黙って無視すると条件が消えたまま全件が返る。"""
     with pytest.raises(WhereError):
         matches({"k": 1}, {"k": {"$ne": 1}})
+
+
+from ingest.vector_store import VectorStoreError, open_store
+
+
+def _vector(seed: float, dim: int = 4) -> list[float]:
+    return [seed] + [0.0] * (dim - 1)
+
+
+@pytest.fixture
+def empty_store():
+    return open_store(":memory:")
+
+
+def test_new_store_is_empty(empty_store):
+    assert empty_store.count() == 0
+
+
+def test_added_rows_are_counted(empty_store):
+    empty_store.add(
+        ids=["a::1", "a::2"],
+        documents=["本文1", "本文2"],
+        metadatas=[{"source": "a.md"}, {"source": "a.md"}],
+        embeddings=[_vector(1.0), _vector(2.0)],
+    )
+    assert empty_store.count() == 2
+
+
+def test_zero_vector_is_rejected(empty_store):
+    """ノルム0は正規化でゼロ除算になる。埋め込みが空を返した事故を静かに通さない。"""
+    with pytest.raises(VectorStoreError):
+        empty_store.add(
+            ids=["a::1"],
+            documents=["本文"],
+            metadatas=[{"source": "a.md"}],
+            embeddings=[[0.0, 0.0, 0.0, 0.0]],
+        )
+
+
+def test_rejected_add_leaves_the_store_empty(empty_store):
+    """弾いた書き込みが中途半端に残ってはならない。"""
+    with pytest.raises(VectorStoreError):
+        empty_store.add(
+            ids=["a::1", "a::2"],
+            documents=["良い", "悪い"],
+            metadatas=[{"source": "a.md"}, {"source": "a.md"}],
+            embeddings=[_vector(1.0), [0.0, 0.0, 0.0, 0.0]],
+        )
+    assert empty_store.count() == 0
+
+
+def test_store_persists_across_connections(tmp_path):
+    """別プロセス相当の開き直しで読めること。今回の障害はここで露見した。"""
+    path = str(tmp_path / "store.sqlite3")
+    open_store(path).add(
+        ids=["a::1"],
+        documents=["本文"],
+        metadatas=[{"source": "a.md"}],
+        embeddings=[_vector(1.0)],
+    )
+    assert open_store(path).count() == 1
