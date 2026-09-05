@@ -307,3 +307,61 @@ def test_tied_distances_are_broken_by_chunk_id():
     for _ in range(5):
         found = store.search([1.0, 0.0], limit=2)
         assert [chunk_id for chunk_id, _, _, _ in found] == ["a", "b"]
+
+
+def test_revision_advances_on_write(empty_store):
+    before = empty_store.revision()
+    empty_store.add(
+        ids=["a::1"],
+        documents=["本文"],
+        metadatas=[{"source": "a.md"}],
+        embeddings=[_vector(1.0)],
+    )
+    assert empty_store.revision() > before
+
+
+def test_matrix_is_not_reloaded_when_nothing_changed(filled_store, monkeypatch):
+    """判定を誤って常に真にしても例外は出ず、遅くなるだけなので明示的に測る。"""
+    calls = []
+    original = filled_store._load_matrix
+    monkeypatch.setattr(
+        filled_store, "_load_matrix", lambda: (calls.append(1), original())[1]
+    )
+    filled_store.search(_vector(1.0), limit=1)
+    filled_store.search(_vector(2.0), limit=1)
+    assert len(calls) == 1
+
+
+def test_matrix_is_reloaded_after_a_write(filled_store):
+    """同じ件数のまま内容だけ差し替わっても拾うこと。
+
+    filled_storeの3ベクトルは_vector(1.0)/(2.0)/(3.0)でいずれも正規化すると
+    同じ向き[1,0,0,0]になり、距離が全て0.0の同点になる。同点はチャンクIDの
+    順で決まるため、差し替え後も_vector(3.0)で検索すると常にa::1が先頭に来て
+    しまい、キャッシュが再読み込みされたかを判定できない。差し替え後のベクトルを
+    別の向き（y軸）にして初めて、キャッシュが更新されていないと拾えない検索に
+    なる。
+    """
+    filled_store.replace(
+        "b.md",
+        ids=["b::1"],
+        documents=["差し替え後"],
+        metadatas=[{"source": "b.md"}],
+        embeddings=[[0.0, 1.0, 0.0, 0.0]],
+    )
+    found = filled_store.search([0.0, 1.0, 0.0, 0.0], limit=1)
+    assert found[0][2] == "差し替え後"
+
+
+def test_a_second_connection_sees_the_first_ones_writes(tmp_path):
+    """取り込みプロセスの更新を、チャットのプロセスが拾えること。"""
+    path = str(tmp_path / "store.sqlite3")
+    writer = open_store(path)
+    reader = open_store(path)
+    writer.add(
+        ids=["a::1"],
+        documents=["本文"],
+        metadatas=[{"source": "a.md"}],
+        embeddings=[_vector(1.0)],
+    )
+    assert reader.search(_vector(1.0), limit=1)[0][0] == "a::1"

@@ -108,6 +108,11 @@ class VectorStore:
         self._connection = sqlite3.connect(path, check_same_thread=False)
         self._connection.executescript(_SCHEMA)
         self._connection.commit()
+        # revisionは書き込みトランザクションの中で不可分に更新されるため、
+        # これが変わっていない限り全件再読み込みは不要（Task 6のキャッシュ判定）。
+        self._cached_revision = None
+        self._entries = []
+        self._matrix = None
 
     def count(self) -> int:
         return self._connection.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
@@ -235,6 +240,19 @@ class VectorStore:
         )
         return entries, matrix
 
+    def revision(self) -> int:
+        return self._connection.execute(
+            "SELECT value FROM meta WHERE key = 'revision'"
+        ).fetchone()[0]
+
+    def _current(self):
+        """世代が変わっていれば読み直す。変わっていなければキャッシュを返す。"""
+        revision = self.revision()
+        if revision != self._cached_revision:
+            self._entries, self._matrix = self._load_matrix()
+            self._cached_revision = revision
+        return self._entries, self._matrix
+
     def search(self, vector, limit: int):
         """cosine距離の小さい順に返す。
 
@@ -243,7 +261,7 @@ class VectorStore:
         RELEVANCE_THRESHOLD をはじめ、scripts/check_retrieval.py で積み上げた
         実測値がすべて意味を失う。しかも例外は出ない。
         """
-        entries, matrix = self._load_matrix()
+        entries, matrix = self._current()
         if not entries:
             return []
         query = _normalised([vector])[0]
