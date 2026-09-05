@@ -40,7 +40,9 @@ def _scalar(value: str):
     """
     text = value.strip()
     if not text or text.startswith("["):
-        return None  # 配列は where が部分一致を扱えず、実用にならない
+        # 配列は where が部分一致を扱えず、メタデータとしては実用にならない。
+        # 値は _array_values が本文側で拾う。
+        return None
     try:
         return int(text)
     except ValueError:
@@ -69,24 +71,59 @@ def _parse_attributes(lines: list[str]) -> dict:
     return attributes
 
 
-def _split_frontmatter(lines: list[str]) -> tuple[dict, list[str]]:
-    """先頭のYAMLフロントマターを属性として取り出し、本文と分けて返す。
+def _array_values(lines: list[str]) -> str:
+    """配列の値だけを空白区切りで集める。
 
-    フロントマターを埋め込みテキストに入れない判断は当初から変えていない。
+    `_scalar` が配列を捨てるのはメタデータとして使えないからであって、値に
+    価値が無いからではない。「学生向け」「省スペース」といった語は本文に一度も
+    現れないことがあり、捨てれば索引から永久に失われる。noise_wash_db を
+    捨てなかったのと同じ理由で、置き場所をメタデータから本文へ移して拾う。
+
+    キー名は載せない。`tags` のような語が全チャンクに現れると、質問にその語が
+    含まれたときどの資料も等しく一致し、順位を決める力を持たないためである。
+
+    区切りを空白にしているのは ingest/lexical.py の分かち書きに合わせるため。
+    `\\W+` が境界になり、区切りを跨いだbigramは作られない。したがって
+    「超コンパクト」と「洗濯専用」が混ざった語で一致することはない。
+    """
+    values: list[str] = []
+    for line in lines:
+        if line[:1].isspace():
+            continue
+        key, separator, value = line.partition(":")
+        text = value.strip()
+        if not separator or not key.strip() or not text.startswith("["):
+            continue
+        values.extend(item.strip() for item in text.strip("[]").split(",") if item.strip())
+    return " ".join(values)
+
+
+def _split_frontmatter(lines: list[str]) -> tuple[dict, str, list[str]]:
+    """先頭のYAMLフロントマターを属性と配列値に分け、本文と一緒に返す。
+
+    フロントマターの生テキストを埋め込みに入れない判断は当初から変えていない。
     YAMLの生テキストより散文のほうが日本語の質問との類似度が出るためである。
     変えたのは「捨てる」ことのほうで、noise_wash_db は30製品中24製品で本文に
     一度も現れず、捨てると索引から永久に失われることが実測で分かった。
+
+    スカラーと配列で行き先が分かれるのは、where で絞り込めるかどうかが違うため
+    である。絞り込める値はメタデータへ、絞り込めない値は本文へ置く。
     """
     if not lines or lines[0].strip() != "---":
-        return {}, lines
+        return {}, "", lines
     for index in range(1, len(lines)):
         if lines[index].strip() == "---":
-            return _parse_attributes(lines[1:index]), lines[index + 1 :]
-    return {}, lines  # 閉じられていないなら本文とみなす
+            frontmatter = lines[1:index]
+            return (
+                _parse_attributes(frontmatter),
+                _array_values(frontmatter),
+                lines[index + 1 :],
+            )
+    return {}, "", lines  # 閉じられていないなら本文とみなす
 
 
 def parse_md(path: Path) -> list[ParsedUnit]:
-    attributes, body_lines = _split_frontmatter(_read_lines(path))
+    attributes, array_values, body_lines = _split_frontmatter(_read_lines(path))
     title = ""
     sections: list[tuple[str, list[str]]] = []
     heading: str = ""
@@ -114,7 +151,11 @@ def parse_md(path: Path) -> list[ParsedUnit]:
             continue
         units.append(
             ParsedUnit(
-                text="\n".join(part for part in (title, section_heading, text) if part),
+                text="\n".join(
+                    part
+                    for part in (title, array_values, section_heading, text)
+                    if part
+                ),
                 location_type=SECTION,
                 # 見出し文字列ではなく通し番号を位置にする。同じ見出しが2つある文書で
                 # チャンクIDが衝突するのを防ぐため、IDの一意性を文書構造に依存させない。

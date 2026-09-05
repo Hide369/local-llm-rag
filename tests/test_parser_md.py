@@ -171,6 +171,54 @@ def test_attributes_are_still_not_in_the_unit_text(sample):
     assert all("noise_wash_db" not in u.text for u in parse_md(sample))
 
 
+def test_array_values_become_part_of_the_unit_text(sample):
+    """配列はメタデータに載せられない。捨てずに本文で拾い、検索に効かせる。
+
+    スカラー属性と扱いが分かれるのは、where で絞り込めるかどうかが違うため。
+    数値や単一の文字列は where が扱えるのでメタデータに置き、配列は扱えないので
+    本文に置く。どちらも「検索できる形にする」という目的は同じである。
+    """
+    assert all("スマホ連携" in u.text for u in parse_md(sample))
+
+
+def test_array_values_are_placed_after_the_title(sample):
+    """値だけを空白区切りで、タイトルの直後に置く。
+
+    キー名を伴わないのは、`tags` のような語が全チャンクに現れると検索の語彙が
+    汚れるためである。位置をタイトル直後にするのは、本文より前に置くことで
+    セクションの中身を薄めずに済むという判断による。
+    """
+    assert parse_md(sample)[0].text.startswith("UD-0900i IoTコンパクト\nIoT スマホ連携\n")
+
+
+def test_every_array_key_contributes_its_values(tmp_path):
+    """対象は tags に限らない。キー名をコードに固定しない。
+
+    ingest/conditions.py の available_keys と同じ方針である。資料を入れ替えても
+    コードを直さずに追従させる。
+    """
+    path = _write(
+        tmp_path,
+        "---\ntags: [静音]\ntarget_users: [学生, 単身赴任]\n---\n\n# 型番\n\n## 概要\n\n本文\n",
+    )
+    text = parse_md(path)[0].text
+    assert "静音" in text
+    assert "学生" in text
+    assert "単身赴任" in text
+
+
+def test_file_without_array_attributes_keeps_its_text_unchanged(tmp_path):
+    """配列が無ければ本文は一切変わらない。空行も足さない。"""
+    path = _write(tmp_path, "---\nmodel_id: X1\n---\n\n# タイトル\n\n## 見出し\n\n本文\n")
+    assert parse_md(path)[0].text == "タイトル\n見出し\n本文"
+
+
+def test_empty_array_adds_nothing(tmp_path):
+    """空配列は値を持たない。空行を挟むと埋め込みテキストが無意味に伸びる。"""
+    path = _write(tmp_path, "---\ntags: []\n---\n\n# タイトル\n\n## 見出し\n\n本文\n")
+    assert parse_md(path)[0].text == "タイトル\n見出し\n本文"
+
+
 def test_nested_yaml_keys_are_skipped(tmp_path):
     """字下げされた行は入れ子の属性であり、平らなメタデータには載せられない。"""
     text = "---\nouter:\n  inner: 1\n---\n\n# タイトル\n\n## 節\n\n本文がここにあります。\n"
