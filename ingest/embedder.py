@@ -7,12 +7,18 @@ Ollama自身の処理時間はいずれも約80msである。
 """
 import os
 import time
+import tomllib
+from pathlib import Path
 
 import requests
 
-# Ollamaがインストール直後に待ち受けるポートに合わせてある。教材の udemy1.py〜udemy3.py は
-# 12000番をコードに直接書いているが、環境変数を読まないためここの既定値とは無関係。
-DEFAULT_OLLAMA_HOST = "http://127.0.0.1:11434"
+with open(Path(__file__).resolve().parent.parent / "config.toml", "rb") as _f:
+    _CONFIG = tomllib.load(_f)
+
+# config.tomlの値はOllamaがインストール直後に待ち受けるポートに合わせてある。
+# 教材の udemy1.py〜udemy3.py は12000番をコードに直接書いているが、環境変数を
+# 読まないためここの既定値とは無関係。
+DEFAULT_OLLAMA_HOST = _CONFIG["ollama"]["host"]
 
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", DEFAULT_OLLAMA_HOST)
 EMBED_MODEL = "bge-m3"

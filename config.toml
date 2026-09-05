@@ -1,0 +1,10 @@
+# ローカルLLM設定。
+#
+# gpt-oss:20b をこのマシンのOllamaで動かすときの接続先とモデル名。
+# ColabのL4 GPUに繋ぐ場合は .env の OLLAMA_HOST / OLLAMA_API_KEY が優先される
+# （詳細はREADMEの「ColabのL4 GPUに接続する」を参照）。秘密情報を含まないため
+# .env と違いこのファイルは追跡対象。
+
+[ollama]
+host = "http://127.0.0.1:11434"
+model = "gpt-oss:20b"

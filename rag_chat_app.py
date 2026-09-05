@@ -4,6 +4,7 @@
 初回の取り込みは13分かかるため、CLI (python -m scripts.ingest_source) で行う。
 このUIのボタンは差分取り込み（通常は数秒）を想定している。
 """
+import tomllib
 from datetime import datetime
 from pathlib import Path
 
@@ -93,13 +94,15 @@ st.sidebar.title("設定")
 
 # ollama pull済みのモデルだけを並べる。自由入力にしていた頃は打ち間違いや
 # 未取得のモデル名が、生成時のchat.ChatErrorになるまで分からなかった。
-# gpt-oss:20b の1つだけなのは、接続先のOllamaに置いてある生成モデルがこれだけ
+# config.tomlの1つだけなのは、接続先のOllamaに置いてある生成モデルがこれだけ
 # だからである（同居する bge-m3 は埋め込み、qwen2.5vl:7b はVLM専用で、
 # どちらも回答生成には使わない）。以前は qwen2.5:7b-instruct / llama3.1:8b /
 # qwen3:32b も並べていたが、pull されていないモデルは選んだ時点で生成が失敗する
-# だけなので外した。使いたければ先に ollama pull してからここに足す。
+# だけなので外した。使いたければ先に ollama pull してからconfig.tomlに足す。
 # 過去に取った実測比較はREADMEの「モデルの比較」に残してある。
-MODELS = ["gpt-oss:20b"]
+with open(Path(__file__).parent / "config.toml", "rb") as _f:
+    _CONFIG = tomllib.load(_f)
+MODELS = [_CONFIG["ollama"]["model"]]
 model = st.sidebar.selectbox("モデル名", MODELS)
 temperature = st.sidebar.slider("Temperature", 0.0, 1.0, 0.3, 0.1)
 # サイドバーには出さない。利用者に編集させる項目ではないため。

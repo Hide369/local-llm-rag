@@ -11,16 +11,19 @@ Markdownのフロントマター由来のメタデータで機械的に絞り込
 - Python 3.13（`myvenv313`）
 - Ollama（インストール直後の標準ポート `http://127.0.0.1:11434` で待ち受けていること）
 - モデル: `ollama pull bge-m3`（埋め込み）と `ollama pull gpt-oss:20b`（回答生成）
-  。生成モデルを別のものにするときは、pullしたうえで `rag_chat_app.py` の
-  `MODELS` に追記する（下記「モデルの比較」参照）
+  。接続先や生成モデルは [config.toml](config.toml) にまとめてある。生成モデルを
+  別のものにするときは、pullしたうえで `config.toml` の `model` を書き換える
+  （下記「モデルの比較」参照）
 
 ### Ollamaの待ち受けポートについて
 
-`ingest/embedder.py` の `DEFAULT_OLLAMA_HOST` はOllamaの標準ポート
-`http://127.0.0.1:11434` に合わせてあるため、通常は何も設定せずに動く。
-`ollama list` が応答すれば、そのOllamaに接続できる。
+[config.toml](config.toml) の `host` はOllamaの標準ポート `http://127.0.0.1:11434`
+に合わせてあるため、通常は何も設定せずに動く。`ollama list` が応答すれば、そのOllama
+に接続できる。
 
-標準以外のポートで動かしている場合のみ、環境変数 `OLLAMA_HOST` で上書きする。
+標準以外のポートで動かしている場合は `config.toml` の `host` を書き換える。
+ColabのL4 GPUに繋ぐ場合など、コミットしたくない接続先は環境変数 `OLLAMA_HOST`
+で上書きする（`config.toml` より優先される。下記「ColabのL4 GPUに接続する」参照）。
 `http://` から書くこと（コードはこの値をそのままURLに埋め込む）。
 
 ```powershell
@@ -150,6 +153,7 @@ Ollamaに肩代わりさせられる。現在Colab側に置いているのは `g
 | `ingest/reranker.py` | RRF上位8件をbge-reranker-v2-m3で測り直す（外部サービスに依存しない） |
 | `scripts/check_retrieval.py` | 関連度しきい値の距離実測、BM25側の回帰確認、リランカーの効果比較（`--with-reranker`） |
 | `rag_chat_app.py` | Streamlit UI |
+| `config.toml` | Ollamaの接続先・生成モデル名（秘密情報を含まないため追跡対象） |
 
 このプロジェクトのコレクション（`local_docs_v2`、bge-m3 / 1024次元）は、別の埋め込み
 モデルで作られた既存コレクション `local_docs`（nomic-embed-text / 768次元）と
@@ -174,7 +178,7 @@ Ollamaに肩代わりさせられる。現在Colab側に置いているのは `g
 | `OCR_MIN_CHARS` | 30 | `ingest/parsers/pdf_parser.py` |
 | `OCR_DPI` | 200 | `ingest/ocr.py` |
 | `EMBED_BATCH_SIZE` | 8 | `ingest/embedder.py` |
-| `DEFAULT_OLLAMA_HOST` | `http://127.0.0.1:11434` | `ingest/embedder.py` |
+| `DEFAULT_OLLAMA_HOST` | `http://127.0.0.1:11434` | `config.toml`（`ingest/embedder.py` が読む） |
 | `RELEVANCE_THRESHOLD` | 0.50 | `ingest/retrieval.py` |
 | `CANDIDATE_COUNT` | 30 | `ingest/retrieval.py` |
 | `RRF_K` | 60 | `ingest/retrieval.py` |
@@ -194,14 +198,14 @@ Ollamaに肩代わりさせられる。現在Colab側に置いているのは `g
 
 ## モデルの比較
 
-回答生成のモデルはサイドバーのプルダウンで選ぶ。候補は `rag_chat_app.py` の
-`MODELS` に列挙したモデルだけで、現在は `gpt-oss:20b` の1つ。接続先のOllamaに
+回答生成のモデルはサイドバーのプルダウンで選ぶ。候補は [config.toml](config.toml) の
+`model` に列挙したモデルだけで、現在は `gpt-oss:20b` の1つ。接続先のOllamaに
 置いてある生成モデルがこれだけだからである。別のモデルを使うときは、先に
-`ollama pull` してから `MODELS` に追記する。
+`ollama pull` してから `config.toml` の `model` に追記する。
 
 下の表は `qwen2.5:7b-instruct` と `llama3.1:8b` を同じ経路（条件抽出→絞り込み／
-検索→生成）で4回ずつ実測した記録である（2026-08-13）。**どちらも現在は `MODELS` に
-無いが、プロンプトの書き方を決めた根拠なので残してある。** `gpt-oss:20b` は
+検索→生成）で4回ずつ実測した記録である（2026-08-13）。**どちらも現在は `config.toml`
+に無いが、プロンプトの書き方を決めた根拠なので残してある。** `gpt-oss:20b` は
 動作確認のみで、同じ形式の実測はまだ無い。
 
 | | qwen2.5:7b-instruct | llama3.1:8b |
@@ -229,7 +233,7 @@ Ollamaに肩代わりさせられる。現在Colab側に置いているのは `g
 ## 既知の制約
 
 以下で `llama3.1:8b` / `qwen2.5:7b-instruct` を名指ししている項目は、そのモデルで
-取った実測の記録である。現在の `MODELS` は `gpt-oss:20b` だけなので**同じ症状が今も
+取った実測の記録である。現在の `config.toml` は `gpt-oss:20b` だけなので**同じ症状が今も
 出るとは限らない**が、プロンプトや設計定数がその形になっている理由なので残してある。
 生成モデルを入れ替えたら測り直すこと。
 
