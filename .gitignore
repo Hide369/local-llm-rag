@@ -3,7 +3,9 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 
-# ColabのL4 GPUに接続するときの OLLAMA_HOST / OLLAMA_API_KEY を書く（秘密情報）
+# 秘密情報を書くファイル。ルート直下の .env にはColabのL4 GPU接続用の
+# OLLAMA_HOST / OLLAMA_API_KEY を、infra/gitlab/.env にはローカルGitLabの
+# GITLAB_ROOT_PASSWORD を書く。パターンにスラッシュが無いため全階層に一致する。
 .env
 
 # 仮想環境

@@ -1,0 +1,76 @@
+# ローカルGitLab CE。GitHubを正とするミラー先であり、必要なときだけ起動する。
+# 設計の根拠は docs/superpowers/specs/2026-09-04-local-gitlab-design.md を参照。
+
+# volume名は "<プロジェクト名>_<volume名>" になる。Task 3のrun_gitlab.ps1や
+# 運用ドキュメントは local-gitlab_gitlab_config / _logs / _data という
+# 具体的な名前に依存しているため、プロジェクト名をディレクトリ名からの推測や
+# 追跡外の.envに委ねると壊れやすい（.envが無いだけで gitlab_gitlab_config に
+# 化けてデータが消えたように見える）。ここで固定することを単一の情報源とする。
+name: local-gitlab
+
+services:
+  gitlab:
+    # .envが無いまま起動すると "image not found" という分かりにくいエラーに
+    # なるため、config時点で明確なメッセージを出して早期に失敗させる。
+    image: gitlab/gitlab-ce:${GITLAB_VERSION:?infra/gitlab/.envにGITLAB_VERSIONを設定してください（.env.exampleを.envにコピーして値を入れる）}-ce.0
+    container_name: local-gitlab
+    # クローンURLは external_url から導出されるので、この設定はクローンURLには
+    # 影響しない（以前そう書いていたのは誤り）。これはコンテナ自身のホスト名を
+    # external_url と揃えるためのもので、ログ・コンテナ内のシェルプロンプト・
+    # GitLabが出力する診断情報に出る名前が、実際にアクセスするURLと一致して
+    # 読み取りやすくなる。付けなければランダムなコンテナIDになる。
+    hostname: localhost
+    # 「必要なときだけ起動する」運用のため、Docker Desktopの起動に追随させない。
+    # unless-stopped にするとPC起動のたびにGitLabが立ち上がり、Ollamaと
+    # メモリを取り合ってしまう。
+    restart: "no"
+    # 同梱PostgreSQLが既定の64mでは警告を出すため広げる。
+    shm_size: '256m'
+    environment:
+      GITLAB_ROOT_PASSWORD: ${GITLAB_ROOT_PASSWORD:?infra/gitlab/.envにGITLAB_ROOT_PASSWORDを設定してください（8文字以上）}
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://localhost:8929'
+        gitlab_rails['gitlab_shell_ssh_port'] = 2224
+
+        # --- ここからメモリ抑制（16GBのPCでOllamaと共存させるため） ---
+        # 自己監視スタックを丸ごと止める。利用者が1人の環境では監視対象が
+        # 自分しかおらず、削減効果が最も大きい。
+        prometheus_monitoring['enable'] = false
+        # 既定はCPUコア数に応じて増えるが、同時利用者が1人なら2で足りる。
+        puma['worker_processes'] = 2
+        # Phase 1ではCIを回さないため非同期ジョブ自体が少ない。
+        # キー名は sidekiq['concurrency']。以前は sidekiq['max_concurrency'] と
+        # 書いていたが、Omnibusはsidekiqハッシュ内の未知のキーを黙って捨てるため、
+        # 既定の -c 20 のまま一度も効いていなかった（gitlab.rb.templateに
+        # max_concurrency は存在せず、稼働中のsidekiq-clusterが -c 20 で
+        # 動いていることを実測で確認）。
+        sidekiq['concurrency'] = 5
+    ports:
+      # ループバックのみに束ねる。設計書9節は「localhostからしかアクセスしない」
+      # ことを根拠にTLSを省略している。既定の "8929:8929" は 0.0.0.0/:: に
+      # bindするため、同一LAN上の誰でも平文HTTPでサインイン画面に到達でき、
+      # rootパスワードがネットワークを流れてしまう。前提は仮定ではなく
+      # このbind指定で強制する。
+      - "127.0.0.1:8929:8929"
+      - "127.0.0.1:2224:22"
+    volumes:
+      - gitlab_config:/etc/gitlab
+      - gitlab_logs:/var/log/gitlab
+      - gitlab_data:/var/opt/gitlab
+    healthcheck:
+      # イメージ本体が定義する既定のhealthcheckコマンド（docker inspectで確認済み）と
+      # 揃える。CMDではなくCMD-SHELL形式で1本の文字列として定義されている。
+      test: ["CMD-SHELL", "/opt/gitlab/bin/gitlab-healthcheck --fail --max-time 10"]
+      interval: 30s
+      timeout: 15s
+      retries: 60
+      # 初回はreconfigureが走るうえ、このPCはサーマルスロットリングで
+      # 大きく遅くなる（README「既知の制約」）。既定の猶予では足りない。
+      start_period: 600s
+
+# Windowsパスへのbind mountはパーミッションとI/O性能の両面で問題が出るため
+# named volumeを使う。
+volumes:
+  gitlab_config:
+  gitlab_logs:
+  gitlab_data:
