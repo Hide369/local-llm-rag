@@ -234,10 +234,11 @@ PowerShell で `$CI_PROJECT_DIR` と書いても未定義の変数として空�
 「Streamlit が起動していました」と言われても遅い。
 
 1. `-SourceDir` の存在確認
-2. **Streamlit 稼働ガード**（5 節）
-3. venv（`myvenv313`）の Python の存在確認
-4. `ingest_source.py --source-dir <SourceDir>` を実行
-5. 終了コードをそのまま返す
+2. **`-SourceDir` が資料リポジトリのチェックアウトであることの確認**（4.4.1 節）
+3. **Streamlit 稼働ガード**（5 節）
+4. venv（`myvenv313`）の Python の存在確認
+5. `ingest_source.py --source-dir <SourceDir>` を実行
+6. 終了コードをそのまま返す
 
 `ingest_source.py` は自身の冒頭で `load_dotenv()` と `embedder.check_ollama()` を
 行うため、Ollama の疎通確認と `.env` の読み込みは本スクリプトでは行わない。
@@ -246,6 +247,40 @@ PowerShell で `$CI_PROJECT_DIR` と書いても未定義の変数として空�
 `--with-vlm` は指定しない。VLM による画像説明は「取り込みが大幅に遅くなる」と
 既存のヘルプに明記されており、無人実行するジョブに載せる処理ではない。必要な
 ときは手動 CLI で実行する。
+
+#### 4.4.1 入力ディレクトリの検証（DB 全消しの防止）
+
+`ingest_source.py` は入力ディレクトリに存在しない資料を DB から削除する
+（2.2 節の `delete_orphans`）。**これは入力がリポジトリ全体であることを前提とした
+挙動である。** 誤って小さなディレクトリを `-SourceDir` に渡すと、そこに無い資料が
+すべて孤児と判定され、`chroma_db` の中身がほぼ全部消える。復旧は全量 24 分の
+再取り込みになる。
+
+CI の正常経路では `$CI_PROJECT_DIR` が常にリポジトリ全体を指すためこの事故は
+起きない。**危険なのは人間が手で叩くとき**で、本設計は 8.1 節で
+`ci_ingest.ps1` を手動実行する動作確認を要求している以上、この経路を無防備に
+残せない。
+
+そこで `-SourceDir` が資料リポジトリのチェックアウトであることを、Embedding を
+始める前に確認する。
+
+```powershell
+$remoteUrl = git -C $SourceDir remote get-url origin 2>$null
+if ($LASTEXITCODE -ne 0 -or $remoteUrl -notlike "*source-archive*") { <失敗> }
+```
+
+- **remote が無い（`.git` が無い）ディレクトリは拒否する。** テンポラリに作った
+  作業用ディレクトリは必ずここで止まる。
+- Runner のチェックアウトには `.git` が残る（`GIT_STRATEGY` の既定は `fetch`）ため、
+  CI の正常経路はこの検証を通る。
+- **remote 名が `origin` 以外の場合がある。** `local_llm/source` の remote 名は
+  `gitlab` である（2.1 節）。手動実行でそのディレクトリを渡す経路も塞がないため、
+  検証は `origin` に限定せず、**いずれかの remote が `source-archive` を指していれば
+  通す**実装にする（`git -C $SourceDir remote -v` の全行を見る）。
+
+この検証は URL に `source-archive` が含まれるかしか見ない。厳密な同一性検証では
+ないが、**防ぎたいのは悪意ではなく手滑りである**。同名の別リポジトリを用意して
+まで誤らせる状況は想定しない。
 
 ### 4.5 venv の扱い
 
@@ -373,6 +408,7 @@ Phase 1 設計書 4.4 節が「bind を広げる前に TLS を先に導入する
 
 | 事象 | 振る舞い | 復旧 |
 |---|---|---|
+| `-SourceDir` が資料リポジトリでない | 検証で即 `exit 1`（4.4.1 節） | 正しいディレクトリを渡す |
 | Streamlit 稼働中 | ガードで即 `exit 1`（5 節） | アプリを停止し GitLab UI から再実行 |
 | Ollama 未疎通 | `check_ollama()` が処理前に失敗（既存） | Colab セッションを復帰させ再実行 |
 | venv が見つからない | `ci_ingest.ps1` が即失敗 | 環境を復旧して再実行 |
@@ -407,6 +443,7 @@ PowerShell のテスト基盤は本プロジェクトに無く、本設計のた
 | 6 | Ollama 停止中の push で、Embedding 開始前に失敗すること |
 | 7 | Runner 停止中の push が `pending` で残り、`up` 後に実行されること |
 | 8 | `run_gitlab.ps1 down` で Runner が先に停止すること |
+| 9 | 資料リポジトリでないディレクトリを `-SourceDir` に渡すと、DB を変更せずに失敗すること（4.4.1） |
 
 3 と 4 は、本設計が「入力ディレクトリを切り替えても既存 DB と整合する」と
 主張している 2.2 節の検証にあたる。**もし 3 で全ファイルが再取り込みされたら、
