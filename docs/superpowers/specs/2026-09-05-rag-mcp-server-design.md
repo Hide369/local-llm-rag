@@ -351,8 +351,16 @@ context7 に `npx` 方式ではなく `url` 方式を採るのは、Windows で 
 codex plugin add superpowers@openai-curated
 ```
 
-`~/.codex/plugins/cache/` へ配置され、`config.toml` に有効化が追記される。
-MCP サーバとは別系統であり、本設計の対象外（手順の記録のみ）。
+プラグイン本体が `~/.codex/plugins/cache/` へダウンロード・配置され、同時に
+`config.toml` へ次が自動で追記される。
+
+```toml
+[plugins."superpowers@openai-curated"]
+enabled = true
+```
+
+`mcp_servers` とは別のセクションであり、MCP サーバとは系統が異なる。本設計の
+対象外（手順の記録のみ）。
 
 ## 8. 導入先環境への移植
 
