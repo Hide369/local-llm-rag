@@ -76,5 +76,32 @@ if (-not (Test-Path -Path $python -PathType Leaf)) {
     exit 1
 }
 
-Write-Host "事前条件をすべて満たしました。"
-exit 0
+# --- 5. 取り込みの実行 ---
+# .env の読み込みと Ollama の疎通確認は ingest_source.py 自身が行う
+# （load_dotenv と check_ollama）。ここで重ねて確認すると、同じ処理が2か所に
+# 分かれて片方だけが更新される。
+#
+# --with-vlm は付けない。VLMによる画像説明は取り込みが大幅に遅くなるため、
+# 無人実行のジョブには載せない。必要なときは手動CLIで実行する。
+Write-Host "取り込みを開始します: $SourceDir"
+# python scripts\ingest_source.py という直接起動では sys.path にリポジトリ
+# ルートが入らず `from ingest import ...` が ModuleNotFoundError になる
+# （sys.path[0] はスクリプトのディレクトリ scripts\ になるため）。
+# README に記載された既存の使い方と同じく `-m scripts.ingest_source` で
+# 起動する。-m はカレントディレクトリを sys.path に含めるため、
+# Push-Location でリポジトリルートに移動しておく必要がある。
+Push-Location $repoRoot
+try {
+    & $python -m scripts.ingest_source --source-dir $SourceDir
+    $ingestExit = $LASTEXITCODE
+} finally {
+    Pop-Location
+}
+
+if ($ingestExit -ne 0) {
+    Write-Host ""
+    Write-Host "取り込みに失敗しました（終了コード $ingestExit）。"
+    Write-Host "  差分判定はファイル内容のハッシュで行われるため、このジョブを"
+    Write-Host "  そのまま再実行しても成功済みの資料は再処理されません。"
+}
+exit $ingestExit
