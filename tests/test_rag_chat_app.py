@@ -172,7 +172,8 @@ def test_the_model_is_picked_from_the_pulled_models(app):
     """モデル名の自由入力ではなく、pull済みモデルの固定リストからの選択にする。
 
     自由入力だと打ち間違いが生成時のchat.ChatErrorになるまで分からなかった。
-    既定は qwen2.5:7b-instruct のまま（README「モデルの比較」）。
+    現在の候補は gpt-oss:20b だけで、これは接続先のOllamaに置いてある生成モデルが
+    これだけだからである（README「モデルの比較」）。
     """
     with (
         patch("chromadb.PersistentClient", _stub_persistent_client({"source": "a.md"})),
@@ -182,17 +183,22 @@ def test_the_model_is_picked_from_the_pulled_models(app):
         app.run()
 
     assert not app.exception
-    assert app.selectbox[0].options == [
-        "qwen2.5:7b-instruct",
-        "llama3.1:8b",
-        "gpt-oss:20b",
-        "qwen3:32b",
-    ]
-    assert app.selectbox[0].value == "qwen2.5:7b-instruct"
+    assert app.selectbox[0].options == ["gpt-oss:20b"]
+    assert app.selectbox[0].value == "gpt-oss:20b"
 
 
 def test_the_picked_model_is_the_one_that_generates(app):
-    """プルダウンで選んだモデルが実際の生成に渡る。見た目だけの切り替えにしない。"""
+    """プルダウンが持つ値がそのまま生成に渡る。見た目だけの切り替えにしない。
+
+    **候補が1つの間、このテストの区別力は落ちている。** 以前は既定と別のモデルを
+    選び直して「選択が反映される」ことを確かめていたが、MODELSがgpt-oss:20bだけに
+    なったため選び直す先が無い。いまはウィジェットの値と生成に渡った値が一致する
+    ことしか言えず、モデル名をハードコードした実装でも通ってしまう。
+    MODELSに2つ目を足したら、別の候補を選び直す形に戻して強度を回復させること。
+
+    リテラルではなくウィジェットの値と突き合わせているのは、MODELSを変えたときに
+    ここが黙って無意味にならず、少なくとも連結だけは見続けるためである。
+    """
     fake_stream = _fake_stream_chat("回答です。")
     with (
         patch("chromadb.PersistentClient", _stub_persistent_client({"source": "a.md"})),
@@ -200,12 +206,12 @@ def test_the_picked_model_is_the_one_that_generates(app):
         patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
     ):
         app.run()
-        app.selectbox[0].set_value("llama3.1:8b").run()
+        picked = app.selectbox[0].value
         app.chat_input[0].set_value("運転音は？").run()
 
     assert not app.exception
     used = [call["model"] for call in fake_stream.calls]
-    assert used == ["llama3.1:8b"]
+    assert used == [picked]
 
 
 def _fake_ask_json_for_the_catalog_route(condition_json, ranking_json):
