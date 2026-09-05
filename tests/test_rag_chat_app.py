@@ -25,9 +25,9 @@ import ingest.retrieval as retrieval
 from ingest import chat
 from ingest import embedder as embedder_module
 from ingest import reranker as reranker_module
-from ingest import store
 from ingest import vlm as vlm_module
 from ingest.embedder import EmbeddingError
+from ingest.vector_store import open_store as open_real_store
 from scripts import ingest_source
 
 APP_PATH = Path(__file__).resolve().parent.parent / "rag_chat_app.py"
@@ -39,7 +39,9 @@ def _stub_open_store(metadata):
     """store.open_store の代わりに、1チャンクだけ入ったインメモリDBを返す。"""
 
     def factory(*args, **kwargs):
-        collection = store.open_store(":memory:")
+        # 実体を直接呼ぶ。この factory 自身が store.open_store の差し替え先であり、
+        # 再公開された名前を呼ぶと自分を呼び戻して無限再帰になる。
+        collection = open_real_store(":memory:")
         collection.add(
             ids=["chunk-1"],
             documents=["洗濯機の運転音は26dBです。"],
@@ -232,7 +234,7 @@ def test_products_that_fail_the_condition_are_shown_but_not_sent_to_the_model(ap
     prompts = []
 
     def factory(*args, **kwargs):
-        collection = store.open_store(":memory:")
+        collection = open_real_store(":memory:")  # 差し替え先なので実体を呼ぶ
         for model, capacity, depth in (
             ("UD-1100S", 11.0, 510),
             ("UD-1400X", 14.0, 545),
