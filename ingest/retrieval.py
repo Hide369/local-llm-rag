@@ -197,7 +197,7 @@ def search(
     if not in_domain:
         # 圏外ならこの先の結果は必ず空になる（near は distance <= limit を要求し、
         # BM25分岐は in_domain を要求するため、どのチャンクも通らない）。ここで
-        # 打ち切っても結果は変わらないが、無駄なBM25検索と collection.get の
+        # 打ち切っても結果は変わらないが、無駄なBM25検索と chunks_by_ids の
         # 往復を省ける。ゲートを判定条件の奥に埋めず、ここで可視化する意味もある。
         return []
 
@@ -217,7 +217,7 @@ def search(
     for chunk_id in set(vector_ranks) | set(lexical_ranks):
         row = vector_rows.get(chunk_id)
         # インデックスは起動時のスナップショットである。取り込みで消えたチャンクの
-        # IDが残っていることがあり、collection.get はその行を返さない。
+        # IDが残っていることがあり、chunks_by_ids はその行を返さない。
         if row is None:
             continue
         distance, text, occurrences = row

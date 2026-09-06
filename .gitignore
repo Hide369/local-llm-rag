@@ -12,6 +12,7 @@ myvenv313/
 
 # ベクトルストア（source からいつでも再生成できるため追跡しない）
 vector_store.sqlite3
+vector_store.sqlite3.bak-*
 
 # 旧ベクトルDB。本システムはもう使わないが udemy3.py が使い続ける
 chroma_db/

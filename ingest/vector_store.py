@@ -387,9 +387,9 @@ class VectorStore:
     def _load_matrix(self):
         """全ベクトルを1つの配列に読み込む。本文単位である。
 
-        538件×1024次元で2.2MB、総当たりの内積は実測0.19ms。索引を持たない
-        代わりに毎回この配列を使う。同じ本文を何度も載せると、候補の枠を
-        コピーが食い合う。
+        538件×1024次元で2.10MB、総当たりの内積は実測0.09ms（初回0.20ms）。
+        索引を持たない代わりに毎回この配列を使う。同じ本文を何度も載せると、
+        候補の枠をコピーが食い合う。
         """
         rows = self._connection.execute(
             "SELECT id, text, embedding FROM chunks ORDER BY id"
