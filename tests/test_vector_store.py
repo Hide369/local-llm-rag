@@ -89,6 +89,30 @@ def test_the_same_id_twice_overwrites_without_complaining(empty_store):
     assert empty_store.get(ids=["a::1"])["documents"] == ["あとの文章"]
 
 
+def test_the_same_text_from_two_sources_is_stored_once(empty_store):
+    """本文が同じなら行は1つ。出典は2つ数える。"""
+    for source in ("a.md", "b.md"):
+        empty_store.add(
+            ids=[f"{source}::1::0"],
+            documents=["共有されている本文"],
+            metadatas=[{"source": source}],
+            embeddings=[_vector(1.0)],
+        )
+    assert empty_store.count() == 2
+    assert empty_store.chunk_count() == 1
+
+
+def test_one_different_character_is_not_folded(empty_store):
+    """完全一致だけを畳む。1文字違えば別の本文である。"""
+    empty_store.add(
+        ids=["a.md::1::0", "b.md::1::0"],
+        documents=["講師プロフィール 年齢52歳", "講師プロフィール"],
+        metadatas=[{"source": "a.md"}, {"source": "b.md"}],
+        embeddings=[_vector(1.0), _vector(2.0)],
+    )
+    assert empty_store.chunk_count() == 2
+
+
 def test_zero_vector_is_rejected(empty_store):
     """ノルム0は正規化でゼロ除算になる。埋め込みが空を返した事故を静かに通さない。"""
     with pytest.raises(VectorStoreError):
@@ -110,6 +134,7 @@ def test_rejected_add_leaves_the_store_empty(empty_store):
             embeddings=[_vector(1.0), [0.0, 0.0, 0.0, 0.0]],
         )
     assert empty_store.count() == 0
+    assert empty_store.chunk_count() == 0
 
 
 def test_store_persists_across_connections(tmp_path):
@@ -250,13 +275,23 @@ def test_failed_replace_with_mismatched_lengths_leaves_the_previous_content(
     assert sorted(filled_store.get()["ids"]) == ["a::1", "a::2", "b::1"]
 
 
-def test_identical_vector_has_distance_zero(filled_store):
-    found = filled_store.search(_vector(1.0), limit=1)
-    chunk_id, distance, text, metadata = found[0]
-    assert chunk_id == "a::1"
+def test_identical_vector_has_distance_zero():
+    """filled_store の3件は全て同じ向きで同点になり、タイブレークが可読な順に
+    ならない（チャンクIDが本文のSHA-256のため）。ここでは単独の1件だけを
+    入れて、その曖昧さを避ける。
+    """
+    store = open_store(":memory:")
+    store.add(
+        ids=["a::1"],
+        documents=["あ1"],
+        metadatas=[{"source": "a.md"}],
+        embeddings=[_vector(1.0)],
+    )
+    found = store.search(_vector(1.0), limit=1)
+    _, distance, text, occurrences = found[0]
     assert distance == pytest.approx(0.0, abs=1e-6)
     assert text == "あ1"
-    assert metadata["source"] == "a.md"
+    assert occurrences[0]["source"] == "a.md"
 
 
 def test_distance_is_one_minus_cosine_similarity():
@@ -268,9 +303,9 @@ def test_distance_is_one_minus_cosine_similarity():
         metadatas=[{"source": "x"}, {"source": "x"}],
         embeddings=[[0.0, 1.0], [-1.0, 0.0]],
     )
-    by_id = {chunk_id: distance for chunk_id, distance, _, _ in store.search([1.0, 0.0], limit=2)}
-    assert by_id["直交"] == pytest.approx(1.0, abs=1e-6)
-    assert by_id["逆向き"] == pytest.approx(2.0, abs=1e-6)
+    by_text = {text: distance for _, distance, text, _ in store.search([1.0, 0.0], limit=2)}
+    assert by_text["直交"] == pytest.approx(1.0, abs=1e-6)
+    assert by_text["逆向き"] == pytest.approx(2.0, abs=1e-6)
 
 
 def test_unnormalised_query_gives_the_same_distance(filled_store):
@@ -322,7 +357,7 @@ def test_search_selects_the_nearest_when_limit_is_smaller_than_the_corpus():
         embeddings=[[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0]],
     )
     found = store.search([1.0, 0.0], limit=2)
-    assert [chunk_id for chunk_id, _, _, _ in found] == ["近い", "直交"]
+    assert [text for _, _, text, _ in found] == ["近い", "直交"]
     assert [distance for _, distance, _, _ in found] == pytest.approx(
         [0.0, 1.0], abs=1e-6
     )
@@ -331,6 +366,9 @@ def test_search_selects_the_nearest_when_limit_is_smaller_than_the_corpus():
 def test_tied_distances_are_broken_by_chunk_id():
     """同点の並びをID任せにすると、ingest/retrieval.pyのrrf_scoreに伝播して
     根拠の順序が実行のたびに変わりうる（同ファイルが同じ理由で全順序化している）。
+
+    チャンクIDは本文のSHA-256なので、可読な期待値を決め打てない。実際のID
+    (store.chunks() が返すもの) をチャンクID昇順に並べたものと突き合わせる。
     """
     store = open_store(":memory:")
     store.add(
@@ -339,9 +377,11 @@ def test_tied_distances_are_broken_by_chunk_id():
         metadatas=[{"source": "x"}, {"source": "x"}],
         embeddings=[[1.0, 0.0], [1.0, 0.0]],
     )
+    ids, _ = store.chunks()
+    expected = sorted(ids)
     for _ in range(5):
         found = store.search([1.0, 0.0], limit=2)
-        assert [chunk_id for chunk_id, _, _, _ in found] == ["a", "b"]
+        assert [chunk_id for chunk_id, _, _, _ in found] == expected
 
 
 def test_revision_advances_on_write(empty_store):
@@ -382,9 +422,13 @@ def test_matrix_is_reloaded_after_a_write(filled_store):
     _cached_revisionがNoneのままreplace後に初めてキャッシュが作られてしまい、
     「一度もキャッシュを検証していないだけ」でテストが通ってしまう
     （revisionを毎回見直さず最初の1回しかロードしない実装でも通ってしまう）。
+
+    3件の並び順そのものは検証しない。チャンクIDが本文のSHA-256になったため、
+    同点（distance=0.0）のタイブレークが可読な順にならない。ここで見たいのは
+    キャッシュが正しい3件を返すことであり、並び順ではない。
     """
     before = filled_store.search(_vector(1.0), limit=3)
-    assert [text for _, _, text, _ in before] == ["あ1", "あ2", "い1"]
+    assert {text for _, _, text, _ in before} == {"あ1", "あ2", "い1"}
 
     filled_store.replace(
         "b.md",
@@ -416,7 +460,7 @@ def test_a_second_connection_sees_the_first_ones_writes(tmp_path):
         metadatas=[{"source": "a.md"}],
         embeddings=[_vector(1.0)],
     )
-    assert reader.search(_vector(1.0), limit=1)[0][0] == "a::1"
+    assert reader.search(_vector(1.0), limit=1)[0][2] == "本文"
 
 
 def test_unsupported_logical_operator_raises(filled_store):
@@ -467,6 +511,7 @@ def test_replace_that_fails_while_writing_keeps_the_old_chunks(filled_store, mon
             embeddings=[_vector(9.0)],
         )
     assert sorted(filled_store.get()["ids"]) == ["a::1", "a::2", "b::1"]
+    assert filled_store.chunk_count() == 3
 
 
 def test_a_failed_write_is_not_committed_by_a_concurrent_one(filled_store, monkeypatch):
@@ -516,3 +561,169 @@ def test_a_failed_write_is_not_committed_by_a_concurrent_one(filled_store, monke
         thread.join(timeout=20)
 
     assert sorted(filled_store.get()["ids"]) == ["a::1", "a::2", "b::9"]
+
+
+def _add_one(store, source, text, seed=1.0, location=1):
+    store.add(
+        ids=[f"{source}::{location}::0"],
+        documents=[text],
+        metadatas=[{"source": source, "location": location}],
+        embeddings=[_vector(seed)],
+    )
+
+
+def test_reingesting_one_source_keeps_the_shared_text_for_the_others(empty_store):
+    """A を入れ直しても、B が使っている本文は残る。
+
+    これを落とすと B の根拠が消える。例外は出ず、count() は減った値を
+    正しく返すため、次に検索するまで誰も気づかない。
+    """
+    _add_one(empty_store, "a.md", "共有されている本文")
+    _add_one(empty_store, "b.md", "共有されている本文", seed=2.0)
+    empty_store.replace(
+        source="a.md",
+        ids=["a.md::1::0"],
+        documents=["A だけの新しい本文"],
+        metadatas=[{"source": "a.md", "location": 1}],
+        embeddings=[_vector(3.0)],
+    )
+    remaining = empty_store.get(where={"source": "b.md"})
+    assert remaining["documents"] == ["共有されている本文"]
+    assert empty_store.chunk_count() == 2
+
+
+def test_the_last_source_to_drop_a_text_removes_it(empty_store):
+    """誰も使わなくなった本文は残さない。孤児はベクトル行列に載り続ける。"""
+    _add_one(empty_store, "a.md", "共有されている本文")
+    _add_one(empty_store, "b.md", "共有されている本文", seed=2.0)
+    for source in ("a.md", "b.md"):
+        empty_store.replace(
+            source=source,
+            ids=[f"{source}::1::0"],
+            documents=[f"{source} だけの本文"],
+            metadatas=[{"source": source, "location": 1}],
+            embeddings=[_vector(4.0)],
+        )
+    assert empty_store.chunk_count() == 2
+    assert "共有されている本文" not in empty_store.get()["documents"]
+
+
+def test_deleting_one_source_keeps_a_text_another_source_shares(empty_store):
+    """delete(where=) も同じ規則で動く。store.delete_orphans がこれを呼ぶ。"""
+    _add_one(empty_store, "a.md", "共有されている本文")
+    _add_one(empty_store, "b.md", "共有されている本文", seed=2.0)
+    empty_store.delete(where={"source": "a.md"})
+    assert empty_store.count() == 1
+    assert empty_store.chunk_count() == 1
+
+
+def test_the_same_text_twice_in_one_source_keeps_both_occurrences(empty_store):
+    """1資料が同じ本文を2箇所に持つとき、出現は2件のまま。"""
+    empty_store.add(
+        ids=["a.md::1::0", "a.md::5::0"],
+        documents=["繰り返される本文", "繰り返される本文"],
+        metadatas=[
+            {"source": "a.md", "location": 1},
+            {"source": "a.md", "location": 5},
+        ],
+        embeddings=[_vector(1.0), _vector(1.0)],
+    )
+    assert empty_store.count() == 2
+    assert empty_store.chunk_count() == 1
+
+
+def test_chunks_returns_one_entry_per_text(empty_store):
+    _add_one(empty_store, "a.md", "共有されている本文")
+    _add_one(empty_store, "b.md", "共有されている本文", seed=2.0)
+    _add_one(empty_store, "b.md", "固有の本文", seed=3.0, location=2)
+    ids, texts = empty_store.chunks()
+    assert len(ids) == 2
+    assert sorted(texts) == ["共有されている本文", "固有の本文"]
+
+
+def test_chunks_by_ids_lists_every_occurrence_in_source_order(empty_store):
+    """代表は取り込み順ではなく (source, location) の昇順で決まる。
+
+    b.md を先に入れても a.md が先頭に来る。取り込み順で変わると、同じ質問の
+    出典が再取り込みのたびに入れ替わる。
+    """
+    _add_one(empty_store, "b.md", "共有されている本文", seed=2.0)
+    _add_one(empty_store, "a.md", "共有されている本文")
+    (chunk_id,), _ = empty_store.chunks()
+    text, occurrences = empty_store.chunks_by_ids([chunk_id])[chunk_id]
+    assert text == "共有されている本文"
+    assert [o["source"] for o in occurrences] == ["a.md", "b.md"]
+
+
+def test_chunks_by_ids_drops_unknown_ids(empty_store):
+    """取り込みで消えたチャンクのIDが索引に残ることがある。落として通す。"""
+    _add_one(empty_store, "a.md", "本文")
+    (chunk_id,), _ = empty_store.chunks()
+    found = empty_store.chunks_by_ids([chunk_id, "no-such-id"])
+    assert list(found) == [chunk_id]
+
+
+def test_chunks_by_ids_preserves_requested_id_order(empty_store):
+    """複数IDを渡したとき、リクエスト順が保たれること。
+
+    SQL は順序を保証しないので、「単純化」で dict(rows) に
+    してしまうと検出できなくなる。
+    """
+    _add_one(empty_store, "a.md", "本文A")
+    _add_one(empty_store, "b.md", "本文B", seed=2.0)
+    _add_one(empty_store, "c.md", "本文C", seed=3.0)
+
+    # 本文をテキストで検索して chunk_id を取得
+    all_chunks = empty_store.chunks()
+    text_to_chunk_id = {}
+    for cid, text in zip(all_chunks[0], all_chunks[1]):
+        if text == "本文A":
+            text_to_chunk_id["A"] = cid
+        elif text == "本文B":
+            text_to_chunk_id["B"] = cid
+        elif text == "本文C":
+            text_to_chunk_id["C"] = cid
+
+    # リクエスト順を "C, A, B" にする（SQL が返しそうな順とは異なる）
+    requested_order = [text_to_chunk_id["C"], text_to_chunk_id["A"], text_to_chunk_id["B"]]
+    result = empty_store.chunks_by_ids(requested_order)
+
+    # リクエスト順が保たれること
+    assert list(result.keys()) == requested_order
+
+
+def test_search_returns_a_shared_text_once_with_every_source(empty_store):
+    """重複が候補枠を食わない。これが畳み込みの目的である。"""
+    _add_one(empty_store, "a.md", "共有されている本文")
+    _add_one(empty_store, "b.md", "共有されている本文", seed=2.0)
+    found = empty_store.search(_vector(1.0), limit=10)
+    assert len(found) == 1
+    _, _, text, occurrences = found[0]
+    assert text == "共有されている本文"
+    assert [o["source"] for o in occurrences] == ["a.md", "b.md"]
+
+
+def test_chunks_by_ids_ties_are_broken_by_occurrence_id(empty_store):
+    """同じ本文が同じ資料の同じ location に複数回現れるとき、chunk_index の昇順に決まる。
+
+    同じ出現に異なる chunk_index が付く。挿入順を逆にしても、出現は
+    chunk_index の昇順に返される。これは occurrence_id (source::location::index)
+    が決着子として機能しているから。
+    """
+    # 逆順で挿入: index=1 を先に、index=0 を後に
+    # 挿入順だけでは [1, 0] の順になるはずだが、tiebreaker があれば [0, 1] が返る
+    empty_store.add(
+        ids=["a.md::5::1", "a.md::5::0"],
+        documents=["同じ本文", "同じ本文"],
+        metadatas=[
+            {"source": "a.md", "location": 5, "chunk_index": 1},
+            {"source": "a.md", "location": 5, "chunk_index": 0},
+        ],
+        embeddings=[_vector(1.0), _vector(1.0)],
+    )
+    (chunk_id,), _ = empty_store.chunks()
+    text, occurrences = empty_store.chunks_by_ids([chunk_id])[chunk_id]
+
+    # chunk_index の昇順に返されること
+    chunk_indices = [o["chunk_index"] for o in occurrences]
+    assert chunk_indices == [0, 1], f"期待: [0, 1], 実際: {chunk_indices}"

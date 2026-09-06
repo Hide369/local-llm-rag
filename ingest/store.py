@@ -63,8 +63,8 @@ def all_documents(collection) -> tuple[list[str], list[str]]:
 
     BM25インデックスをディスクに持たず起動時に組み直すため、その入力を
     ここから供給する。DBを唯一の情報源に保つための経路である。
+
+    本文単位で返す。出現単位で返すと、複数の資料が共有する定型文が上位を
+    占め、中身の違う根拠を押し出す（実測では上位6件中5件が同一本文だった）。
     """
-    if collection.count() == 0:
-        return [], []
-    found = collection.get()
-    return found["ids"], found["documents"]
+    return collection.chunks()

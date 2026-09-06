@@ -12,12 +12,14 @@ def _hit(text="本文", source="a.pdf", location=48):
     return Hit(
         text=text,
         distance=0.2,
-        metadata={
-            "source": source,
-            "location_type": "page",
-            "location": location,
-            "ocr": False,
-        },
+        occurrences=[
+            {
+                "source": source,
+                "location_type": "page",
+                "location": location,
+                "ocr": False,
+            }
+        ],
     )
 
 
@@ -126,13 +128,15 @@ def _slide_hit(distance, bm25_score):
     return Hit(
         text="本文",
         distance=distance,
-        metadata={
-            "source": "生成AI活用セミナー.pptx",
-            "location_type": "slide",
-            "location": 11,
-            "ocr": False,
-            "heading": "",
-        },
+        occurrences=[
+            {
+                "source": "生成AI活用セミナー.pptx",
+                "location_type": "slide",
+                "location": 11,
+                "ocr": False,
+                "heading": "",
+            }
+        ],
         bm25_score=bm25_score,
     )
 
@@ -164,13 +168,15 @@ def _reranked_hit(rerank_score):
     return Hit(
         text="本文",
         distance=0.312,
-        metadata={
-            "source": "生成AI活用セミナー.pptx",
-            "location_type": "slide",
-            "location": 11,
-            "ocr": False,
-            "heading": "",
-        },
+        occurrences=[
+            {
+                "source": "生成AI活用セミナー.pptx",
+                "location_type": "slide",
+                "location": 11,
+                "ocr": False,
+                "heading": "",
+            }
+        ],
         bm25_score=4.25,
         rerank_score=rerank_score,
     )

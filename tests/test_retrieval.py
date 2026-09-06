@@ -26,6 +26,20 @@ class _FakeCollection:
     def count(self):
         return len(self._documents)
 
+    def chunks(self):
+        return list(self._ids), list(self._documents)
+
+    def chunks_by_ids(self, ids):
+        # 知らないIDは黙って落とす。実ストアも消えたIDの行は返さない。
+        return {
+            chunk_id: (
+                self._documents[self._ids.index(chunk_id)],
+                [self._metadatas[self._ids.index(chunk_id)]],
+            )
+            for chunk_id in ids
+            if chunk_id in self._ids
+        }
+
     def search(self, vector, limit):
         rows = self._order[: min(limit, self._vector_limit or limit)]
         return [
@@ -33,24 +47,10 @@ class _FakeCollection:
                 self._ids[row],
                 self._distances[row],
                 self._documents[row],
-                self._metadatas[row],
+                [self._metadatas[row]],
             )
             for row in rows
         ]
-
-    def get(self, ids=None, include=None):
-        # ids 省略は全件（store.all_documents がこの形で呼ぶ）。
-        # 知らないIDは黙って落とす。実ストアも消えたIDの行は返さない。
-        rows = (
-            list(range(len(self._ids)))
-            if ids is None
-            else [self._ids.index(i) for i in ids if i in self._ids]
-        )
-        return {
-            "ids": [self._ids[row] for row in rows],
-            "documents": [self._documents[row] for row in rows],
-            "metadatas": [self._metadatas[row] for row in rows],
-        }
 
 
 def _meta(source="a.pdf", location_type="page", location=48, ocr=False, heading=""):
@@ -69,17 +69,17 @@ def _no_real_embedding(monkeypatch):
 
 
 def test_page_citation():
-    hit = Hit(text="本文", distance=0.1, metadata=_meta())
+    hit = Hit(text="本文", distance=0.1, occurrences=[_meta()])
     assert hit.citation == "a.pdf p.48"
 
 
 def test_slide_citation():
-    hit = Hit(text="本文", distance=0.1, metadata=_meta(location_type="slide", location=12))
+    hit = Hit(text="本文", distance=0.1, occurrences=[_meta(location_type="slide", location=12)])
     assert hit.citation == "a.pdf スライド12"
 
 
 def test_document_citation_has_no_position():
-    hit = Hit(text="本文", distance=0.1, metadata=_meta(location_type="document", location=0))
+    hit = Hit(text="本文", distance=0.1, occurrences=[_meta(location_type="document", location=0)])
     assert hit.citation == "a.pdf"
 
 
@@ -87,12 +87,14 @@ def test_section_citation_shows_the_heading():
     hit = Hit(
         text="本文",
         distance=0.1,
-        metadata=_meta(
-            source="家電製品/UD-0900i_spec_step3.md",
-            location_type="section",
-            location=3,
-            heading="設置情報",
-        ),
+        occurrences=[
+            _meta(
+                source="家電製品/UD-0900i_spec_step3.md",
+                location_type="section",
+                location=3,
+                heading="設置情報",
+            )
+        ],
     )
     assert hit.citation == "家電製品/UD-0900i_spec_step3.md ＞ 設置情報"
 
@@ -102,14 +104,14 @@ def test_section_without_a_heading_shows_only_the_file():
     hit = Hit(
         text="本文",
         distance=0.1,
-        metadata=_meta(location_type="section", location=1, heading=""),
+        occurrences=[_meta(location_type="section", location=1, heading="")],
     )
     assert hit.citation == "a.pdf"
 
 
 def test_ocr_hits_are_marked():
     """OCR由来は小書き仮名が崩れることがあるため、根拠として示すときに明示する。"""
-    hit = Hit(text="本文", distance=0.1, metadata=_meta(ocr=True))
+    hit = Hit(text="本文", distance=0.1, occurrences=[_meta(ocr=True)])
     assert hit.citation == "a.pdf p.48（OCR）"
 
 
@@ -369,3 +371,35 @@ def test_reranked_ties_are_broken_deterministically():
     assert [h.metadata["location"] for h in first] == [
         h.metadata["location"] for h in second
     ]
+
+
+def _hit(occurrences):
+    return Hit(text="本文", distance=0.1, occurrences=occurrences)
+
+
+def test_a_single_occurrence_reads_exactly_as_before():
+    """大半のチャンクは出典が1つである。文字列を変えてはならない。"""
+    hit = _hit([{"source": "資料.pdf", "location_type": "page", "location": 48}])
+    assert hit.citation == "資料.pdf p.48"
+
+
+def test_several_occurrences_name_the_first_and_count_the_rest():
+    hit = _hit(
+        [
+            {"source": "A.pptx", "location_type": "slide", "location": 25},
+            {"source": "B.pptx", "location_type": "slide", "location": 23},
+            {"source": "C.pptx", "location_type": "slide", "location": 24},
+        ]
+    )
+    assert hit.citation == "A.pptx スライド25 ほか2資料"
+
+
+def test_all_citations_lists_every_occurrence():
+    """画面の詳細表示はすべて出す。プロンプトに入るのは短い形だけ。"""
+    hit = _hit(
+        [
+            {"source": "A.pptx", "location_type": "slide", "location": 25},
+            {"source": "B.pptx", "location_type": "slide", "location": 23},
+        ]
+    )
+    assert hit.all_citations() == ["A.pptx スライド25", "B.pptx スライド23"]

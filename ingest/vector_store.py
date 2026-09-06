@@ -2,11 +2,13 @@
 
 design: docs/superpowers/specs/2026-09-05-sqlite-vector-store-design.md
 
-近似最近傍探索（HNSW）を持たない。686件・1024次元での総当たりcosine検索は
-実測0.19msであり、100倍の規模でも8.93msで済む。索引を持たないことは性能上の
-妥協ではなく、索引の破損という故障モードを持たないための選択である。
+近似最近傍探索（HNSW）を持たない。総当たりcosine検索の実測は _load_matrix() の
+docstring にある（重複を畳んだ現在の規模での測定）。畳み込み前の686出現・1024次元
+では0.19msで、100倍の規模でも8.93msだった。索引を持たないことは性能上の妥協では
+なく、索引の破損という故障モードを持たないための選択である。
 """
 
+import hashlib
 import json
 import sqlite3
 import threading
@@ -44,8 +46,8 @@ def matches(metadata: dict, where: dict | None) -> bool:
     """1件のメタデータが条件に合うかを判定する。
 
     SQLへ翻訳せずPythonで評価するのは、演算子の対応付けと文字列の組み立てが
-    静かに間違える種類のコードだからである。686件では総当たりでも数マイクロ秒で、
-    性能上の理由は無い。
+    静かに間違える種類のコードだからである。畳み込み前の686件では総当たりでも
+    数マイクロ秒で、性能上の理由は無い（現在は608出現・本文538種）。
     """
     if not where:
         return True
@@ -78,12 +80,17 @@ class VectorStoreError(Exception):
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS chunks (
     id        TEXT PRIMARY KEY,
-    source    TEXT NOT NULL,
     text      TEXT NOT NULL,
-    metadata  TEXT NOT NULL,
     embedding BLOB NOT NULL
 );
-CREATE INDEX IF NOT EXISTS chunks_source ON chunks(source);
+CREATE TABLE IF NOT EXISTS occurrences (
+    id       TEXT PRIMARY KEY,
+    chunk_id TEXT NOT NULL REFERENCES chunks(id),
+    source   TEXT NOT NULL,
+    metadata TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS occurrences_source ON occurrences(source);
+CREATE INDEX IF NOT EXISTS occurrences_chunk  ON occurrences(chunk_id);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value INTEGER);
 INSERT OR IGNORE INTO meta (key, value) VALUES ('revision', 0);
 """
@@ -100,6 +107,15 @@ def _normalised(embeddings) -> np.ndarray:
     if not np.all(norms > 0):
         raise VectorStoreError("ノルム0のベクトルは扱えません")
     return matrix / norms
+
+
+def _text_id(text: str) -> str:
+    """本文のSHA-256。短縮しない。
+
+    切り詰めると別々の本文が同じIDになり得る。そのとき起きるのは例外ではなく、
+    片方の本文が黙って消えることである。64文字の保存コストで構造的に防ぐ。
+    """
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def open_store(path: str) -> "VectorStore":
@@ -119,8 +135,22 @@ class VectorStore:
         # 正しく返した。設計書4.2が消そうとしている故障そのものなので、
         # 書き込みは _write_lock で直列化する。
         self._connection = sqlite3.connect(path, check_same_thread=False)
-        self._connection.executescript(_SCHEMA)
-        self._connection.commit()
+        # sqlite3 は既定で外部キーを検査しない。本文の無い出現が生まれても
+        # 黙って通る。削除は「出現 → 孤児の本文」の順であり正しい手順なら
+        # 制約に触れないので、これが火を噴くのは手順を間違えたときだけである。
+        # 旧スキーマの拒否やスキーマ適用が例外を投げると、送出された例外の
+        # トレースバックがフレーム経由で self を掴んだままになり、参照が切れる
+        # まで接続が解放されない。CLIなら即終了で
+        # 実害はないが、Streamlit の @st.cache_resource は例外のたびに再試行する
+        # ので、開くたびにファイルハンドルが積み上がる。
+        try:
+            self._connection.execute("PRAGMA foreign_keys = ON")
+            self._reject_old_schema()
+            self._connection.executescript(_SCHEMA)
+            self._connection.commit()
+        except Exception:
+            self._connection.close()
+            raise
         # revisionは書き込みトランザクションの中で不可分に更新されるため、
         # これが変わっていない限り全件再読み込みは不要（Task 6のキャッシュ判定）。
         self._cached_revision = None
@@ -131,8 +161,41 @@ class VectorStore:
         # 共有するスレッド間ではそれが一切効かない。
         self._write_lock = threading.Lock()
 
+    def _reject_old_schema(self) -> None:
+        """1テーブル時代のDBを開こうとしたら止める。
+
+        自動で変換しない。移行が途中で失敗すると、何が起きたのか分からない
+        DBだけが残る。退避を取ってから明示的に走らせる。
+        """
+        columns = {
+            row[1]
+            for row in self._connection.execute("PRAGMA table_info(chunks)")
+        }
+        if "source" in columns:
+            raise VectorStoreError(
+                "旧スキーマのDBです。次を実行して変換してください:\n"
+                "    python -m scripts.migrate_store vector_store.sqlite3"
+            )
+
     def count(self) -> int:
+        """出現の数。入れた件数がそのまま返るという既存の意味を保つ。"""
+        return self._connection.execute("SELECT COUNT(*) FROM occurrences").fetchone()[0]
+
+    def chunk_count(self) -> int:
+        """本文の種類数。畳み込みがどれだけ効いたかはこちらに現れる。"""
         return self._connection.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+
+    def integrity(self) -> tuple[int, int]:
+        """(孤児の本文, 本文の無い出現) を数える。0, 0 が健全である。"""
+        orphans = self._connection.execute(
+            "SELECT COUNT(*) FROM chunks c"
+            " WHERE NOT EXISTS (SELECT 1 FROM occurrences WHERE chunk_id = c.id)"
+        ).fetchone()[0]
+        dangling = self._connection.execute(
+            "SELECT COUNT(*) FROM occurrences o"
+            " WHERE NOT EXISTS (SELECT 1 FROM chunks WHERE id = o.chunk_id)"
+        ).fetchone()[0]
+        return orphans, dangling
 
     def _insert(self, cursor, ids, documents, metadatas, embeddings) -> None:
         """正規化して1行ずつ書く。呼び出し側がトランザクションを持つ。
@@ -142,6 +205,10 @@ class VectorStore:
         短い方に切り詰める。`replace` の中でこれが起きると、DELETEで旧チャンクを
         消した後に新チャンクの一部だけを書いてコミットしてしまい、「帳簿は
         進んだのに実体が欠けている」という今回捨てたはずの壊れ方を作ってしまう。
+
+        本文が同じならベクトルも同じなので、通常この UPDATE は無駄である。
+        しかし埋め込みモデルを差し替えて入れ直したとき、IGNORE では古いモデルの
+        ベクトルが残る。件数は正しく、例外も出ず、距離だけが静かに狂う。
         """
         if not ids:
             return
@@ -154,20 +221,26 @@ class VectorStore:
         if len(set(lengths.values())) != 1:
             raise VectorStoreError(f"ids/documents/metadatas/embeddingsの件数が揃っていません: {lengths}")
         matrix = _normalised(embeddings)
+        chunk_ids = [_text_id(text) for text in documents]
         cursor.executemany(
-            "INSERT OR REPLACE INTO chunks"
-            " (id, source, text, metadata, embedding) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO chunks (id, text, embedding) VALUES (?, ?, ?)"
+            " ON CONFLICT(id) DO UPDATE SET embedding = excluded.embedding",
+            [
+                (chunk_id, text, vector.tobytes())
+                for chunk_id, text, vector in zip(chunk_ids, documents, matrix)
+            ],
+        )
+        cursor.executemany(
+            "INSERT OR REPLACE INTO occurrences"
+            " (id, chunk_id, source, metadata) VALUES (?, ?, ?, ?)",
             [
                 (
+                    occurrence_id,
                     chunk_id,
                     metadata.get("source", ""),
-                    text,
                     json.dumps(metadata, ensure_ascii=False),
-                    vector.tobytes(),
                 )
-                for chunk_id, text, metadata, vector in zip(
-                    ids, documents, metadatas, matrix
-                )
+                for occurrence_id, chunk_id, metadata in zip(ids, chunk_ids, metadatas)
             ],
         )
 
@@ -176,6 +249,7 @@ class VectorStore:
             self._insert(
                 self._connection, ids, documents, metadatas, embeddings
             )
+            self._delete_orphan_chunks(self._connection)
             self._bump_revision(self._connection)
 
     def replace(self, source, ids, documents, metadatas, embeddings) -> None:
@@ -194,10 +268,13 @@ class VectorStore:
                 f"metadata の source が引数と違います: {source!r} に対して {mismatched!r}"
             )
         with self._write_lock, self._connection:
-            self._connection.execute("DELETE FROM chunks WHERE source = ?", (source,))
+            self._connection.execute(
+                "DELETE FROM occurrences WHERE source = ?", (source,)
+            )
             self._insert(
                 self._connection, ids, documents, metadatas, embeddings
             )
+            self._delete_orphan_chunks(self._connection)
             self._bump_revision(self._connection)
 
     def delete(self, where=None) -> None:
@@ -206,34 +283,58 @@ class VectorStore:
             return
         with self._write_lock, self._connection:
             self._connection.executemany(
-                "DELETE FROM chunks WHERE id = ?", [(t,) for t in targets]
+                "DELETE FROM occurrences WHERE id = ?", [(t,) for t in targets]
             )
+            self._delete_orphan_chunks(self._connection)
             self._bump_revision(self._connection)
+
+    @staticmethod
+    def _delete_orphan_chunks(cursor) -> None:
+        """どの資料からも参照されなくなった本文を消す。
+
+        参照が残っている限り消さないのがこの設計の要である。1つの資料を
+        取り込み直しただけで、他の資料が使っている本文まで消えてはならない。
+        """
+        # NOT IN ではなく NOT EXISTS を使う。今日は occurrences.chunk_id が
+        # NOT NULL なので両者は等価だが、副問い合わせに NULL が1行でも混ざると
+        # NOT IN は全体が偽になり、1件も消さずに黙って成功する。孤児は例外を
+        # 出さず件数にも表れないため、静かに失敗しうる構文で書かない
+        # （integrity() を NOT EXISTS にしたのと同じ理由）。
+        cursor.execute(
+            "DELETE FROM chunks"
+            " WHERE NOT EXISTS ("
+            "SELECT 1 FROM occurrences WHERE chunk_id = chunks.id)"
+        )
 
     @staticmethod
     def _bump_revision(cursor) -> None:
         cursor.execute("UPDATE meta SET value = value + 1 WHERE key = 'revision'")
 
     def _rows(self):
-        """(id, text, metadata) を全件返す。"""
+        """(出現ID, 本文, メタデータ) を全件返す。get() の土台。"""
         return [
-            (chunk_id, text, json.loads(metadata))
-            for chunk_id, text, metadata in self._connection.execute(
-                "SELECT id, text, metadata FROM chunks"
+            (occurrence_id, text, json.loads(metadata))
+            for occurrence_id, text, metadata in self._connection.execute(
+                "SELECT o.id, c.text, o.metadata"
+                " FROM occurrences o JOIN chunks c ON c.id = o.chunk_id"
             )
         ]
 
     def get(self, ids=None, where=None, limit=None, include=None) -> dict:
         """条件に合うチャンクを返す。
 
-        include は ChromaDB との互換のために受け取るが無視する。686件では
-        取捨選択に意味が無く、引数を見て分岐するほうがバグを生む。
+        include は ChromaDB との互換のために受け取るが無視する。畳み込み前の
+        686件では取捨選択に意味が無く、引数を見て分岐するほうがバグを生む
+        （現在は608出現・本文538種で、なおさら意味が無い）。
         """
         rows = self._rows()
         if ids is not None:
-            # 呼び出し側が渡した並びを保つ。現在の消費者はどちらも自前で
-            # 組み直しており（scripts/check_retrieval.py は「getは並び順を
-            # 保証しない」前提で書かれている）依存はしていないが、返り値だけで
+            # 呼び出し側が渡した並びを保つ。本番でこの枝に入る呼び出しは今は
+            # 1件も無い（catalog.py・conditions.py・store.py はいずれも
+            # where= か引数なしで呼び、BM25だけで当たったヒットの補完は
+            # chunks_by_ids に移った）。残る利用者は tests/test_vector_store.py
+            # の4件で、うち test_get_by_ids_keeps_them_aligned がこの並びを
+            # 拘束している。分岐は消さない — 公開APIであり、返り値だけで
             # 対応付けできるほうが誤用を生みにくい。
             by_id = {chunk_id: (text, metadata) for chunk_id, text, metadata in rows}
             rows = [
@@ -248,22 +349,76 @@ class VectorStore:
             "metadatas": [row[2] for row in rows],
         }
 
-    def _load_matrix(self):
-        """全ベクトルを1つの配列に読み込む。
+    @staticmethod
+    def _occurrence_order(occurrence: dict):
+        """(source, location, occurrence_id) の昇順。
 
-        686件×1024次元で2.8MB、総当たりの内積は実測0.19ms。索引を持たない
-        代わりに毎回この配列を使う。
+        occurrence_id (source::location::index形式) で同着を決定的に決める。
+        location は型が混ざるので文字列で比べる。同着がなければ出現順は
+        (source, location) で固定されるが、同じ資料の同じ場所に同じ本文が
+        複数回現れた場合に取り込み順に左右されないようにする。
+
+        occurrence_id を選ぶ理由: metadata の chunk_index ではなく、
+        occurrence_id (主キー) を使う。chunk_index は将来のコード変更で
+        持つとは限らないが、occurrence_id は構造的に一意で、かつ
+        source::location::index 形式で出現ごとに必ず異なるため。
+        """
+        return (
+            occurrence.get("source", ""),
+            str(occurrence.get("location", "")),
+            occurrence.get("__occurrence_id", ""),
+        )
+
+    def chunks(self) -> tuple[list[str], list[str]]:
+        """本文単位のIDと本文。BM25インデックスの入力になる。"""
+        rows = self._connection.execute("SELECT id, text FROM chunks").fetchall()
+        return [row[0] for row in rows], [row[1] for row in rows]
+
+    def chunks_by_ids(self, ids: list[str]) -> dict[str, tuple[str, list[dict]]]:
+        """本文とその出現をまとめて返す。知らないIDは黙って落とす。
+
+        出現を (source, location) の昇順に固定する。同着は occurrence_id
+        (source::location::index の形式で構造的に一意) で決める。代表が
+        取り込み順で変わると、同じ質問に対する出典が再取り込みのたびに
+        入れ替わるため、同着も含めて決定的に順序付ける。
+        """
+        if not ids:
+            return {}
+        placeholders = ",".join("?" * len(ids))
+        rows = self._connection.execute(
+            "SELECT c.id, c.text, o.id, o.metadata"
+            " FROM chunks c JOIN occurrences o ON o.chunk_id = c.id"
+            f" WHERE c.id IN ({placeholders})",
+            list(ids),
+        ).fetchall()
+        found: dict[str, tuple[str, list[dict]]] = {}
+        for chunk_id, text, occurrence_id, metadata in rows:
+            metadata_dict = json.loads(metadata)
+            # occurrence_id をメタデータに一時的に付加して sort() で使えるようにする
+            metadata_dict["__occurrence_id"] = occurrence_id
+            found.setdefault(chunk_id, (text, []))[1].append(metadata_dict)
+        for _, occurrences in found.values():
+            occurrences.sort(key=self._occurrence_order)
+            # 返す前に __occurrence_id を削除する（返り値は元の形のメタデータ）
+            for occurrence in occurrences:
+                occurrence.pop("__occurrence_id", None)
+        return {chunk_id: found[chunk_id] for chunk_id in ids if chunk_id in found}
+
+    def _load_matrix(self):
+        """全ベクトルを1つの配列に読み込む。本文単位である。
+
+        538件×1024次元で2.10MB、総当たりの内積は実測0.09ms（初回0.20ms）。
+        索引を持たない代わりに毎回この配列を使う。同じ本文を何度も載せると、
+        候補の枠をコピーが食い合う。
         """
         rows = self._connection.execute(
-            "SELECT id, text, metadata, embedding FROM chunks"
+            "SELECT id, text, embedding FROM chunks ORDER BY id"
         ).fetchall()
         if not rows:
             return [], np.zeros((0, 0), dtype="float32")
-        entries = [
-            (chunk_id, text, json.loads(metadata)) for chunk_id, text, metadata, _ in rows
-        ]
+        entries = [(chunk_id, text) for chunk_id, text, _ in rows]
         matrix = np.stack(
-            [np.frombuffer(blob, dtype="float32") for _, _, _, blob in rows]
+            [np.frombuffer(blob, dtype="float32") for _, _, blob in rows]
         )
         return entries, matrix
 
@@ -301,7 +456,14 @@ class VectorStore:
         # ingest/retrieval.py の rrf_score 計算はこの順位を土台にしており、
         # そこでも同じ理由（再現性）で同点をIDまで含めた全順序にしている。
         ordered = sorted(candidates, key=lambda i: (float(distances[i]), entries[i][0]))
+        found = self.chunks_by_ids([entries[i][0] for i in ordered])
         return [
-            (entries[i][0], float(distances[i]), entries[i][1], entries[i][2])
+            (
+                entries[i][0],
+                float(distances[i]),
+                entries[i][1],
+                found[entries[i][0]][1],
+            )
             for i in ordered
+            if entries[i][0] in found
         ]

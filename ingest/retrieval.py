@@ -14,9 +14,11 @@ from ingest.synonyms import expand_query
 SEARCH_RESULT_COUNT = 4
 
 # 検索結果を採用するcosine距離のしきい値（0に近いほど類似）。
-# scripts/check_retrieval.py の実測（bge-m3 / 496チャンク）:
-#   関連する質問の最大距離 = 0.456、圏外の質問の最小距離 = 0.522
-# この2つの間を取っている。
+# scripts/check_retrieval.py の実測（いずれも bge-m3）:
+#   2026-09-06 / 608出現・本文538種（重複を畳んだ後）: 関連の最大 0.420 / 圏外の最小 0.522
+#   畳み込み前の同一コーパス（608チャンク）でも 0.420 / 0.522 で、畳んでも動いていない
+#   さらに前の 496チャンク時点: 0.456 / 0.522
+# この2つの間を取っている。値を動かしたのは資料の入れ替えであって畳み込みではない。
 # ハイブリッド検索ではこのしきい値がベクトル側の圏内判定の関門も兼ねる。1件も
 # 閾値を通らなければ検索結果は空になり、BM25側のヒットも採用されない。BM25には
 # スコアの下限を設けていないため、質問が資料の範囲内かどうかを決めるのは実質的に
@@ -50,7 +52,8 @@ RERANK_CANDIDATE_COUNT = 8
 class Hit:
     text: str
     distance: float | None
-    metadata: dict
+    # 1つの本文が複数の資料に現れる。(source, location) の昇順で、先頭が代表。
+    occurrences: list[dict]
     # BM25だけで当たった場合は distance が None、ベクトルだけで当たった場合は
     # bm25_score が None になる。どちらの経路で拾ったかを画面に出すために持つ。
     bm25_score: float | None = None
@@ -61,26 +64,51 @@ class Hit:
     rerank_score: float | None = None
 
     @property
-    def citation(self) -> str:
-        """「ファイル名 p.48（OCR）」の形式で出典を組み立てる。
+    def metadata(self) -> dict:
+        """代表の出現。
 
-        出典整形はここが唯一の置き場所である。位置種別を増やすときはこのメソッドだけを直す。
+        フィールドとして別に持たせない。同じ事実に2つの帳簿ができ、片方だけ
+        更新された状態が例外を出さずに成立する。
         """
-        source = self.metadata.get("source", "")
-        location_type = self.metadata.get("location_type")
-        location = self.metadata.get("location")
+        return self.occurrences[0]
+
+    @staticmethod
+    def _one_citation(metadata: dict) -> str:
+        """「ファイル名 p.48（OCR）」の形式で1つの出典を組み立てる。
+
+        出典整形はここが唯一の置き場所である。位置種別を増やすときはこのメソッド
+        だけを直す。
+        """
+        source = metadata.get("source", "")
+        location_type = metadata.get("location_type")
+        location = metadata.get("location")
         if location_type == "page":
             source = f"{source} p.{location}"
         elif location_type == "slide":
             source = f"{source} スライド{location}"
         elif location_type == "section":
             # 見出し文字列で示す。通し番号（location）は利用者にとって意味がない。
-            heading = self.metadata.get("heading")
+            heading = metadata.get("heading")
             if heading:
                 source = f"{source} ＞ {heading}"
-        if self.metadata.get("ocr"):
+        if metadata.get("ocr"):
             source = f"{source}（OCR）"
         return source
+
+    def all_citations(self) -> list[str]:
+        """すべての出典。画面の詳細表示で使う。"""
+        return [self._one_citation(metadata) for metadata in self.occurrences]
+
+    @property
+    def citation(self) -> str:
+        """代表の出典。2件以上あるときだけ残りの数を添える。
+
+        プロンプトにはこの短い形だけを入れる。7つのファイル名を読ませても、
+        どれを引くかの判断を増やすだけで精度に寄与しない。
+        """
+        citation = self._one_citation(self.metadata)
+        others = len(self.occurrences) - 1
+        return f"{citation} ほか{others}資料" if others else citation
 
 
 def contextual_query(question: str, history) -> str:
@@ -112,14 +140,14 @@ def contextual_query(question: str, history) -> str:
 
 
 def _vector_candidates(collection, query, session):
-    """(チャンクID → 順位) と、IDをキーにした (距離, 本文, メタデータ) を返す。"""
+    """(チャンクID → 順位) と、IDをキーにした (距離, 本文, 出現の並び) を返す。"""
     found = collection.search(
         embed_query(query, session=session), limit=CANDIDATE_COUNT
     )
     ranks = {chunk_id: rank for rank, (chunk_id, _, _, _) in enumerate(found, start=1)}
     rows = {
-        chunk_id: (distance, text, metadata)
-        for chunk_id, distance, text, metadata in found
+        chunk_id: (distance, text, occurrences)
+        for chunk_id, distance, text, occurrences in found
     }
     return ranks, rows
 
@@ -144,9 +172,14 @@ def search(
     採否はベクトル側を圏内判定の関門にする。ベクトル側に閾値を通った候補が1件でも
     あればその質問は資料で答えられるものとみなし、BM25側のヒットもスコアを問わず
     採用する。BM25スコアに下限を設けないのは、スコアが正規化されておらずクエリ長に
-    ほぼ比例するからである。実測では長い圏外質問が29.87、短い圏内質問が35.93で
-    差は6.06しかなく、長い圏外質問ひとつで逆転する。距離のほうは関連の最大0.456・
-    圏外の最小0.522で分離しており、こちらを関門にするほうが堅い。
+    ほぼ比例するからである。2026-08-16・約460チャンク時点の実測では長い圏外質問が
+    29.87、短い圏内質問が35.93で差は6.06しかなく、長い圏外質問ひとつで逆転する。
+    その後コーパスは608出現へ増え、重複を畳んで索引は538件になった。idf と平均
+    文書長が2度動いているため、この2つの絶対値は再実測していない。差が小さいと
+    いう結論（＝下限を設けない）はスコアがクエリ長にほぼ比例することから来て
+    おり、規模では変わらない。
+    距離のほうは 2026-09-06 の実測（608出現・本文538種）で関連の最大0.420・
+    圏外の最小0.522と分離しており、こちらを関門にするほうが堅い。
     いずれも scripts/check_retrieval.py の実測。資料を入れ替えたら再実測すること。
 
     rerank を渡すと、RRFで並べた上位 RERANK_CANDIDATE_COUNT 件だけをクロス
@@ -171,7 +204,7 @@ def search(
     if not in_domain:
         # 圏外ならこの先の結果は必ず空になる（near は distance <= limit を要求し、
         # BM25分岐は in_domain を要求するため、どのチャンクも通らない）。ここで
-        # 打ち切っても結果は変わらないが、無駄なBM25検索と collection.get の
+        # 打ち切っても結果は変わらないが、無駄なBM25検索と chunks_by_ids の
         # 往復を省ける。ゲートを判定条件の奥に埋めず、ここで可視化する意味もある。
         return []
 
@@ -184,20 +217,17 @@ def search(
     # BM25だけで当たったチャンクは本文もメタデータも持っていないので取りに行く。
     missing = [chunk_id for chunk_id in lexical_scores if chunk_id not in vector_rows]
     if missing:
-        found = collection.get(ids=missing, include=["documents", "metadatas"])
-        for chunk_id, text, metadata in zip(
-            found["ids"], found["documents"], found["metadatas"]
-        ):
-            vector_rows[chunk_id] = (None, text, metadata)
+        for chunk_id, (text, occurrences) in collection.chunks_by_ids(missing).items():
+            vector_rows[chunk_id] = (None, text, occurrences)
 
     pairs: list[tuple[str, Hit]] = []
     for chunk_id in set(vector_ranks) | set(lexical_ranks):
         row = vector_rows.get(chunk_id)
         # インデックスは起動時のスナップショットである。取り込みで消えたチャンクの
-        # IDが残っていることがあり、collection.get はその行を返さない。
+        # IDが残っていることがあり、chunks_by_ids はその行を返さない。
         if row is None:
             continue
-        distance, text, metadata = row
+        distance, text, occurrences = row
         score = lexical_scores.get(chunk_id)
         near = distance is not None and distance <= limit
         if not text or not (near or (in_domain and score is not None)):
@@ -213,7 +243,7 @@ def search(
                 Hit(
                     text=text,
                     distance=distance,
-                    metadata=metadata,
+                    occurrences=occurrences,
                     bm25_score=score,
                     rrf_score=rrf_score,
                 ),

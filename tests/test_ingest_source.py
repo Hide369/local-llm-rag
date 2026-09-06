@@ -275,6 +275,12 @@ class _FakeCollectionForMain:
     def count(self):
         return 0
 
+    def chunk_count(self):
+        return 0
+
+    def integrity(self):
+        return (0, 0)
+
 
 class _FakeHealthyCollection:
     """件数があり、開き直した検索もベクトルを返す健全なストア。"""
@@ -282,8 +288,14 @@ class _FakeHealthyCollection:
     def count(self):
         return 3
 
+    def chunk_count(self):
+        return 3
+
     def search(self, vector, limit):
-        return [("a.md::0", 0.1, "本文", {"source": "a.md"})]
+        return [("hash-a", 0.1, "本文", [{"source": "a.md"}])]
+
+    def integrity(self):
+        return (0, 0)
 
 
 class _FakeSilentlyBrokenCollection:
@@ -292,8 +304,36 @@ class _FakeSilentlyBrokenCollection:
     def count(self):
         return 3
 
+    def chunk_count(self):
+        return 3
+
     def search(self, vector, limit):
         return []
+
+    def integrity(self):
+        return (0, 0)
+
+
+class _FakeOrphanedCollection:
+    """出現の無い本文が残っているストア。
+
+    孤児はベクトル行列に載り続けるが、出現が引けないため結果からは落ちる。
+    上位の枠だけ取って消えるので、本物のヒットを黙って押し出す。count() は
+    出現を数えるので孤児は表れず、件数と検索が両方とも正常に見える。
+    整合性を数えない限り露見しない。
+    """
+
+    def count(self):
+        return 3
+
+    def chunk_count(self):
+        return 4
+
+    def search(self, vector, limit):
+        return [("hash-a", 0.1, "本文", [{"source": "a.md"}])]
+
+    def integrity(self):
+        return (1, 0)
 
 
 def test_main_forwards_force_flag_to_ingest_directory(tmp_path, monkeypatch):
@@ -320,12 +360,12 @@ def test_main_forwards_force_flag_to_ingest_directory(tmp_path, monkeypatch):
     monkeypatch.setattr(
         sys, "argv", ["ingest_source.py", "--source-dir", str(source_dir), "--force"]
     )
-    ingest_source.main()
+    assert ingest_source.main() == 0
 
     monkeypatch.setattr(
         sys, "argv", ["ingest_source.py", "--source-dir", str(source_dir)]
     )
-    ingest_source.main()
+    assert ingest_source.main() == 0
 
     assert received_force == [True, False]
 
@@ -345,7 +385,7 @@ def test_main_forwards_only_suffix_to_ingest_directory(monkeypatch, tmp_path):
     monkeypatch.setattr(
         sys, "argv", ["ingest_source", "--source-dir", str(tmp_path), "--only-suffix", "md"]
     )
-    ingest_source.main()
+    assert ingest_source.main() == 0
     assert captured["only_suffix"] == "md"
 
 
@@ -364,7 +404,7 @@ def test_main_opens_the_shared_store_path(monkeypatch, tmp_path):
         lambda path: (opened.append(path), _FakeCollectionForMain())[1],
     )
     monkeypatch.setattr(sys, "argv", ["ingest_source", "--source-dir", str(tmp_path)])
-    ingest_source.main()
+    assert ingest_source.main() == 0
 
     # 取り込み用と、取り込み後に開き直す検証用の2回。どちらも同じパスであること。
     assert opened == [str(store.DB_PATH), str(store.DB_PATH)]
@@ -394,6 +434,85 @@ def test_a_store_that_counts_rows_but_finds_none_fails_the_run(
     assert "検証に失敗" in capsys.readouterr().out
 
 
+def test_ingest_fails_when_a_text_has_no_occurrence(monkeypatch, tmp_path, capsys):
+    """帳簿が2つに分かれたぶん、片方だけが残る壊れ方が新しく生まれる。
+
+    孤児の本文は検索に出続けるのに、count() も search() も正常に見える。
+    次に開くまで露見しなかったChromaDBの破損と同じ形なので、ここで止める。
+    """
+    assert _run_main_with(monkeypatch, tmp_path, _FakeOrphanedCollection()) == 1
+    assert "整合性" in capsys.readouterr().out
+
+
 def test_a_healthy_store_finishes_successfully(monkeypatch, tmp_path):
     """検証を足したせいで正常な取り込みまで失敗になっては本末転倒である。"""
     assert _run_main_with(monkeypatch, tmp_path, _FakeHealthyCollection()) == 0
+
+
+def test_integrity_detects_orphaned_chunks(collection):
+    """integrity() は出現を持たない本文を見つける。"""
+    # 本文を追加
+    from ingest.embedder import EMBED_DIM
+    collection.add(
+        ids=["test-id"],
+        documents=["テスト本文"],
+        metadatas=[{"source": "test.md"}],
+        embeddings=[[0.1] * EMBED_DIM],
+    )
+    # 正常な状態を確認
+    assert collection.integrity() == (0, 0)
+
+    # 外部キー制約を一時的に無効にして、出現だけを削除（孤児を作る）
+    collection._connection.execute("PRAGMA foreign_keys = OFF")
+    try:
+        collection._connection.execute("DELETE FROM occurrences WHERE source = ?", ("test.md",))
+        collection._connection.commit()
+        # 孤児がいることを確認
+        orphans, dangling = collection.integrity()
+        assert orphans == 1
+    finally:
+        collection._connection.execute("PRAGMA foreign_keys = ON")
+
+
+def test_integrity_detects_dangling_occurrences(collection):
+    """integrity() は本文を持たない出現を見つける。"""
+    from ingest.embedder import EMBED_DIM
+
+    # 健全な状態を確認
+    assert collection.integrity() == (0, 0)
+
+    # 本文と出現を追加
+    collection.add(
+        ids=["test-id"],
+        documents=["テスト本文"],
+        metadatas=[{"source": "test.md"}],
+        embeddings=[[0.1] * EMBED_DIM],
+    )
+    assert collection.integrity() == (0, 0)
+
+    # 外部キー制約を一時的に無効にして、本文だけを削除
+    collection._connection.execute("PRAGMA foreign_keys = OFF")
+    try:
+        collection._connection.execute("DELETE FROM chunks")
+        collection._connection.commit()
+        # 本文の無い出現が検出される
+        orphans, dangling = collection.integrity()
+        assert dangling == 1
+    finally:
+        collection._connection.execute("PRAGMA foreign_keys = ON")
+
+
+def test_integrity_returns_healthy_for_valid_store(collection):
+    """integrity() は健全な状態で (0, 0) を返す。"""
+    from ingest.embedder import EMBED_DIM
+
+    assert collection.integrity() == (0, 0)
+
+    # データを追加しても健全
+    collection.add(
+        ids=["id1", "id2"],
+        documents=["本文1", "本文2"],
+        metadatas=[{"source": "a.md"}, {"source": "b.md"}],
+        embeddings=[[0.1] * EMBED_DIM, [0.2] * EMBED_DIM],
+    )
+    assert collection.integrity() == (0, 0)
