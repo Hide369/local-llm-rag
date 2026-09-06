@@ -97,28 +97,33 @@ def _vector_best(collection, question, session):
         # 呼び出し側は距離を :.3f で書式化する。None を返すと3フレーム先で
         # TypeError になり原因から遠ざかるため、ここで理由ごと止める。
         raise RuntimeError(f"ベクトル検索が0件を返しました: {question}")
-    _, distance, text, metadata = found[0]
-    hit = Hit(text=text, distance=distance, metadata=metadata)
+    _, distance, text, occurrences = found[0]
+    hit = Hit(text=text, distance=distance, occurrences=occurrences)
     return hit.distance, hit.citation
 
 
 def _lexical_top(collection, index, question, limit):
     """BM25側の上位を (出典, スコア) の並びで返す。スコアの高い順。
 
-    collection.get はIDの並び順を保証しないため、取得したメタデータを引き当てて
-    lexical.search が返した順に組み直す。
+    chunks_by_ids は渡した並びを保つが、知らないIDは落とす。取り込みで消えた
+    チャンクのIDが索引に残っていることがあるため、lexical.search が返した順に
+    組み直しつつ、引けなかったものは飛ばす。
     """
     ranked = lexical.search(index, question, limit=limit)
     if not ranked:
         return []
-    found = collection.get(
-        ids=[chunk_id for chunk_id, _ in ranked], include=["documents", "metadatas"]
-    )
-    metadata_by_id = dict(zip(found["ids"], found["metadatas"]))
+    found = collection.chunks_by_ids([chunk_id for chunk_id, _ in ranked])
     return [
-        (Hit(text="", distance=None, metadata=metadata_by_id[chunk_id]).citation, score)
+        (
+            Hit(
+                text=found[chunk_id][0],
+                distance=None,
+                occurrences=found[chunk_id][1],
+            ).citation,
+            score,
+        )
         for chunk_id, score in ranked
-        if chunk_id in metadata_by_id
+        if chunk_id in found
     ]
 
 

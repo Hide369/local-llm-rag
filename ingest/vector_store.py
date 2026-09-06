@@ -373,23 +373,20 @@ class VectorStore:
         return {chunk_id: found[chunk_id] for chunk_id in ids if chunk_id in found}
 
     def _load_matrix(self):
-        """全ベクトルを1つの配列に読み込む。
+        """全ベクトルを1つの配列に読み込む。本文単位である。
 
-        686件×1024次元で2.8MB、総当たりの内積は実測0.19ms。索引を持たない
-        代わりに毎回この配列を使う。
+        538件×1024次元で2.2MB、総当たりの内積は実測0.19ms。索引を持たない
+        代わりに毎回この配列を使う。同じ本文を何度も載せると、候補の枠を
+        コピーが食い合う。
         """
         rows = self._connection.execute(
-            "SELECT o.id, c.text, o.metadata, c.embedding"
-            " FROM occurrences o JOIN chunks c ON c.id = o.chunk_id"
+            "SELECT id, text, embedding FROM chunks ORDER BY id"
         ).fetchall()
         if not rows:
             return [], np.zeros((0, 0), dtype="float32")
-        entries = [
-            (occurrence_id, text, json.loads(metadata))
-            for occurrence_id, text, metadata, _ in rows
-        ]
+        entries = [(chunk_id, text) for chunk_id, text, _ in rows]
         matrix = np.stack(
-            [np.frombuffer(blob, dtype="float32") for _, _, _, blob in rows]
+            [np.frombuffer(blob, dtype="float32") for _, _, blob in rows]
         )
         return entries, matrix
 
@@ -427,7 +424,14 @@ class VectorStore:
         # ingest/retrieval.py の rrf_score 計算はこの順位を土台にしており、
         # そこでも同じ理由（再現性）で同点をIDまで含めた全順序にしている。
         ordered = sorted(candidates, key=lambda i: (float(distances[i]), entries[i][0]))
+        found = self.chunks_by_ids([entries[i][0] for i in ordered])
         return [
-            (entries[i][0], float(distances[i]), entries[i][1], entries[i][2])
+            (
+                entries[i][0],
+                float(distances[i]),
+                entries[i][1],
+                found[entries[i][0]][1],
+            )
             for i in ordered
+            if entries[i][0] in found
         ]

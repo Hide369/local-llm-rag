@@ -275,13 +275,23 @@ def test_failed_replace_with_mismatched_lengths_leaves_the_previous_content(
     assert sorted(filled_store.get()["ids"]) == ["a::1", "a::2", "b::1"]
 
 
-def test_identical_vector_has_distance_zero(filled_store):
-    found = filled_store.search(_vector(1.0), limit=1)
-    chunk_id, distance, text, metadata = found[0]
-    assert chunk_id == "a::1"
+def test_identical_vector_has_distance_zero():
+    """filled_store の3件は全て同じ向きで同点になり、タイブレークが可読な順に
+    ならない（チャンクIDが本文のSHA-256のため）。ここでは単独の1件だけを
+    入れて、その曖昧さを避ける。
+    """
+    store = open_store(":memory:")
+    store.add(
+        ids=["a::1"],
+        documents=["あ1"],
+        metadatas=[{"source": "a.md"}],
+        embeddings=[_vector(1.0)],
+    )
+    found = store.search(_vector(1.0), limit=1)
+    _, distance, text, occurrences = found[0]
     assert distance == pytest.approx(0.0, abs=1e-6)
     assert text == "あ1"
-    assert metadata["source"] == "a.md"
+    assert occurrences[0]["source"] == "a.md"
 
 
 def test_distance_is_one_minus_cosine_similarity():
@@ -293,9 +303,9 @@ def test_distance_is_one_minus_cosine_similarity():
         metadatas=[{"source": "x"}, {"source": "x"}],
         embeddings=[[0.0, 1.0], [-1.0, 0.0]],
     )
-    by_id = {chunk_id: distance for chunk_id, distance, _, _ in store.search([1.0, 0.0], limit=2)}
-    assert by_id["直交"] == pytest.approx(1.0, abs=1e-6)
-    assert by_id["逆向き"] == pytest.approx(2.0, abs=1e-6)
+    by_text = {text: distance for _, distance, text, _ in store.search([1.0, 0.0], limit=2)}
+    assert by_text["直交"] == pytest.approx(1.0, abs=1e-6)
+    assert by_text["逆向き"] == pytest.approx(2.0, abs=1e-6)
 
 
 def test_unnormalised_query_gives_the_same_distance(filled_store):
@@ -347,7 +357,7 @@ def test_search_selects_the_nearest_when_limit_is_smaller_than_the_corpus():
         embeddings=[[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0]],
     )
     found = store.search([1.0, 0.0], limit=2)
-    assert [chunk_id for chunk_id, _, _, _ in found] == ["近い", "直交"]
+    assert [text for _, _, text, _ in found] == ["近い", "直交"]
     assert [distance for _, distance, _, _ in found] == pytest.approx(
         [0.0, 1.0], abs=1e-6
     )
@@ -356,6 +366,9 @@ def test_search_selects_the_nearest_when_limit_is_smaller_than_the_corpus():
 def test_tied_distances_are_broken_by_chunk_id():
     """同点の並びをID任せにすると、ingest/retrieval.pyのrrf_scoreに伝播して
     根拠の順序が実行のたびに変わりうる（同ファイルが同じ理由で全順序化している）。
+
+    チャンクIDは本文のSHA-256なので、可読な期待値を決め打てない。実際のID
+    (store.chunks() が返すもの) をチャンクID昇順に並べたものと突き合わせる。
     """
     store = open_store(":memory:")
     store.add(
@@ -364,9 +377,11 @@ def test_tied_distances_are_broken_by_chunk_id():
         metadatas=[{"source": "x"}, {"source": "x"}],
         embeddings=[[1.0, 0.0], [1.0, 0.0]],
     )
+    ids, _ = store.chunks()
+    expected = sorted(ids)
     for _ in range(5):
         found = store.search([1.0, 0.0], limit=2)
-        assert [chunk_id for chunk_id, _, _, _ in found] == ["a", "b"]
+        assert [chunk_id for chunk_id, _, _, _ in found] == expected
 
 
 def test_revision_advances_on_write(empty_store):
@@ -407,9 +422,13 @@ def test_matrix_is_reloaded_after_a_write(filled_store):
     _cached_revisionがNoneのままreplace後に初めてキャッシュが作られてしまい、
     「一度もキャッシュを検証していないだけ」でテストが通ってしまう
     （revisionを毎回見直さず最初の1回しかロードしない実装でも通ってしまう）。
+
+    3件の並び順そのものは検証しない。チャンクIDが本文のSHA-256になったため、
+    同点（distance=0.0）のタイブレークが可読な順にならない。ここで見たいのは
+    キャッシュが正しい3件を返すことであり、並び順ではない。
     """
     before = filled_store.search(_vector(1.0), limit=3)
-    assert [text for _, _, text, _ in before] == ["あ1", "あ2", "い1"]
+    assert {text for _, _, text, _ in before} == {"あ1", "あ2", "い1"}
 
     filled_store.replace(
         "b.md",
@@ -441,7 +460,7 @@ def test_a_second_connection_sees_the_first_ones_writes(tmp_path):
         metadatas=[{"source": "a.md"}],
         embeddings=[_vector(1.0)],
     )
-    assert reader.search(_vector(1.0), limit=1)[0][0] == "a::1"
+    assert reader.search(_vector(1.0), limit=1)[0][2] == "本文"
 
 
 def test_unsupported_logical_operator_raises(filled_store):
@@ -671,6 +690,17 @@ def test_chunks_by_ids_preserves_requested_id_order(empty_store):
 
     # リクエスト順が保たれること
     assert list(result.keys()) == requested_order
+
+
+def test_search_returns_a_shared_text_once_with_every_source(empty_store):
+    """重複が候補枠を食わない。これが畳み込みの目的である。"""
+    _add_one(empty_store, "a.md", "共有されている本文")
+    _add_one(empty_store, "b.md", "共有されている本文", seed=2.0)
+    found = empty_store.search(_vector(1.0), limit=10)
+    assert len(found) == 1
+    _, _, text, occurrences = found[0]
+    assert text == "共有されている本文"
+    assert [o["source"] for o in occurrences] == ["a.md", "b.md"]
 
 
 def test_chunks_by_ids_ties_are_broken_by_occurrence_id(empty_store):

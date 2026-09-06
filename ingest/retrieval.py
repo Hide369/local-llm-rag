@@ -50,7 +50,8 @@ RERANK_CANDIDATE_COUNT = 8
 class Hit:
     text: str
     distance: float | None
-    metadata: dict
+    # 1つの本文が複数の資料に現れる。(source, location) の昇順で、先頭が代表。
+    occurrences: list[dict]
     # BM25だけで当たった場合は distance が None、ベクトルだけで当たった場合は
     # bm25_score が None になる。どちらの経路で拾ったかを画面に出すために持つ。
     bm25_score: float | None = None
@@ -59,6 +60,15 @@ class Hit:
     # 低い」ではなく「測っていない」を意味する。distance の None と同じ扱いで、
     # 画面には「未計測」と出す（ingest/prompting.py）。
     rerank_score: float | None = None
+
+    @property
+    def metadata(self) -> dict:
+        """代表の出現。
+
+        フィールドとして別に持たせない。同じ事実に2つの帳簿ができ、片方だけ
+        更新された状態が例外を出さずに成立する。
+        """
+        return self.occurrences[0]
 
     @property
     def citation(self) -> str:
@@ -118,8 +128,8 @@ def _vector_candidates(collection, query, session):
     )
     ranks = {chunk_id: rank for rank, (chunk_id, _, _, _) in enumerate(found, start=1)}
     rows = {
-        chunk_id: (distance, text, metadata)
-        for chunk_id, distance, text, metadata in found
+        chunk_id: (distance, text, occurrences)
+        for chunk_id, distance, text, occurrences in found
     }
     return ranks, rows
 
@@ -184,11 +194,8 @@ def search(
     # BM25だけで当たったチャンクは本文もメタデータも持っていないので取りに行く。
     missing = [chunk_id for chunk_id in lexical_scores if chunk_id not in vector_rows]
     if missing:
-        found = collection.get(ids=missing, include=["documents", "metadatas"])
-        for chunk_id, text, metadata in zip(
-            found["ids"], found["documents"], found["metadatas"]
-        ):
-            vector_rows[chunk_id] = (None, text, metadata)
+        for chunk_id, (text, occurrences) in collection.chunks_by_ids(missing).items():
+            vector_rows[chunk_id] = (None, text, occurrences)
 
     pairs: list[tuple[str, Hit]] = []
     for chunk_id in set(vector_ranks) | set(lexical_ranks):
@@ -197,7 +204,7 @@ def search(
         # IDが残っていることがあり、collection.get はその行を返さない。
         if row is None:
             continue
-        distance, text, metadata = row
+        distance, text, occurrences = row
         score = lexical_scores.get(chunk_id)
         near = distance is not None and distance <= limit
         if not text or not (near or (in_domain and score is not None)):
@@ -213,7 +220,7 @@ def search(
                 Hit(
                     text=text,
                     distance=distance,
-                    metadata=metadata,
+                    occurrences=occurrences,
                     bm25_score=score,
                     rrf_score=rrf_score,
                 ),

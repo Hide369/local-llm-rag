@@ -101,7 +101,13 @@ def test_metadata_survives_a_round_trip(collection):
 
 
 def test_all_documents_returns_ids_and_texts_in_the_same_order(collection):
-    """BM25インデックスはIDと本文の並びが一致していることに依存する。"""
+    """BM25インデックスはIDと本文の並びが一致していることに依存する。
+
+    本文単位になったため、返るIDは渡した occurrence ID（"x"/"y"）ではなく
+    本文のハッシュである。ここでは決め打ちのIDと比べる代わりに、
+    chunks_by_ids（occurrences経由の別経路）で引き直しても同じ本文が
+    同じ位置に戻ることを確かめ、並びの対応を独立に検証する。
+    """
     collection.add(
         ids=["x", "y"],
         documents=["本文エックス", "本文ワイ"],
@@ -109,7 +115,9 @@ def test_all_documents_returns_ids_and_texts_in_the_same_order(collection):
         metadatas=[{"source": "a.pptx"}, {"source": "b.pptx"}],
     )
     ids, documents = store.all_documents(collection)
-    assert dict(zip(ids, documents)) == {"x": "本文エックス", "y": "本文ワイ"}
+    assert set(documents) == {"本文エックス", "本文ワイ"}
+    found = collection.chunks_by_ids(ids)
+    assert [found[chunk_id][0] for chunk_id in ids] == documents
 
 
 def test_all_documents_on_an_empty_collection_returns_two_empty_lists(collection):
