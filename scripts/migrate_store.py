@@ -48,35 +48,44 @@ def migrate(path: str) -> int:
     target_path.unlink(missing_ok=True)
     target = sqlite3.connect(target_path)
     try:
+        target.execute("PRAGMA foreign_keys = ON")
         target.executescript(_SCHEMA)
-        with target:
-            for occurrence_id, text, metadata, embedding in rows:
-                chunk_id = _text_id(text)
+        try:
+            with target:
+                for occurrence_id, text, metadata, embedding in rows:
+                    chunk_id = _text_id(text)
+                    target.execute(
+                        "INSERT INTO chunks (id, text, embedding) VALUES (?, ?, ?)"
+                        " ON CONFLICT(id) DO NOTHING",
+                        (chunk_id, text, embedding),
+                    )
+                    target.execute(
+                        "INSERT INTO occurrences (id, chunk_id, source, metadata)"
+                        " VALUES (?, ?, ?, ?)",
+                        (
+                            occurrence_id,
+                            chunk_id,
+                            json.loads(metadata).get("source", ""),
+                            metadata,
+                        ),
+                    )
                 target.execute(
-                    "INSERT INTO chunks (id, text, embedding) VALUES (?, ?, ?)"
-                    " ON CONFLICT(id) DO NOTHING",
-                    (chunk_id, text, embedding),
+                    "UPDATE meta SET value = ? WHERE key = 'revision'", (revision,)
                 )
-                target.execute(
-                    "INSERT INTO occurrences (id, chunk_id, source, metadata)"
-                    " VALUES (?, ?, ?, ?)",
-                    (
-                        occurrence_id,
-                        chunk_id,
-                        json.loads(metadata).get("source", ""),
-                        metadata,
-                    ),
-                )
-            target.execute(
-                "UPDATE meta SET value = ? WHERE key = 'revision'", (revision,)
-            )
 
-        occurrences = target.execute("SELECT COUNT(*) FROM occurrences").fetchone()[0]
-        chunks = target.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
-        orphans = target.execute(
-            "SELECT COUNT(*) FROM chunks"
-            " WHERE id NOT IN (SELECT chunk_id FROM occurrences)"
-        ).fetchone()[0]
+            occurrences = target.execute("SELECT COUNT(*) FROM occurrences").fetchone()[0]
+            chunks = target.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+            orphans = target.execute(
+                "SELECT COUNT(*) FROM chunks"
+                " WHERE id NOT IN (SELECT chunk_id FROM occurrences)"
+            ).fetchone()[0]
+        except Exception as e:
+            target.close()
+            target_path.unlink(missing_ok=True)
+            print(f"変換に失敗しました: {e}")
+            print(f"元のファイルは変更していません: {source_path}")
+            print(f"退避は次の場所にあります: {backup}")
+            return 1
     finally:
         target.close()
 
@@ -93,6 +102,7 @@ def migrate(path: str) -> int:
         for problem in problems:
             print(f"検証に失敗: {problem}")
         print(f"元のファイルは変更していません: {source_path}")
+        print(f"退避は次の場所にあります: {backup}")
         target_path.unlink(missing_ok=True)
         return 1
 

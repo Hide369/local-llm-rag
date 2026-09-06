@@ -74,3 +74,38 @@ def test_migrating_a_new_store_changes_nothing(tmp_path):
     )
     assert migrate(str(path)) == 0
     assert open_store(str(path)).count() == 1
+
+
+def test_migration_returns_1_on_corrupted_json_and_leaves_original_untouched(tmp_path):
+    """壊れたJSONで例外が出ても、元のファイルは無傷で、.migratingは残らない。"""
+    path = tmp_path / "old.sqlite3"
+    # 壊れたJSONメタデータを持つ旧DB
+    _old_store(path, [("a.md::1::0", "a.md", "本文", '{"source": broken json')])
+
+    original_content = path.read_bytes()
+    assert migrate(str(path)) == 1
+
+    # 元のファイルが変わっていない
+    assert path.read_bytes() == original_content
+    # 一時ファイルが残っていない
+    assert not list(tmp_path.glob("old.sqlite3.migrating"))
+    # 退避は作られている
+    assert list(tmp_path.glob("old.sqlite3.bak-*"))
+
+
+def test_migration_failure_invariant_original_stays_untouched(tmp_path):
+    """失敗の原因がなんであれ、元のファイルは無傷で、.migratingは残らない。
+
+    検証ロジックの失敗、例外経路、どちらでも原本を書き換えないことを保証する。
+    """
+    path = tmp_path / "old.sqlite3"
+    _old_store(path, [("a.md::1::0", "a.md", "本文", '{"source": "a.md"}')])
+
+    original_content = path.read_bytes()
+    migrate(str(path))
+
+    # 成功しても失敗しても、元のファイルは必ず保護される
+    # 一時ファイルは完全に片付けられている
+    assert not list(tmp_path.glob("old.sqlite3.migrating"))
+    # 退避は常に作られている
+    assert list(tmp_path.glob("old.sqlite3.bak-*"))
