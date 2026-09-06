@@ -516,3 +516,49 @@ def test_integrity_returns_healthy_for_valid_store(collection):
         embeddings=[[0.1] * EMBED_DIM, [0.2] * EMBED_DIM],
     )
     assert collection.integrity() == (0, 0)
+
+
+_NAV_SECTION = "## 1\n\n転移学習とファインチューニング\n"
+
+
+def test_ingest_drops_a_navigation_section_and_reports_how_many(
+    source_dir, collection
+):
+    """章扉は取り込まれず、除外件数が報告に載る。本文の節は残る。"""
+    _write_md(
+        source_dir,
+        "mixed.md",
+        _NAV_SECTION
+        + "\n## 本編\n\nRAGは検索した文書を根拠にして回答を組み立てる仕組みである。"
+        "実務では社内文書を対象にする。\n",
+    )
+
+    report = ingest_directory(source_dir, collection, session=_FakeSession())
+
+    assert report.dropped == {"mixed.md": 1}
+    stored = collection.get()["documents"]
+    assert "1\n転移学習とファインチューニング" not in stored
+    assert any("RAGは検索した文書を根拠に" in text for text in stored)
+
+
+def test_ingest_keeps_everything_when_every_unit_looks_like_navigation(
+    source_dir, collection
+):
+    """全滅したら何も落とさない。
+
+    落とすと store.replace_source() が空のチャンク列を受け取り、資料が
+    DBから丸ごと消える。規則が誤爆したときに最も起きてほしくない結果である。
+    """
+    messages = []
+    _write_md(source_dir, "nav_only.md", _NAV_SECTION)
+
+    report = ingest_directory(
+        source_dir,
+        collection,
+        session=_FakeSession(),
+        on_progress=messages.append,
+    )
+
+    assert "nav_only.md" not in report.dropped
+    assert report.indexed["nav_only.md"] == 1
+    assert any("警告" in message and "nav_only.md" in message for message in messages)

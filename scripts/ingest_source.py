@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 # importより先に .env を読み込む必要がある。
 load_dotenv()
 
-from ingest import embedder, store, vlm
+from ingest import embedder, navigation, store, vlm
 from ingest.chunker import chunk_units
 from ingest.parsers import SUPPORTED_SUFFIXES, parse
 
@@ -34,6 +34,9 @@ class IngestReport:
     skipped: list[str] = field(default_factory=list)
     failed: dict[str, str] = field(default_factory=dict)
     removed: list[str] = field(default_factory=list)
+    # 資料キー → ナビゲーション用スライドとして除外した件数。
+    # 1件も落ちなかった資料はキーを持たない。
+    dropped: dict[str, int] = field(default_factory=dict)
 
 
 def file_hash(path: Path) -> str:
@@ -110,6 +113,16 @@ def ingest_directory(
             notify(f"処理中: {source}")
             try:
                 units = parse(path, caption_image=caption_image)
+                kept, dropped = navigation.drop_navigation(units)
+                if dropped and not kept:
+                    # 規則が誤爆したときに資料が丸ごと消えるのを防ぐ。空のチャンク列を
+                    # store.replace_source() に渡すと、その資料はDBから消える。
+                    # 中身のある資料からノイズを取り除くのがこの機能の目的であり、
+                    # 「中身が1つも無い資料」は規則の誤りである可能性のほうが高い。
+                    notify(f"警告: {source} は全ユニットがナビゲーション判定。除外しません")
+                    dropped = []
+                else:
+                    units = kept
                 chunks = chunk_units(units, source, current_hash, today)
                 vectors = embedder.embed_texts(
                     [chunk.text for chunk in chunks], session=session
@@ -121,7 +134,14 @@ def ingest_directory(
                 continue
 
             report.indexed[source] = len(chunks)
-            notify(f"完了: {source}（{len(chunks)}チャンク）")
+            if dropped:
+                report.dropped[source] = len(dropped)
+                notify(
+                    f"完了: {source}（{len(chunks)}チャンク、"
+                    f"ナビゲーション{len(dropped)}件を除外）"
+                )
+            else:
+                notify(f"完了: {source}（{len(chunks)}チャンク）")
 
         # source/ を唯一の入力とするため、消えた資料はDBからも消す。
         # ただし部分取り込みのときは行わない。対象外の拡張子のファイルが
