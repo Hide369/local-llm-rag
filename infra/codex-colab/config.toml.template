@@ -1,0 +1,47 @@
+# BEGIN LOCAL_LLM_MANAGED_CONFIG
+# このブロックは起動補助が更新する。追加設定はEND行の後へ記載する。
+model = "gpt-oss:20b"
+model_provider = "colab-oss"
+model_catalog_json = $model_catalog_path
+model_context_window = $context_size
+model_auto_compact_token_limit = $compact_limit
+model_reasoning_effort = "medium"
+sandbox_mode = "workspace-write"
+approval_policy = "on-request"
+web_search = "disabled"
+developer_instructions = """
+Before other work, inspect the available skills and use every skill explicitly named by the user.
+For a named Superpowers skill, first read `.agents/skills/<skill-name>/SKILL.md`
+with a shell command, then follow it. Never skip this read as unnecessary.
+If an apply_patch tool is unavailable, edit through a short, direct PowerShell command instead
+of repeatedly requesting that unavailable tool.
+Only report a command or test as successful when its actual command output proves success.
+"""
+
+[model_providers.colab-oss]
+name = "Colab L4 gpt-oss:20b"
+base_url = $base_url
+wire_api = "responses"
+requires_openai_auth = false
+request_max_retries = 1
+stream_max_retries = 0
+stream_idle_timeout_ms = 120000
+
+[model_providers.colab-oss.env_http_headers]
+X-API-Key = "OLLAMA_API_KEY"
+
+[model_providers.colab-oss.http_headers]
+ngrok-skip-browser-warning = "true"
+
+[shell_environment_policy]
+exclude = ["OLLAMA_API_KEY"]
+
+[windows]
+sandbox = "unelevated"
+
+[analytics]
+enabled = false
+
+[features]
+plugins = false
+# END LOCAL_LLM_MANAGED_CONFIG

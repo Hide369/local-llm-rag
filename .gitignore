@@ -27,6 +27,10 @@ source_archive/
 
 # サブエージェント駆動開発の作業ディレクトリ（台帳・レビュー資材）
 .superpowers/
+.worktrees/
+
+# Colab用エージェントが作るマシン固有のスキル参照
+.agents/skills/*
 
 # リポジトリには含めないローカル専用スクリプト
 udemy[0-9].py
