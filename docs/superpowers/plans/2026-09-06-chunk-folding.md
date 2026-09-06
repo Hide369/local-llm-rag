@@ -572,7 +572,7 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'scripts.migrate_store'
         if "source" in columns:
             raise VectorStoreError(
                 "旧スキーマのDBです。次を実行して変換してください:\n"
-                "    python scripts/migrate_store.py vector_store.sqlite3"
+                "    python -m scripts.migrate_store vector_store.sqlite3"
             )
 ```
 
@@ -593,9 +593,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from ingest.vector_store import _SCHEMA, _text_id  # noqa: E402
+from ingest.vector_store import _SCHEMA, _text_id
 
 
 def _is_old(connection) -> bool:
@@ -688,7 +686,7 @@ def migrate(path: str) -> int:
 
 def main() -> int:
     if len(sys.argv) != 2:
-        print("使い方: python scripts/migrate_store.py <DBのパス>")
+        print("使い方: python -m scripts.migrate_store <DBのパス>")
         return 1
     return migrate(sys.argv[1])
 
@@ -947,6 +945,11 @@ def all_documents(collection) -> tuple[list[str], list[str]]:
 
 `ingest/retrieval.py` の `Hit` を書き換える。`metadata` フィールドを消し、
 `occurrences` を置き、`metadata` はプロパティにする。
+
+**既存の `citation` プロパティは消さないこと。** 下のコード片はフィールドと
+`metadata` だけを示している。クラス全体を置き換えると `citation` が失われ、
+`ingest/prompting.py` と `scripts/check_retrieval.py` が壊れる。`citation` の
+書式を変えるのは Task 6 である。
 
 ```python
 @dataclass
@@ -1438,7 +1441,7 @@ EOF
 - [ ] **Step 1: 既存DBを移行する**
 
 ```bash
-./myvenv313/Scripts/python.exe scripts/migrate_store.py vector_store.sqlite3
+./myvenv313/Scripts/python.exe -m scripts.migrate_store vector_store.sqlite3
 ```
 
 Expected: `変換しました: 608出現 / 538本文（70行削減）`、退避ファイルが作られる
@@ -1460,7 +1463,7 @@ Expected: `608 538 (0, 0)`
 Ollama を起動したうえで実行する。
 
 ```bash
-./myvenv313/Scripts/python.exe scripts/check_retrieval.py
+./myvenv313/Scripts/python.exe -m scripts.check_retrieval
 ```
 
 記録すること:
@@ -1489,8 +1492,8 @@ Expected: 4位 / 3位（設計書第2.3節の実測と一致）
 - [ ] **Step 4: 差分取り込みが壊れないことを確認する**
 
 ```bash
-./myvenv313/Scripts/python.exe -u scripts/ingest_source.py
-./myvenv313/Scripts/python.exe -u scripts/ingest_source.py
+./myvenv313/Scripts/python.exe -u -m scripts.ingest_source
+./myvenv313/Scripts/python.exe -u -m scripts.ingest_source
 ```
 
 Expected: 1回目も2回目もスキップされ、終了コード0、整合性 `(0, 0)`
@@ -1498,7 +1501,7 @@ Expected: 1回目も2回目もスキップされ、終了コード0、整合性 
 続いて1ファイルだけ入れ直し、共有チャンクが生きていることを確認する。
 
 ```bash
-./myvenv313/Scripts/python.exe -u scripts/ingest_source.py --only-suffix .pptx --force
+./myvenv313/Scripts/python.exe -u -m scripts.ingest_source --only-suffix .pptx --force
 ```
 
 Expected: 終了コード0、`608（本文538種）`、整合性 `(0, 0)`
