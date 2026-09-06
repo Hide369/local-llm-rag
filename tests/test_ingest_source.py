@@ -276,6 +276,26 @@ class _FakeCollectionForMain:
         return 0
 
 
+class _FakeHealthyCollection:
+    """件数があり、開き直した検索もベクトルを返す健全なストア。"""
+
+    def count(self):
+        return 3
+
+    def search(self, vector, limit):
+        return [("a.md::0", 0.1, "本文", {"source": "a.md"})]
+
+
+class _FakeSilentlyBrokenCollection:
+    """件数は正しいのにベクトルが引けないストア。ChromaDBの破損はこの形だった。"""
+
+    def count(self):
+        return 3
+
+    def search(self, vector, limit):
+        return []
+
+
 def test_main_forwards_force_flag_to_ingest_directory(tmp_path, monkeypatch):
     """argparseが--forceを受け取っても、main()がingest_directoryへ渡さなければ
     死んだフラグになる。Trueだけを確認するとforce=True決め打ちの実装でも通って
@@ -346,4 +366,34 @@ def test_main_opens_the_shared_store_path(monkeypatch, tmp_path):
     monkeypatch.setattr(sys, "argv", ["ingest_source", "--source-dir", str(tmp_path)])
     ingest_source.main()
 
-    assert opened == [str(store.DB_PATH)]
+    # 取り込み用と、取り込み後に開き直す検証用の2回。どちらも同じパスであること。
+    assert opened == [str(store.DB_PATH), str(store.DB_PATH)]
+
+
+def _run_main_with(monkeypatch, tmp_path, collection):
+    """main() が触る外部をすべてスタブし、渡したストアだけを見せて実行する。"""
+    monkeypatch.setattr(
+        ingest_source, "ingest_directory", lambda *a, **k: ingest_source.IngestReport()
+    )
+    monkeypatch.setattr(ingest_source.embedder, "check_ollama", lambda: None)
+    monkeypatch.setattr(ingest_source.store, "open_store", lambda path: collection)
+    monkeypatch.setattr(sys, "argv", ["ingest_source", "--source-dir", str(tmp_path)])
+    return ingest_source.main()
+
+
+def test_a_store_that_counts_rows_but_finds_none_fails_the_run(
+    monkeypatch, tmp_path, capsys
+):
+    """取り込めたことと、開き直して読めることは別の事実である。
+
+    ChromaDBでは前者だけが成立した。件数は最後まで正しく返っていたため、
+    ベクトルが失われたことが次回起動まで露見しなかった。件数だけを見る検証では
+    まさにその障害を見逃すので、検索まで通してベクトルの層に触る。
+    """
+    assert _run_main_with(monkeypatch, tmp_path, _FakeSilentlyBrokenCollection()) == 1
+    assert "検証に失敗" in capsys.readouterr().out
+
+
+def test_a_healthy_store_finishes_successfully(monkeypatch, tmp_path):
+    """検証を足したせいで正常な取り込みまで失敗になっては本末転倒である。"""
+    assert _run_main_with(monkeypatch, tmp_path, _FakeHealthyCollection()) == 0

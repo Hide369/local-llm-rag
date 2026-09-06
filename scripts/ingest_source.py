@@ -195,6 +195,24 @@ def main() -> int:
         for source, message in report.failed.items():
             print(f"  {source}: {message}")
     print(f"DB内の総チャンク数: {collection.count()}")
+
+    # 取り込めたことと、次にDBを開いたときに読めることは別の事実である。
+    # ChromaDBでは前者だけが成立し、破損が次回起動まで露見しなかった。
+    #
+    # 件数だけでは足りない。あの障害はベクトルの読み込みで起きており、件数は
+    # 最後まで正しく返っていた。接続を開き直したうえで検索を1回通し、
+    # ベクトルの層まで実際に触る。
+    try:
+        verified = store.open_store(str(DB_PATH))
+        indexed = verified.count()
+        if indexed and not verified.search(
+            [1.0] + [0.0] * (embedder.EMBED_DIM - 1), limit=1
+        ):
+            raise RuntimeError(f"{indexed}件あるのに検索が0件を返しました")
+    except Exception as error:  # noqa: BLE001  何が起きても取り込みは失敗とする
+        print(f"取り込み後の検証に失敗しました: {error}")
+        return 1
+
     return 1 if report.failed else 0
 
 
