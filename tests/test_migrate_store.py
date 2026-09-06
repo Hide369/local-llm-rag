@@ -2,6 +2,7 @@ import sqlite3
 
 import pytest
 
+from ingest import vector_store
 from ingest.vector_store import VectorStoreError, open_store
 from scripts.migrate_store import migrate
 
@@ -136,3 +137,49 @@ def test_migration_returns_1_on_validation_failure_and_leaves_original_untouched
     assert not list(tmp_path.glob("old.sqlite3.migrating")), ".migratingが残されていない"
     # 退避が残っている
     assert list(tmp_path.glob("old.sqlite3.bak-*")), "退避が作られている"
+
+
+def test_rejecting_an_old_store_does_not_leak_the_connection(tmp_path, monkeypatch):
+    """例外で抜けるときも接続を閉じる。
+
+    CLIは即終了するので漏れても気づけない。気づくのは Streamlit の
+    @st.cache_resource で、例外のたびに開き直すためリロードごとに
+    ファイルハンドルが積み上がる。
+    """
+    path = tmp_path / "old.sqlite3"
+    _old_store(path, [("a.md::1::0", "a.md", "本文", '{"source": "a.md"}')])
+
+    opened = []
+    real_connect = sqlite3.connect
+
+    def spy(*args, **kwargs):
+        connection = real_connect(*args, **kwargs)
+        opened.append(connection)
+        return connection
+
+    monkeypatch.setattr(vector_store.sqlite3, "connect", spy)
+    with pytest.raises(VectorStoreError):
+        open_store(str(path))
+
+    assert opened, "接続が開かれていない。この経路を通っていない"
+    for connection in opened:
+        with pytest.raises(sqlite3.ProgrammingError):
+            connection.execute("SELECT 1")
+
+
+def test_migrating_a_file_that_is_not_a_database_says_why(tmp_path, capsys):
+    """生のトレースバックで死なせない。
+
+    sqlite3.connect はファイルを開くだけで中身を読まないため、SQLiteでない
+    ファイルは最初の問い合わせまで気づけない。そこで素通しすると、退避も変換も
+    していないのに何が起きたのか分からないまま終わる。
+    """
+    path = tmp_path / "notes.txt"
+    path.write_text("これはSQLiteのDBではない", encoding="utf-8")
+
+    assert migrate(str(path)) == 1
+
+    output = capsys.readouterr().out
+    assert "SQLiteのDBとして読めません" in output
+    # 引き返すだけで、退避も .migrating も作らない。
+    assert list(tmp_path.iterdir()) == [path]
