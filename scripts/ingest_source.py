@@ -37,6 +37,11 @@ class IngestReport:
     # 資料キー → ナビゲーション用スライドとして除外した件数。
     # 1件も落ちなかった資料はキーを持たない。
     dropped: dict[str, int] = field(default_factory=dict)
+    # 全ユニットがナビゲーション判定になり、何も落とさなかった資料のキー。
+    # notify() のログはCLIでしか見えない（Streamlit経路は on_progress を渡して
+    # いない）。この情報を報告に載せておかないと、GUIから取り込んだときに
+    # 全滅の警告が見えないところで消える。
+    kept_all_navigation: list[str] = field(default_factory=list)
 
 
 def file_hash(path: Path) -> str:
@@ -121,6 +126,7 @@ def ingest_directory(
                     # 「中身が1つも無い資料」は規則の誤りである可能性のほうが高い。
                     notify(f"警告: {source} は全ユニットがナビゲーション判定。除外しません")
                     dropped = []
+                    report.kept_all_navigation.append(source)
                 else:
                     units = kept
                 chunks = chunk_units(units, source, current_hash, today)
@@ -214,6 +220,11 @@ def main() -> int:
         print(
             f"ナビゲーション除外: {sum(report.dropped.values())}件"
             f" / {len(report.dropped)}ファイル"
+        )
+    if report.kept_all_navigation:
+        print(
+            "全ユニットがナビゲーション判定のため除外しませんでした: "
+            + "、".join(report.kept_all_navigation)
         )
     if report.failed:
         print(f"失敗: {len(report.failed)}ファイル")

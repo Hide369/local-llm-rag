@@ -561,4 +561,6 @@ def test_ingest_keeps_everything_when_every_unit_looks_like_navigation(
 
     assert "nav_only.md" not in report.dropped
     assert report.indexed["nav_only.md"] == 1
+    assert collection.count() == 1, "資料がDBから消えていないことを直接見る"
+    assert report.kept_all_navigation == ["nav_only.md"]
     assert any("警告" in message and "nav_only.md" in message for message in messages)

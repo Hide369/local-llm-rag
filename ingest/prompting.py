@@ -95,6 +95,14 @@ def format_report(report) -> str:
             f"ナビゲーション除外: {sum(report.dropped.values())}件"
             f" / {len(report.dropped)}ファイル"
         )
+    # 全滅した資料はreport.droppedに載らない（落としていないため）。ここに
+    # 出しておかないと、on_progress を渡さない呼び出し元（Streamlitのサイドバー）
+    # からは全滅の警告が見えないところで消える。
+    if report.kept_all_navigation:
+        lines.append(
+            "全ユニットがナビゲーション判定のため除外しませんでした: "
+            + "、".join(report.kept_all_navigation)
+        )
     for source, message in report.failed.items():
         lines.append(f"失敗 {source}: {message}")
     return "\n".join(lines)
