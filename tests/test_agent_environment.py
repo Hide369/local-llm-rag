@@ -67,6 +67,30 @@ def test_lower_context_also_lowers_compaction():
     assert 0 < config["model_auto_compact_token_limit"] < config["model_context_window"] == 32768
 
 
+def test_runtime_directory_is_isolated_per_external_project(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+
+    first_runtime = environment.runtime_directory(first)
+    second_runtime = environment.runtime_directory(second)
+
+    assert first_runtime != second_runtime
+    assert first_runtime.parent == second_runtime.parent
+    assert first_runtime.parent.name == "projects"
+    assert first_runtime.name != second_runtime.name
+
+
+def test_tool_project_keeps_the_existing_runtime_directory(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+
+    runtime = environment.runtime_directory(environment.tool_root())
+
+    assert runtime == tmp_path / "local/local-llm/coding-agent"
+
+
 def test_setup_installs_readable_skills_and_can_be_repeated(inputs):
     project, runtime, plugin = inputs
     first = environment.prepare_environment(project, runtime, settings(), plugin)

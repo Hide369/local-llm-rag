@@ -13,7 +13,17 @@ from coding_agent.environment import (
 )
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+def project_directory(value: str | None) -> Path:
+    """対象ワークスペースを解決し、実在するフォルダだけを受け入れる。"""
+
+    candidate = Path(value) if value else Path.cwd()
+    try:
+        project = candidate.resolve(strict=True)
+    except (OSError, RuntimeError):
+        raise AgentError("--project にはアクセス可能なフォルダを指定してください。") from None
+    if not project.is_dir():
+        raise AgentError("--project にはフォルダを指定してください。")
+    return project
 
 
 def main(argv=None):
@@ -24,16 +34,18 @@ def main(argv=None):
     mode.add_argument("--configure-context", action="store_true", help="元モデルを保存してColabのコンテキストを設定する")
     mode.add_argument("--restore-context", action="store_true", help="保存した元モデルの設定へ戻す")
     mode.add_argument("--probe", action="store_true", help="GPU配置とResponses APIのツール往復を検証する")
+    parser.add_argument("--project", metavar="PATH", help="VS Codeで開く対象プロジェクト（省略時は現在のフォルダ）")
     parser.add_argument("--context-size", type=int, choices=(32768, 65536), help="省略時は保存済み設定、初回は65536")
     args = parser.parse_args(argv)
     try:
-        runtime = runtime_directory()
+        project = project_directory(args.project)
+        runtime = runtime_directory(project)
         context_size = args.context_size
         if context_size is None:
             saved = runtime / "codex/config.toml"
             config = tomllib.loads(saved.read_text(encoding="utf-8")) if saved.exists() else {}
             context_size = config.get("model_context_window", 65536)
-        settings = load_settings(PROJECT_ROOT, context_size)
+        settings = load_settings(project, context_size)
         client = OllamaClient(settings)
         if args.check:
             result = client.inspect()
@@ -52,9 +64,9 @@ def main(argv=None):
             find_codex_executable()
             if not args.setup:
                 client.inspect()
-            result = prepare_environment(PROJECT_ROOT, runtime, settings, find_superpowers())
+            result = prepare_environment(project, runtime, settings, find_superpowers())
             if not args.setup:
-                launch_vscode(PROJECT_ROOT, runtime, settings)
+                launch_vscode(project, runtime, settings)
                 result["launched"] = True
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
