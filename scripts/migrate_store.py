@@ -85,9 +85,13 @@ def migrate(path: str) -> int:
 
             occurrences = target.execute("SELECT COUNT(*) FROM occurrences").fetchone()[0]
             chunks = target.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+            # NOT IN ではなく NOT EXISTS。この数はファイルを置き換えてよいかの
+            # 判断に使う。chunk_id に1件でもNULLが混じると NOT IN は全体が偽に
+            # なり、孤児を0件と報告して壊れたDBを確定させてしまう。
             orphans = target.execute(
-                "SELECT COUNT(*) FROM chunks"
-                " WHERE id NOT IN (SELECT chunk_id FROM occurrences)"
+                "SELECT COUNT(*) FROM chunks c"
+                " WHERE NOT EXISTS ("
+                "SELECT 1 FROM occurrences WHERE chunk_id = c.id)"
             ).fetchone()[0]
         except Exception as e:
             target.close()
