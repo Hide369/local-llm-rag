@@ -175,6 +175,18 @@ class VectorStore:
         """本文の種類数。畳み込みがどれだけ効いたかはこちらに現れる。"""
         return self._connection.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
 
+    def integrity(self) -> tuple[int, int]:
+        """(孤児の本文, 本文の無い出現) を数える。0, 0 が健全である。"""
+        orphans = self._connection.execute(
+            "SELECT COUNT(*) FROM chunks"
+            " WHERE id NOT IN (SELECT chunk_id FROM occurrences)"
+        ).fetchone()[0]
+        dangling = self._connection.execute(
+            "SELECT COUNT(*) FROM occurrences"
+            " WHERE chunk_id NOT IN (SELECT id FROM chunks)"
+        ).fetchone()[0]
+        return orphans, dangling
+
     def _insert(self, cursor, ids, documents, metadatas, embeddings) -> None:
         """正規化して1行ずつ書く。呼び出し側がトランザクションを持つ。
 

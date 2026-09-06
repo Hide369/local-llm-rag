@@ -194,7 +194,7 @@ def main() -> int:
         print(f"失敗: {len(report.failed)}ファイル")
         for source, message in report.failed.items():
             print(f"  {source}: {message}")
-    print(f"DB内の総チャンク数: {collection.count()}")
+    print(f"DB内の総チャンク数: {collection.count()}（本文{collection.chunk_count()}種）")
 
     # 取り込めたことと、次にDBを開いたときに読めることは別の事実である。
     # ChromaDBでは前者だけが成立し、破損が次回起動まで露見しなかった。
@@ -209,6 +209,14 @@ def main() -> int:
             [1.0] + [0.0] * (embedder.EMBED_DIM - 1), limit=1
         ):
             raise RuntimeError(f"{indexed}件あるのに検索が0件を返しました")
+        # 帳簿が2つに分かれたぶん、片方だけが残る壊れ方が新しく生まれる。
+        # 孤児の本文はベクトル行列に載って検索に出続け、出現だけの行は
+        # 本文が引けない。どちらも件数には表れない。
+        orphans, dangling = verified.integrity()
+        if orphans or dangling:
+            raise RuntimeError(
+                f"整合性が壊れています: 孤児の本文{orphans}件 / 本文の無い出現{dangling}件"
+            )
     except Exception as error:  # noqa: BLE001  何が起きても取り込みは失敗とする
         print(f"取り込み後の検証に失敗しました: {error}")
         return 1

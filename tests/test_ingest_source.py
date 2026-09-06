@@ -275,6 +275,9 @@ class _FakeCollectionForMain:
     def count(self):
         return 0
 
+    def chunk_count(self):
+        return 0
+
 
 class _FakeHealthyCollection:
     """件数があり、開き直した検索もベクトルを返す健全なストア。"""
@@ -282,8 +285,14 @@ class _FakeHealthyCollection:
     def count(self):
         return 3
 
+    def chunk_count(self):
+        return 3
+
     def search(self, vector, limit):
-        return [("a.md::0", 0.1, "本文", {"source": "a.md"})]
+        return [("hash-a", 0.1, "本文", [{"source": "a.md"}])]
+
+    def integrity(self):
+        return (0, 0)
 
 
 class _FakeSilentlyBrokenCollection:
@@ -292,8 +301,34 @@ class _FakeSilentlyBrokenCollection:
     def count(self):
         return 3
 
+    def chunk_count(self):
+        return 3
+
     def search(self, vector, limit):
         return []
+
+    def integrity(self):
+        return (0, 0)
+
+
+class _FakeOrphanedCollection:
+    """出現の無い本文が残っているストア。
+
+    孤児はベクトル行列に載って検索に出続けるが、count() には表れない。
+    件数と検索が両方とも正常に見えるため、整合性を数えない限り露見しない。
+    """
+
+    def count(self):
+        return 3
+
+    def chunk_count(self):
+        return 4
+
+    def search(self, vector, limit):
+        return [("hash-a", 0.1, "本文", [{"source": "a.md"}])]
+
+    def integrity(self):
+        return (1, 0)
 
 
 def test_main_forwards_force_flag_to_ingest_directory(tmp_path, monkeypatch):
@@ -392,6 +427,16 @@ def test_a_store_that_counts_rows_but_finds_none_fails_the_run(
     """
     assert _run_main_with(monkeypatch, tmp_path, _FakeSilentlyBrokenCollection()) == 1
     assert "検証に失敗" in capsys.readouterr().out
+
+
+def test_ingest_fails_when_a_text_has_no_occurrence(monkeypatch, tmp_path, capsys):
+    """帳簿が2つに分かれたぶん、片方だけが残る壊れ方が新しく生まれる。
+
+    孤児の本文は検索に出続けるのに、count() も search() も正常に見える。
+    次に開くまで露見しなかったChromaDBの破損と同じ形なので、ここで止める。
+    """
+    assert _run_main_with(monkeypatch, tmp_path, _FakeOrphanedCollection()) == 1
+    assert "整合性" in capsys.readouterr().out
 
 
 def test_a_healthy_store_finishes_successfully(monkeypatch, tmp_path):
