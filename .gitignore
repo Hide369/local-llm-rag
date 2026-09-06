@@ -10,11 +10,17 @@ __pycache__/
 myvenv/
 myvenv313/
 
-# ベクトルDB（source からいつでも再生成できるため追跡しない）
+# ベクトルストア（source からいつでも再生成できるため追跡しない）
+vector_store.sqlite3
+
+# 旧ベクトルDB。本システムはもう使わないが udemy3.py が使い続ける
 chroma_db/
 
 # 取り込み対象の原本（バイナリが大きく、内容も配布対象ではない）
 source/
+
+# 取り込み対象から外した資料。削除ではなく退避しているだけで、戻せば索引に復帰する
+source_archive/
 
 # ツールの作業ディレクトリ
 .playwright-mcp/

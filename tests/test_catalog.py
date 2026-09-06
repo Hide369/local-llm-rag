@@ -3,17 +3,15 @@ import pytest
 from ingest.catalog import Product, exceeding, format_table, relaxations, select
 from ingest.conditions import Ranking
 from ingest.embedder import EMBED_DIM
-from ingest.store import open_collection
-from tests.conftest import ephemeral_client
+from ingest.store import open_store
 
 QUIET_AND_SLIM = {"noise_wash_db": {"$lte": 26}, "installation_depth_min_mm": {"$lte": 510}}
 
 
 @pytest.fixture
 def collection():
-    client = ephemeral_client()
-    yield open_collection(client)
-    client.clear_system_cache()
+    """インメモリのストア。ディスクには触れない。"""
+    return open_store(":memory:")
 
 
 def _add_product(collection, model, noise, depth, sections=1):

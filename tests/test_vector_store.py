@@ -1,0 +1,500 @@
+import threading
+
+import pytest
+
+from ingest.vector_store import WhereError, matches
+
+
+def test_plain_value_is_equality():
+    assert matches({"source": "a.md"}, {"source": "a.md"})
+    assert not matches({"source": "b.md"}, {"source": "a.md"})
+
+
+def test_no_condition_matches_everything():
+    assert matches({"source": "a.md"}, None)
+    assert matches({"source": "a.md"}, {})
+
+
+def test_comparison_operators():
+    metadata = {"noise_wash_db": 26}
+    assert matches(metadata, {"noise_wash_db": {"$lte": 26}})
+    assert matches(metadata, {"noise_wash_db": {"$gte": 26}})
+    assert not matches(metadata, {"noise_wash_db": {"$lte": 25}})
+
+
+def test_and_requires_every_clause():
+    metadata = {"noise_wash_db": 26, "brand": "打田電器"}
+    where = {"$and": [{"noise_wash_db": {"$lte": 30}}, {"brand": {"$eq": "打田電器"}}]}
+    assert matches(metadata, where)
+    assert not matches(metadata, {"$and": [{"noise_wash_db": {"$lte": 20}}]})
+
+
+def test_missing_key_does_not_match():
+    """属性を持たないPDF由来のチャンクが、条件に合致してはならない。"""
+    assert not matches({"source": "a.pdf"}, {"noise_wash_db": {"$lte": 26}})
+
+
+def test_incomparable_types_do_not_match():
+    """文字列と数値の大小比較はTypeErrorになる。例外ではなく不一致として扱う。"""
+    assert not matches({"price_tier": "エントリー"}, {"price_tier": {"$lte": 26}})
+
+
+def test_unsupported_operator_raises():
+    """黙って無視すると条件が消えたまま全件が返る。"""
+    with pytest.raises(WhereError):
+        matches({"k": 1}, {"k": {"$ne": 1}})
+
+
+from ingest.vector_store import VectorStore, VectorStoreError, open_store
+
+
+def _vector(seed: float, dim: int = 4) -> list[float]:
+    return [seed] + [0.0] * (dim - 1)
+
+
+@pytest.fixture
+def empty_store():
+    return open_store(":memory:")
+
+
+def test_new_store_is_empty(empty_store):
+    assert empty_store.count() == 0
+
+
+def test_added_rows_are_counted(empty_store):
+    empty_store.add(
+        ids=["a::1", "a::2"],
+        documents=["本文1", "本文2"],
+        metadatas=[{"source": "a.md"}, {"source": "a.md"}],
+        embeddings=[_vector(1.0), _vector(2.0)],
+    )
+    assert empty_store.count() == 2
+
+
+def test_zero_vector_is_rejected(empty_store):
+    """ノルム0は正規化でゼロ除算になる。埋め込みが空を返した事故を静かに通さない。"""
+    with pytest.raises(VectorStoreError):
+        empty_store.add(
+            ids=["a::1"],
+            documents=["本文"],
+            metadatas=[{"source": "a.md"}],
+            embeddings=[[0.0, 0.0, 0.0, 0.0]],
+        )
+
+
+def test_rejected_add_leaves_the_store_empty(empty_store):
+    """弾いた書き込みが中途半端に残ってはならない。"""
+    with pytest.raises(VectorStoreError):
+        empty_store.add(
+            ids=["a::1", "a::2"],
+            documents=["良い", "悪い"],
+            metadatas=[{"source": "a.md"}, {"source": "a.md"}],
+            embeddings=[_vector(1.0), [0.0, 0.0, 0.0, 0.0]],
+        )
+    assert empty_store.count() == 0
+
+
+def test_store_persists_across_connections(tmp_path):
+    """別プロセス相当の開き直しで読めること。今回の障害はここで露見した。"""
+    path = str(tmp_path / "store.sqlite3")
+    open_store(path).add(
+        ids=["a::1"],
+        documents=["本文"],
+        metadatas=[{"source": "a.md"}],
+        embeddings=[_vector(1.0)],
+    )
+    assert open_store(path).count() == 1
+
+
+@pytest.fixture
+def filled_store():
+    store = open_store(":memory:")
+    store.add(
+        ids=["a::1", "a::2", "b::1"],
+        documents=["あ1", "あ2", "い1"],
+        metadatas=[
+            {"source": "a.md", "noise_wash_db": 26},
+            {"source": "a.md", "noise_wash_db": 30},
+            {"source": "b.md"},
+        ],
+        embeddings=[_vector(1.0), _vector(2.0), _vector(3.0)],
+    )
+    return store
+
+
+def test_get_on_an_empty_store_returns_empty_lists(empty_store):
+    """0件でも呼び出し側が zip できる形を返すこと。"""
+    found = empty_store.get()
+    assert found == {"ids": [], "documents": [], "metadatas": []}
+
+
+def test_get_returns_everything_by_default(filled_store):
+    found = filled_store.get()
+    assert sorted(found["ids"]) == ["a::1", "a::2", "b::1"]
+    assert len(found["documents"]) == 3
+    assert len(found["metadatas"]) == 3
+
+
+def test_get_by_ids_keeps_them_aligned(filled_store):
+    """dictで比べると順序が見えない。渡した並びで返ることまで固定する。"""
+    found = filled_store.get(ids=["b::1", "a::1"])
+    assert found["ids"] == ["b::1", "a::1"]
+    assert found["documents"] == ["い1", "あ1"]
+
+
+def test_get_ignores_unknown_ids(filled_store):
+    """BM25側のインデックスには取り込みで消えたIDが残ることがある。"""
+    found = filled_store.get(ids=["a::1", "存在しない"])
+    assert found["ids"] == ["a::1"]
+
+
+def test_get_filters_by_where(filled_store):
+    found = filled_store.get(where={"source": "a.md"})
+    assert sorted(found["ids"]) == ["a::1", "a::2"]
+
+
+def test_get_applies_limit(filled_store):
+    assert len(filled_store.get(where={"source": "a.md"}, limit=1)["ids"]) == 1
+
+
+def test_metadata_survives_the_round_trip(filled_store):
+    """JSONに落として戻すため、数値が文字列になっていないことを確かめる。"""
+    found = filled_store.get(ids=["a::1"])
+    assert found["metadatas"][0]["noise_wash_db"] == 26
+    assert isinstance(found["metadatas"][0]["noise_wash_db"], int)
+
+
+def test_replace_swaps_only_that_source(filled_store):
+    filled_store.replace(
+        "a.md",
+        ids=["a::9"],
+        documents=["差し替え後"],
+        metadatas=[{"source": "a.md"}],
+        embeddings=[_vector(9.0)],
+    )
+    assert sorted(filled_store.get()["ids"]) == ["a::9", "b::1"]
+
+
+def test_replace_drops_chunks_that_no_longer_exist(filled_store):
+    """ページ数が減った資料を取り込み直したとき、末尾の古いページを残さない。"""
+    filled_store.replace(
+        "a.md", ids=[], documents=[], metadatas=[], embeddings=[]
+    )
+    assert filled_store.get()["ids"] == ["b::1"]
+
+
+def test_failed_replace_leaves_the_previous_content(filled_store):
+    """今回の障害の回帰テスト。
+
+    書き込みの途中で失敗しても、中途半端な状態を残さない。ChromaDBでは
+    「帳簿だけが進んで実体が無い」状態が作れてしまい、次にDBを開いた時点で
+    初めて壊れていることが分かった。
+    """
+    with pytest.raises(VectorStoreError):
+        filled_store.replace(
+            "a.md",
+            ids=["a::9"],
+            documents=["差し替え後"],
+            metadatas=[{"source": "a.md"}],
+            embeddings=[[0.0, 0.0, 0.0, 0.0]],
+        )
+    assert sorted(filled_store.get()["ids"]) == ["a::1", "a::2", "b::1"]
+
+
+def test_delete_removes_matching_rows(filled_store):
+    filled_store.delete(where={"source": "a.md"})
+    assert filled_store.get()["ids"] == ["b::1"]
+
+
+def test_add_with_mismatched_lengths_raises(empty_store):
+    """zipが黙って切り詰めると、帳簿だけ進んで実体が欠けた行ができる。"""
+    with pytest.raises(VectorStoreError):
+        empty_store.add(
+            ids=["a::1", "a::2"],
+            documents=["本文1"],
+            metadatas=[{"source": "a.md"}, {"source": "a.md"}],
+            embeddings=[_vector(1.0), _vector(2.0)],
+        )
+
+
+def test_failed_replace_with_mismatched_lengths_leaves_the_previous_content(
+    filled_store,
+):
+    """今回の修正の回帰テスト。replaceの中でzipが切り詰めても書いてはならない。"""
+    with pytest.raises(VectorStoreError):
+        filled_store.replace(
+            "a.md",
+            ids=["a::9", "a::10"],
+            documents=["差し替え後"],
+            metadatas=[{"source": "a.md"}, {"source": "a.md"}],
+            embeddings=[_vector(9.0), _vector(10.0)],
+        )
+    assert sorted(filled_store.get()["ids"]) == ["a::1", "a::2", "b::1"]
+
+
+def test_identical_vector_has_distance_zero(filled_store):
+    found = filled_store.search(_vector(1.0), limit=1)
+    chunk_id, distance, text, metadata = found[0]
+    assert chunk_id == "a::1"
+    assert distance == pytest.approx(0.0, abs=1e-6)
+    assert text == "あ1"
+    assert metadata["source"] == "a.md"
+
+
+def test_distance_is_one_minus_cosine_similarity():
+    """ChromaDBの hnsw:space='cosine' と同一の定義であることを固定する。"""
+    store = open_store(":memory:")
+    store.add(
+        ids=["直交", "逆向き"],
+        documents=["直交", "逆向き"],
+        metadatas=[{"source": "x"}, {"source": "x"}],
+        embeddings=[[0.0, 1.0], [-1.0, 0.0]],
+    )
+    by_id = {chunk_id: distance for chunk_id, distance, _, _ in store.search([1.0, 0.0], limit=2)}
+    assert by_id["直交"] == pytest.approx(1.0, abs=1e-6)
+    assert by_id["逆向き"] == pytest.approx(2.0, abs=1e-6)
+
+
+def test_unnormalised_query_gives_the_same_distance(filled_store):
+    """呼び出し側に正規化の責任を持たせない。長さ違いで距離が変わってはならない。"""
+    short = filled_store.search([1.0, 0.0, 0.0, 0.0], limit=1)[0][1]
+    long = filled_store.search([23.0, 0.0, 0.0, 0.0], limit=1)[0][1]
+    assert short == pytest.approx(long, abs=1e-6)
+
+
+def test_results_are_sorted_by_distance():
+    """filled_store の3件は共線で距離が全て0.0になり、どんな実装でも通ってしまう。
+
+    向きの違うベクトルを入れ、全件を返す（limit == 件数）ときの並びを確かめる。
+    上位k件を選ぶ経路は test_search_selects_the_nearest_when_limit_is_smaller_than_the_corpus
+    が別に押さえている。
+    """
+    store = open_store(":memory:")
+    store.add(
+        ids=["近い", "直交", "遠い"],
+        documents=["近い", "直交", "遠い"],
+        metadatas=[{"source": "x"}, {"source": "x"}, {"source": "x"}],
+        embeddings=[[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0]],
+    )
+    distances = [distance for _, distance, _, _ in store.search([1.0, 0.0], limit=3)]
+    assert distances == sorted(distances)
+    assert distances[0] < distances[-1], "順位が付いていないと並び順を検証できない"
+
+
+def test_search_on_empty_store_returns_nothing(empty_store):
+    assert empty_store.search([1.0, 0.0, 0.0, 0.0], limit=4) == []
+
+
+def test_limit_larger_than_the_corpus_is_safe(filled_store):
+    """CANDIDATE_COUNT=30 に対して資料が3件しかない状況は普通に起きる。"""
+    assert len(filled_store.search(_vector(1.0), limit=30)) == 3
+
+
+def test_search_selects_the_nearest_when_limit_is_smaller_than_the_corpus():
+    """filled_storeの3ベクトルは全て同じ向き（distance=0.0）で選抜経路を検証できない。
+
+    ここでは向きの異なるベクトルを使い、argpartitionで上位limit件を選んでから
+    整列する経路（間違ったk件を返しかねない部分）を実際に通す。
+    """
+    store = open_store(":memory:")
+    store.add(
+        ids=["近い", "直交", "遠い"],
+        documents=["近い", "直交", "遠い"],
+        metadatas=[{"source": "x"}, {"source": "x"}, {"source": "x"}],
+        embeddings=[[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0]],
+    )
+    found = store.search([1.0, 0.0], limit=2)
+    assert [chunk_id for chunk_id, _, _, _ in found] == ["近い", "直交"]
+    assert [distance for _, distance, _, _ in found] == pytest.approx(
+        [0.0, 1.0], abs=1e-6
+    )
+
+
+def test_tied_distances_are_broken_by_chunk_id():
+    """同点の並びをID任せにすると、ingest/retrieval.pyのrrf_scoreに伝播して
+    根拠の順序が実行のたびに変わりうる（同ファイルが同じ理由で全順序化している）。
+    """
+    store = open_store(":memory:")
+    store.add(
+        ids=["b", "a"],
+        documents=["b", "a"],
+        metadatas=[{"source": "x"}, {"source": "x"}],
+        embeddings=[[1.0, 0.0], [1.0, 0.0]],
+    )
+    for _ in range(5):
+        found = store.search([1.0, 0.0], limit=2)
+        assert [chunk_id for chunk_id, _, _, _ in found] == ["a", "b"]
+
+
+def test_revision_advances_on_write(empty_store):
+    before = empty_store.revision()
+    empty_store.add(
+        ids=["a::1"],
+        documents=["本文"],
+        metadatas=[{"source": "a.md"}],
+        embeddings=[_vector(1.0)],
+    )
+    assert empty_store.revision() > before
+
+
+def test_matrix_is_not_reloaded_when_nothing_changed(filled_store, monkeypatch):
+    """判定を誤って常に真にしても例外は出ず、遅くなるだけなので明示的に測る。"""
+    calls = []
+    original = filled_store._load_matrix
+    monkeypatch.setattr(
+        filled_store, "_load_matrix", lambda: (calls.append(1), original())[1]
+    )
+    filled_store.search(_vector(1.0), limit=1)
+    filled_store.search(_vector(2.0), limit=1)
+    assert len(calls) == 1
+
+
+def test_matrix_is_reloaded_after_a_write(filled_store):
+    """同じ件数のまま内容だけ差し替わっても拾うこと。
+
+    filled_storeの3ベクトルは_vector(1.0)/(2.0)/(3.0)でいずれも正規化すると
+    同じ向き[1,0,0,0]になり、距離が全て0.0の同点になる。同点はチャンクIDの
+    順で決まるため、差し替え後も_vector(3.0)で検索すると常にa::1が先頭に来て
+    しまい、キャッシュが再読み込みされたかを判定できない。差し替え後のベクトルを
+    別の向き（y軸）にして初めて、キャッシュが更新されていないと拾えない検索に
+    なる。
+
+    さらに、この最初のsearchは「書き込み前にキャッシュを確定させる」ための
+    必須のセットアップであり、読み飛ばしてよい行ではない。これが無いと
+    _cached_revisionがNoneのままreplace後に初めてキャッシュが作られてしまい、
+    「一度もキャッシュを検証していないだけ」でテストが通ってしまう
+    （revisionを毎回見直さず最初の1回しかロードしない実装でも通ってしまう）。
+    """
+    before = filled_store.search(_vector(1.0), limit=3)
+    assert [text for _, _, text, _ in before] == ["あ1", "あ2", "い1"]
+
+    filled_store.replace(
+        "b.md",
+        ids=["b::1"],
+        documents=["差し替え後"],
+        metadatas=[{"source": "b.md"}],
+        embeddings=[[0.0, 1.0, 0.0, 0.0]],
+    )
+    found = filled_store.search([0.0, 1.0, 0.0, 0.0], limit=1)
+    assert found[0][2] == "差し替え後"
+
+
+def test_a_second_connection_sees_the_first_ones_writes(tmp_path):
+    """取り込みプロセスの更新を、チャットのプロセスが拾えること。
+
+    readerで先に一度searchしてから書き込むのは、readerのキャッシュを
+    「空の状態」で確定させるためのセットアップである。これを省くと
+    _cached_revisionがNoneのままwriterの書き込み後に初めてキャッシュが
+    作られてしまい、revisionを見直す経路を一度も通らずにテストが通って
+    しまう（最初の1回しかロードせず以降は見直さない実装でも通ってしまう）。
+    """
+    path = str(tmp_path / "store.sqlite3")
+    writer = open_store(path)
+    reader = open_store(path)
+    assert reader.search(_vector(1.0), limit=1) == []
+    writer.add(
+        ids=["a::1"],
+        documents=["本文"],
+        metadatas=[{"source": "a.md"}],
+        embeddings=[_vector(1.0)],
+    )
+    assert reader.search(_vector(1.0), limit=1)[0][0] == "a::1"
+
+
+def test_unsupported_logical_operator_raises(filled_store):
+    """$or は「条件が消える」のではなく全件が落ちる方向に静かに壊れる。
+
+    metadata に "$or" というキーは無いため常に不一致になり、根拠が1件も
+    出ない理由が利用者にも開発者にも分からなくなる。
+    """
+    with pytest.raises(WhereError, match=r"\$or"):
+        matches({"source": "a.md"}, {"$or": [{"source": "a.md"}]})
+
+
+def test_replace_rejects_metadata_whose_source_disagrees(filled_store):
+    """列とJSONで source が食い違うと、その行は source では二度と届かない。
+
+    DELETE は列を、delete(where=) はJSONを見る。それでも count() には数えられ
+    search にも出続ける。ChromaDB が max_seq_id と HNSW 本体で起こした
+    「1つの事実に2つの帳簿」と同じ形なので、書く前に弾く。
+    """
+    with pytest.raises(VectorStoreError, match="source"):
+        filled_store.replace(
+            "a.md",
+            ids=["a::9"],
+            documents=["本文"],
+            metadatas=[{}],
+            embeddings=[_vector(9.0)],
+        )
+    assert sorted(filled_store.get()["ids"]) == ["a::1", "a::2", "b::1"]
+
+
+def test_replace_that_fails_while_writing_keeps_the_old_chunks(filled_store, monkeypatch):
+    """DELETEとINSERTが同一トランザクションであることを固定する。
+
+    既存の失敗テストは _insert が1文もSQLを実行する前（長さ検証・正規化）で
+    落ちるため、「検証を先に済ませ、DELETEとINSERTを別トランザクションで行う」
+    実装でも緑のまま通る。書き込みの途中で落ちる経路を作って境界を押さえる。
+    """
+    def explode(*_args, **_kwargs):
+        raise RuntimeError("書き込み中の中断")
+
+    monkeypatch.setattr(VectorStore, "_insert", explode)
+    with pytest.raises(RuntimeError):
+        filled_store.replace(
+            "a.md",
+            ids=["a::9"],
+            documents=["本文"],
+            metadatas=[{"source": "a.md"}],
+            embeddings=[_vector(9.0)],
+        )
+    assert sorted(filled_store.get()["ids"]) == ["a::1", "a::2", "b::1"]
+
+
+def test_a_failed_write_is_not_committed_by_a_concurrent_one(filled_store, monkeypatch):
+    """1つの接続を2スレッドが共有しても、失敗した側のDELETEが確定しないこと。
+
+    Streamlit は @st.cache_resource で接続を1つだけ持ち、全セッションが共有する。
+    2つのセッションが同時に「差分を取り込む」を押し、片方が失敗すると、
+    直列化しない実装では成功した側の commit が失敗した側の DELETE まで確定させる。
+    実測では a.md が丸ごと消え、例外は誰にも出ず、count() は新しい値を正しく
+    返した。設計書4.2が消そうとしている故障そのものである。
+    """
+    a_started, b_finished = threading.Event(), threading.Event()
+    original = VectorStore._insert
+
+    def blocking_insert(self, cursor, ids, documents, metadatas, embeddings):
+        if ids and ids[0].startswith("a"):
+            a_started.set()
+            b_finished.wait(timeout=5)
+            raise RuntimeError("Aの取り込みが失敗")
+        return original(self, cursor, ids, documents, metadatas, embeddings)
+
+    monkeypatch.setattr(VectorStore, "_insert", blocking_insert)
+
+    def failing_writer():
+        try:
+            filled_store.replace(
+                "a.md", ids=["a::9"], documents=["新"],
+                metadatas=[{"source": "a.md"}], embeddings=[_vector(9.0)],
+            )
+        except RuntimeError:
+            pass
+
+    def succeeding_writer():
+        a_started.wait(timeout=5)
+        try:
+            filled_store.replace(
+                "b.md", ids=["b::9"], documents=["新b"],
+                metadatas=[{"source": "b.md"}], embeddings=[[0.0, 0.0, 9.0, 0.0]],
+            )
+        finally:
+            b_finished.set()
+
+    threads = [threading.Thread(target=failing_writer), threading.Thread(target=succeeding_writer)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=20)
+
+    assert sorted(filled_store.get()["ids"]) == ["a::1", "a::2", "b::9"]

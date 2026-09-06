@@ -21,8 +21,6 @@ ingest/prompting.py の「根拠がなければ答えない」プロンプトが
 import argparse
 from collections import defaultdict, deque
 
-import chromadb
-
 from ingest import embedder, lexical, reranker, store
 from ingest.retrieval import (
     RELEVANCE_THRESHOLD,
@@ -32,7 +30,8 @@ from ingest.retrieval import (
     build_index,
     search,
 )
-from scripts.ingest_source import DB_DIR
+
+DB_PATH = store.DB_PATH
 
 # 取り込んだ資料に確実に答えがある質問
 RELEVANT = [
@@ -91,15 +90,15 @@ REGRESSION_TOP_N = 3
 
 def _vector_best(collection, question, session):
     """ベクトル側の最良ヒット。距離と出典を返す。"""
-    results = collection.query(
-        query_embeddings=[embedder.embed_query(question, session=session)],
-        n_results=1,
+    found = collection.search(
+        embedder.embed_query(question, session=session), limit=1
     )
-    hit = Hit(
-        text=results["documents"][0][0],
-        distance=results["distances"][0][0],
-        metadata=results["metadatas"][0][0],
-    )
+    if not found:
+        # 呼び出し側は距離を :.3f で書式化する。None を返すと3フレーム先で
+        # TypeError になり原因から遠ざかるため、ここで理由ごと止める。
+        raise RuntimeError(f"ベクトル検索が0件を返しました: {question}")
+    _, distance, text, metadata = found[0]
+    hit = Hit(text=text, distance=distance, metadata=metadata)
     return hit.distance, hit.citation
 
 
@@ -265,8 +264,14 @@ def main() -> int:
     embedder.check_ollama()
     if args.with_reranker:
         reranker.check_reranker()
-    collection = store.open_collection(chromadb.PersistentClient(path=str(DB_DIR)))
-    print(f"総チャンク数: {collection.count()}")
+    collection = store.open_store(str(DB_PATH))
+    indexed = collection.count()
+    print(f"総チャンク数: {indexed}")
+    if indexed == 0:
+        # open_store は存在しないパスに空のDBを黙って作る。移行直後はまだ
+        # 取り込んでいないため、ここが通常の順序で踏まれる経路になる。
+        print(f"{DB_PATH} が空です。先に `python -m scripts.ingest_source` を実行してください。")
+        return 1
     index = build_index(collection)
     print(f"BM25インデックス: {index.document_count}文書 / {len(index.postings)}トークン")
 

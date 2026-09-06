@@ -14,7 +14,6 @@ from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
-import chromadb
 from dotenv import load_dotenv
 
 # OLLAMA_HOST を ingest.embedder がインポート時に読むため、他のプロジェクト内
@@ -26,7 +25,7 @@ from ingest.chunker import chunk_units
 from ingest.parsers import SUPPORTED_SUFFIXES, parse
 
 DEFAULT_SOURCE_DIR = Path(__file__).resolve().parent.parent / "source"
-DB_DIR = Path(__file__).resolve().parent.parent / "chroma_db"
+DB_PATH = store.DB_PATH
 
 
 @dataclass
@@ -177,7 +176,7 @@ def main() -> int:
             return 1
         caption_image = vlm.caption_image
 
-    collection = store.open_collection(chromadb.PersistentClient(path=str(DB_DIR)))
+    collection = store.open_store(str(DB_PATH))
     report = ingest_directory(
         args.source_dir,
         collection,
@@ -196,6 +195,24 @@ def main() -> int:
         for source, message in report.failed.items():
             print(f"  {source}: {message}")
     print(f"DB内の総チャンク数: {collection.count()}")
+
+    # 取り込めたことと、次にDBを開いたときに読めることは別の事実である。
+    # ChromaDBでは前者だけが成立し、破損が次回起動まで露見しなかった。
+    #
+    # 件数だけでは足りない。あの障害はベクトルの読み込みで起きており、件数は
+    # 最後まで正しく返っていた。接続を開き直したうえで検索を1回通し、
+    # ベクトルの層まで実際に触る。
+    try:
+        verified = store.open_store(str(DB_PATH))
+        indexed = verified.count()
+        if indexed and not verified.search(
+            [1.0] + [0.0] * (embedder.EMBED_DIM - 1), limit=1
+        ):
+            raise RuntimeError(f"{indexed}件あるのに検索が0件を返しました")
+    except Exception as error:  # noqa: BLE001  何が起きても取り込みは失敗とする
+        print(f"取り込み後の検証に失敗しました: {error}")
+        return 1
+
     return 1 if report.failed else 0
 
 

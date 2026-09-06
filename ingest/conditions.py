@@ -46,7 +46,7 @@ def available_keys(collection) -> dict[str, str]:
     if collection.count() == 0:
         return {}
     schema: dict[str, str] = {}
-    for metadata in collection.get(include=["metadatas"]).get("metadatas") or []:
+    for metadata in collection.get(include=["metadatas"])["metadatas"]:
         for key, value in metadata.items():
             if key in RESERVED_METADATA_KEYS or key in schema:
                 continue

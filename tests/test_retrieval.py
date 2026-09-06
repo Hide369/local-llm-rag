@@ -26,14 +26,17 @@ class _FakeCollection:
     def count(self):
         return len(self._documents)
 
-    def query(self, query_embeddings, n_results):
-        rows = self._order[: min(n_results, self._vector_limit or n_results)]
-        return {
-            "ids": [[self._ids[row] for row in rows]],
-            "documents": [[self._documents[row] for row in rows]],
-            "distances": [[self._distances[row] for row in rows]],
-            "metadatas": [[self._metadatas[row] for row in rows]],
-        }
+    def search(self, vector, limit):
+        rows = self._order[: min(limit, self._vector_limit or limit)]
+        return [
+            (
+                self._ids[row],
+                self._distances[row],
+                self._documents[row],
+                self._metadatas[row],
+            )
+            for row in rows
+        ]
 
     def get(self, ids=None, include=None):
         # ids 省略は全件（store.all_documents がこの形で呼ぶ）。
