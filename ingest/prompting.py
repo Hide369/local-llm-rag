@@ -88,6 +88,13 @@ def format_report(report) -> str:
         f"スキップ: {len(report.skipped)}ファイル",
         f"削除: {len(report.removed)}ファイル",
     ]
+    # 1件も落ちていないときは行を出さない。常に出すと、0件なのか
+    # 機能が働いていないのか読み手が区別できない。
+    if report.dropped:
+        lines.append(
+            f"ナビゲーション除外: {sum(report.dropped.values())}件"
+            f" / {len(report.dropped)}ファイル"
+        )
     for source, message in report.failed.items():
         lines.append(f"失敗 {source}: {message}")
     return "\n".join(lines)

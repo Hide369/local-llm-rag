@@ -71,6 +71,25 @@ def test_report_counts_chunks_files_and_skips_separately():
     assert "削除: 1ファイル" in text
 
 
+def test_report_shows_how_many_navigation_slides_were_dropped():
+    report = IngestReport(
+        indexed={"a.pptx": 30, "b.pptx": 24},
+        skipped=[],
+        failed={},
+        removed=[],
+        dropped={"a.pptx": 4, "b.pptx": 3},
+    )
+    text = format_report(report)
+    assert "ナビゲーション除外: 7件" in text
+    assert "2ファイル" in text
+
+
+def test_report_says_nothing_about_navigation_when_none_was_dropped():
+    """何も落ちていないのに行が出ると、落ちたのかどうか読み取れない。"""
+    report = IngestReport(indexed={"a.pdf": 3}, skipped=[], failed={}, removed=[])
+    assert "ナビゲーション" not in format_report(report)
+
+
 def test_report_lists_failures():
     report = IngestReport(indexed={}, skipped=[], failed={"壊れた.pdf": "読めません"}, removed=[])
     text = format_report(report)

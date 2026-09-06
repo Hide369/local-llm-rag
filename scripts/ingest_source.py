@@ -210,6 +210,11 @@ def main() -> int:
     print(f"取り込み: {sum(report.indexed.values())}チャンク / {len(report.indexed)}ファイル")
     print(f"スキップ: {len(report.skipped)}ファイル")
     print(f"削除: {len(report.removed)}ファイル")
+    if report.dropped:
+        print(
+            f"ナビゲーション除外: {sum(report.dropped.values())}件"
+            f" / {len(report.dropped)}ファイル"
+        )
     if report.failed:
         print(f"失敗: {len(report.failed)}ファイル")
         for source, message in report.failed.items():
