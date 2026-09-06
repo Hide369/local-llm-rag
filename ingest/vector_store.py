@@ -318,9 +318,19 @@ class VectorStore:
         }
 
     @staticmethod
-    def _occurrence_order(metadata: dict):
-        """(source, location) の昇順。location は型が混ざるので文字列で比べる。"""
-        return (metadata.get("source", ""), str(metadata.get("location", "")))
+    def _occurrence_order(occurrence: dict):
+        """(source, location, occurrence_id) の昇順。
+
+        occurrence_id (source::location::index形式) で同着を決定的に決める。
+        location は型が混ざるので文字列で比べる。同着がなければ出現順は
+        (source, location) で固定されるが、同じ資料の同じ場所に同じ本文が
+        複数回現れた場合に取り込み順に左右されないようにする。
+        """
+        return (
+            occurrence.get("source", ""),
+            str(occurrence.get("location", "")),
+            occurrence.get("__occurrence_id", ""),
+        )
 
     def chunks(self) -> tuple[list[str], list[str]]:
         """本文単位のIDと本文。BM25インデックスの入力になる。"""
@@ -330,23 +340,31 @@ class VectorStore:
     def chunks_by_ids(self, ids: list[str]) -> dict[str, tuple[str, list[dict]]]:
         """本文とその出現をまとめて返す。知らないIDは黙って落とす。
 
-        出現を (source, location) の昇順に固定する。代表が取り込み順で
-        変わると、同じ質問に対する出典が再取り込みのたびに入れ替わる。
+        出現を (source, location) の昇順に固定する。同着は occurrence_id
+        (source::location::index の形式で構造的に一意) で決める。代表が
+        取り込み順で変わると、同じ質問に対する出典が再取り込みのたびに
+        入れ替わるため、同着も含めて決定的に順序付ける。
         """
         if not ids:
             return {}
         placeholders = ",".join("?" * len(ids))
         rows = self._connection.execute(
-            "SELECT c.id, c.text, o.metadata"
+            "SELECT c.id, c.text, o.id, o.metadata"
             " FROM chunks c JOIN occurrences o ON o.chunk_id = c.id"
             f" WHERE c.id IN ({placeholders})",
             list(ids),
         ).fetchall()
         found: dict[str, tuple[str, list[dict]]] = {}
-        for chunk_id, text, metadata in rows:
-            found.setdefault(chunk_id, (text, []))[1].append(json.loads(metadata))
+        for chunk_id, text, occurrence_id, metadata in rows:
+            metadata_dict = json.loads(metadata)
+            # occurrence_id をメタデータに一時的に付加して sort() で使えるようにする
+            metadata_dict["__occurrence_id"] = occurrence_id
+            found.setdefault(chunk_id, (text, []))[1].append(metadata_dict)
         for _, occurrences in found.values():
             occurrences.sort(key=self._occurrence_order)
+            # 返す前に __occurrence_id を削除する（返り値は元の形のメタデータ）
+            for occurrence in occurrences:
+                occurrence.pop("__occurrence_id", None)
         return {chunk_id: found[chunk_id] for chunk_id in ids if chunk_id in found}
 
     def _load_matrix(self):
