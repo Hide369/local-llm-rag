@@ -138,6 +138,7 @@ class VectorStore:
         # 黙って通る。削除は「出現 → 孤児の本文」の順であり正しい手順なら
         # 制約に触れないので、これが火を噴くのは手順を間違えたときだけである。
         self._connection.execute("PRAGMA foreign_keys = ON")
+        self._reject_old_schema()
         self._connection.executescript(_SCHEMA)
         self._connection.commit()
         # revisionは書き込みトランザクションの中で不可分に更新されるため、
@@ -149,6 +150,22 @@ class VectorStore:
         # SQLiteのロックが "database is locked" として表に出すが、同一接続を
         # 共有するスレッド間ではそれが一切効かない。
         self._write_lock = threading.Lock()
+
+    def _reject_old_schema(self) -> None:
+        """1テーブル時代のDBを開こうとしたら止める。
+
+        自動で変換しない。移行が途中で失敗すると、何が起きたのか分からない
+        DBだけが残る。退避を取ってから明示的に走らせる。
+        """
+        columns = {
+            row[1]
+            for row in self._connection.execute("PRAGMA table_info(chunks)")
+        }
+        if "source" in columns:
+            raise VectorStoreError(
+                "旧スキーマのDBです。scripts/migrate_store.py を実行して変換してください:\n"
+                "    python -m scripts.migrate_store vector_store.sqlite3"
+            )
 
     def count(self) -> int:
         """出現の数。入れた件数がそのまま返るという既存の意味を保つ。"""
