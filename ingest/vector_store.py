@@ -2,9 +2,10 @@
 
 design: docs/superpowers/specs/2026-09-05-sqlite-vector-store-design.md
 
-近似最近傍探索（HNSW）を持たない。686件・1024次元での総当たりcosine検索は
-実測0.19msであり、100倍の規模でも8.93msで済む。索引を持たないことは性能上の
-妥協ではなく、索引の破損という故障モードを持たないための選択である。
+近似最近傍探索（HNSW）を持たない。総当たりcosine検索の実測は _load_matrix() の
+docstring にある（重複を畳んだ現在の規模での測定）。畳み込み前の686出現・1024次元
+では0.19msで、100倍の規模でも8.93msだった。索引を持たないことは性能上の妥協では
+なく、索引の破損という故障モードを持たないための選択である。
 """
 
 import hashlib
@@ -137,10 +138,18 @@ class VectorStore:
         # sqlite3 は既定で外部キーを検査しない。本文の無い出現が生まれても
         # 黙って通る。削除は「出現 → 孤児の本文」の順であり正しい手順なら
         # 制約に触れないので、これが火を噴くのは手順を間違えたときだけである。
-        self._connection.execute("PRAGMA foreign_keys = ON")
-        self._reject_old_schema()
-        self._connection.executescript(_SCHEMA)
-        self._connection.commit()
+        # 旧スキーマの拒否やスキーマ適用が例外を投げると、__init__ が完了せず
+        # __del__ も走らないため、開いたままの接続がGCまで残る。CLIなら即終了で
+        # 実害はないが、Streamlit の @st.cache_resource は例外のたびに再試行する
+        # ので、開くたびにファイルハンドルが積み上がる。
+        try:
+            self._connection.execute("PRAGMA foreign_keys = ON")
+            self._reject_old_schema()
+            self._connection.executescript(_SCHEMA)
+            self._connection.commit()
+        except Exception:
+            self._connection.close()
+            raise
         # revisionは書き込みトランザクションの中で不可分に更新されるため、
         # これが変わっていない限り全件再読み込みは不要（Task 6のキャッシュ判定）。
         self._cached_revision = None
@@ -163,7 +172,7 @@ class VectorStore:
         }
         if "source" in columns:
             raise VectorStoreError(
-                "旧スキーマのDBです。scripts/migrate_store.py を実行して変換してください:\n"
+                "旧スキーマのDBです。次を実行して変換してください:\n"
                 "    python -m scripts.migrate_store vector_store.sqlite3"
             )
 
@@ -285,9 +294,15 @@ class VectorStore:
         参照が残っている限り消さないのがこの設計の要である。1つの資料を
         取り込み直しただけで、他の資料が使っている本文まで消えてはならない。
         """
+        # NOT IN ではなく NOT EXISTS を使う。今日は occurrences.chunk_id が
+        # NOT NULL なので両者は等価だが、副問い合わせに NULL が1行でも混ざると
+        # NOT IN は全体が偽になり、1件も消さずに黙って成功する。孤児は例外を
+        # 出さず件数にも表れないため、静かに失敗しうる構文で書かない
+        # （integrity() を NOT EXISTS にしたのと同じ理由）。
         cursor.execute(
             "DELETE FROM chunks"
-            " WHERE id NOT IN (SELECT chunk_id FROM occurrences)"
+            " WHERE NOT EXISTS ("
+            "SELECT 1 FROM occurrences WHERE chunk_id = chunks.id)"
         )
 
     @staticmethod
@@ -312,9 +327,12 @@ class VectorStore:
         """
         rows = self._rows()
         if ids is not None:
-            # 呼び出し側が渡した並びを保つ。現在の消費者はどちらも自前で
-            # 組み直しており（scripts/check_retrieval.py は「getは並び順を
-            # 保証しない」前提で書かれている）依存はしていないが、返り値だけで
+            # 呼び出し側が渡した並びを保つ。本番でこの枝に入る呼び出しは今は
+            # 1件も無い（catalog.py・conditions.py・store.py はいずれも
+            # where= か引数なしで呼び、BM25だけで当たったヒットの補完は
+            # chunks_by_ids に移った）。残る利用者は tests/test_vector_store.py
+            # の4件で、うち test_get_by_ids_keeps_them_aligned がこの並びを
+            # 拘束している。分岐は消さない — 公開APIであり、返り値だけで
             # 対応付けできるほうが誤用を生みにくい。
             by_id = {chunk_id: (text, metadata) for chunk_id, text, metadata in rows}
             rows = [

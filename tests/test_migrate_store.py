@@ -32,12 +32,19 @@ def _old_store(path, rows):
 
 
 def test_opening_an_old_store_stops_with_the_command_to_run(tmp_path):
-    """黙って書き換えない。失敗したとき何が起きたか分からないDBだけが残る。"""
+    """黙って書き換えない。失敗したとき何が起きたか分からないDBだけが残る。
+
+    示すのは実際に動く起動方法でなければならない。`python scripts/migrate_store.py`
+    は `ModuleNotFoundError: No module named 'ingest'` で落ちる。行き詰まった
+    利用者にとってこのメッセージが唯一の手がかりなので、`-m` 形式を拘束する。
+    """
     path = tmp_path / "old.sqlite3"
     _old_store(path, [("a.md::1::0", "a.md", "本文", '{"source": "a.md"}')])
     with pytest.raises(VectorStoreError) as error:
         open_store(str(path))
-    assert "migrate_store.py" in str(error.value)
+    message = str(error.value)
+    assert "python -m scripts.migrate_store" in message
+    assert "scripts/migrate_store.py" not in message
 
 
 def test_migration_folds_the_shared_text_and_keeps_every_occurrence(tmp_path):

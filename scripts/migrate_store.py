@@ -26,7 +26,17 @@ def migrate(path: str) -> int:
 
     connection = sqlite3.connect(source_path)
     try:
-        if not _is_old(connection):
+        # sqlite3.connect はファイルを開くだけで中身を読まないため、SQLiteで
+        # ないファイルを渡しても最初の問い合わせまで気づけない。DatabaseError
+        # を素通しすると生のトレースバックで死に、退避も変換もしていないのに
+        # 何が起きたのか分からない。理由を示して終了する。
+        try:
+            old = _is_old(connection)
+        except sqlite3.DatabaseError as error:
+            print(f"SQLiteのDBとして読めません: {source_path}")
+            print(f"  {error}")
+            return 1
+        if not old:
             print("すでに新しいスキーマです。何もしません。")
             return 0
         rows = connection.execute(
