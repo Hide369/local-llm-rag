@@ -317,6 +317,38 @@ class VectorStore:
             "metadatas": [row[2] for row in rows],
         }
 
+    @staticmethod
+    def _occurrence_order(metadata: dict):
+        """(source, location) の昇順。location は型が混ざるので文字列で比べる。"""
+        return (metadata.get("source", ""), str(metadata.get("location", "")))
+
+    def chunks(self) -> tuple[list[str], list[str]]:
+        """本文単位のIDと本文。BM25インデックスの入力になる。"""
+        rows = self._connection.execute("SELECT id, text FROM chunks").fetchall()
+        return [row[0] for row in rows], [row[1] for row in rows]
+
+    def chunks_by_ids(self, ids: list[str]) -> dict[str, tuple[str, list[dict]]]:
+        """本文とその出現をまとめて返す。知らないIDは黙って落とす。
+
+        出現を (source, location) の昇順に固定する。代表が取り込み順で
+        変わると、同じ質問に対する出典が再取り込みのたびに入れ替わる。
+        """
+        if not ids:
+            return {}
+        placeholders = ",".join("?" * len(ids))
+        rows = self._connection.execute(
+            "SELECT c.id, c.text, o.metadata"
+            " FROM chunks c JOIN occurrences o ON o.chunk_id = c.id"
+            f" WHERE c.id IN ({placeholders})",
+            list(ids),
+        ).fetchall()
+        found: dict[str, tuple[str, list[dict]]] = {}
+        for chunk_id, text, metadata in rows:
+            found.setdefault(chunk_id, (text, []))[1].append(json.loads(metadata))
+        for _, occurrences in found.values():
+            occurrences.sort(key=self._occurrence_order)
+        return {chunk_id: found[chunk_id] for chunk_id in ids if chunk_id in found}
+
     def _load_matrix(self):
         """全ベクトルを1つの配列に読み込む。
 

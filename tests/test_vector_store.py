@@ -611,3 +611,34 @@ def test_the_same_text_twice_in_one_source_keeps_both_occurrences(empty_store):
     )
     assert empty_store.count() == 2
     assert empty_store.chunk_count() == 1
+
+
+def test_chunks_returns_one_entry_per_text(empty_store):
+    _add_one(empty_store, "a.md", "共有されている本文")
+    _add_one(empty_store, "b.md", "共有されている本文", seed=2.0)
+    _add_one(empty_store, "b.md", "固有の本文", seed=3.0, location=2)
+    ids, texts = empty_store.chunks()
+    assert len(ids) == 2
+    assert sorted(texts) == ["共有されている本文", "固有の本文"]
+
+
+def test_chunks_by_ids_lists_every_occurrence_in_source_order(empty_store):
+    """代表は取り込み順ではなく (source, location) の昇順で決まる。
+
+    b.md を先に入れても a.md が先頭に来る。取り込み順で変わると、同じ質問の
+    出典が再取り込みのたびに入れ替わる。
+    """
+    _add_one(empty_store, "b.md", "共有されている本文", seed=2.0)
+    _add_one(empty_store, "a.md", "共有されている本文")
+    (chunk_id,), _ = empty_store.chunks()
+    text, occurrences = empty_store.chunks_by_ids([chunk_id])[chunk_id]
+    assert text == "共有されている本文"
+    assert [o["source"] for o in occurrences] == ["a.md", "b.md"]
+
+
+def test_chunks_by_ids_drops_unknown_ids(empty_store):
+    """取り込みで消えたチャンクのIDが索引に残ることがある。落として通す。"""
+    _add_one(empty_store, "a.md", "本文")
+    (chunk_id,), _ = empty_store.chunks()
+    found = empty_store.chunks_by_ids([chunk_id, "no-such-id"])
+    assert list(found) == [chunk_id]
