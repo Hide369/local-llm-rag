@@ -141,6 +141,9 @@ Ollamaに肩代わりさせられる。現在Colab側に置いているのは `g
 
 ## 構成
 
+Colabの `gpt-oss:20b` をVS Codeのコーディングエージェントとして使う場合は、
+[VS CodeでColabのgpt-oss:20bを使う](docs/vscode-colab-agent.md) を参照する。
+
 | パス | 役割 |
 |---|---|
 | `ingest/` | 取り込みパイプライン（UIに依存しない） |
