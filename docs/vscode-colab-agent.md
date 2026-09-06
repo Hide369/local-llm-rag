@@ -29,6 +29,19 @@ Google ColabのL4上で動くOllamaを推論に使い、ファイル編集とコ
 .\myvenv313\Scripts\python.exe -m scripts.coding_agent --setup
 ```
 
+別のプロジェクトを開く場合も、このリポジトリの仮想環境と起動補助を使える。対象プロジェクト直下にColabの接続値を書いた`.env`を置き、`--project`へそのフォルダを渡す。対象ごとにCodexの設定とSuperpowersのスキル参照は分離される。
+
+```powershell
+$agentRoot = 'C:\path\to\local_llm'
+$targetProject = 'C:\path\to\another-project'
+Push-Location $agentRoot
+try {
+    .\myvenv313\Scripts\python.exe -m scripts.coding_agent --project $targetProject
+} finally {
+    Pop-Location
+}
+```
+
 `--probe`がCPU配置を報告した場合は32kへ下げ、再測定する。
 
 ```powershell
@@ -37,7 +50,7 @@ Google ColabのL4上で動くOllamaを推論に使い、ファイル編集とコ
 .\myvenv313\Scripts\python.exe -m scripts.coding_agent --setup --context-size 32768
 ```
 
-セットアップ先は `%LOCALAPPDATA%\local-llm\coding-agent\` である。Superpowers 6.3.0を版ごとにコピーし、プロジェクトの `.agents\skills` 直下から14個のスキルを参照する。既存の同名ファイルや別プロジェクト用の設定がある場合は上書きせず終了する。
+`local_llm`自身を開く場合のセットアップ先は `%LOCALAPPDATA%\local-llm\coding-agent\` である。外部プロジェクトでは、その配下のプロジェクト固有フォルダを使う。Superpowers 6.3.0を版ごとにコピーし、対象プロジェクトの `.agents\skills` 直下から14個のスキルを参照する。既存の同名ファイルや同じ対象プロジェクト用ではない設定がある場合は上書きせず終了する。
 
 ## 起動と操作
 

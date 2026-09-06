@@ -1,5 +1,6 @@
 """Colab専用のCodex設定とVS Codeインスタンスを準備する。"""
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -22,15 +23,30 @@ _REQUIRED_SKILLS = (
 )
 
 
-def runtime_directory() -> Path:
+def tool_root() -> Path:
+    """起動補助と同梱テンプレートが置かれたリポジトリを返す。"""
+
+    return Path(__file__).resolve().parent.parent
+
+
+def runtime_directory(project: Path | None = None) -> Path:
+    """プロジェクトごとに分離したCodexの実行時フォルダを返す。"""
+
     value = os.environ.get("LOCALAPPDATA")
     if not value or not Path(value).is_absolute():
         raise AgentError("WindowsのLOCALAPPDATAが設定されていません。")
-    return Path(value) / "local-llm" / "coding-agent"
+    base = Path(value) / "local-llm" / "coding-agent"
+    if project is None or project.resolve(strict=True) == tool_root():
+        # 既存のlocal_llm用設定を引き続き利用する。
+        return base
+    fingerprint = hashlib.sha256(
+        str(project.resolve(strict=True)).encode("utf-8")
+    ).hexdigest()[:16]
+    return base / "projects" / fingerprint
 
 
 def render_config(settings: AgentSettings, model_catalog_path: Path | None = None) -> str:
-    path = Path(__file__).resolve().parent.parent / "infra/codex-colab/config.toml.template"
+    path = tool_root() / "infra/codex-colab/config.toml.template"
     if model_catalog_path is None:
         model_catalog_path = path.with_name("models.json")
     text = Template(path.read_text(encoding="utf-8")).substitute(
@@ -189,7 +205,7 @@ def prepare_environment(project: Path, runtime: Path, settings: AgentSettings,
         installed.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(superpowers_source, installed)
     _atomic_write(marker, json.dumps(identity, ensure_ascii=False, indent=2) + "\n")
-    catalog_source = Path(__file__).resolve().parent.parent / "infra/codex-colab/models.json"
+    catalog_source = tool_root() / "infra/codex-colab/models.json"
     _atomic_write(model_catalog_path, catalog_source.read_text(encoding="utf-8"))
     _atomic_write(config_path, config)
     vscode_settings.setdefault("chatgpt.openOnStartup", True)
