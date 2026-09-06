@@ -511,4 +511,6 @@ def test_the_caches_are_keyed_on_the_revision_not_the_chunk_count(app):
     with patch("ingest.store.open_store", factory):
         app.run()
 
-    assert len(seen) >= 2, "get_index と get_schema の両方が revision を鍵にすること"
+    # VectorStore.search() も内部で revision() を読むため >= では将来ゆるくなる。
+    # 初期描画では検索が走らないので、鍵として読まれる2回ちょうどが期待値。
+    assert len(seen) == 2, "get_index と get_schema の両方が revision を鍵にすること"

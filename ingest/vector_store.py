@@ -9,6 +9,7 @@ design: docs/superpowers/specs/2026-09-05-sqlite-vector-store-design.md
 
 import json
 import sqlite3
+import threading
 
 import numpy as np
 
@@ -52,6 +53,11 @@ def matches(metadata: dict, where: dict | None) -> bool:
         if key == "$and":
             if not all(matches(metadata, clause) for clause in condition):
                 return False
+        elif key.startswith("$"):
+            # $or などは条件が「消える」のではなく、全件が落ちる方向に静かに
+            # 壊れる（metadata に "$or" というキーは無いため常に不一致）。
+            # 根拠が1件も出ない理由が分からなくなるので、例外にする。
+            raise WhereError(f"未対応の論理演算子です: {key}")
         elif isinstance(condition, dict):
             if key not in metadata:
                 return False
@@ -92,7 +98,7 @@ def _normalised(embeddings) -> np.ndarray:
     matrix = np.asarray(embeddings, dtype="float32")
     norms = np.linalg.norm(matrix, axis=1, keepdims=True)
     if not np.all(norms > 0):
-        raise VectorStoreError("ノルム0のベクトルは登録できません")
+        raise VectorStoreError("ノルム0のベクトルは扱えません")
     return matrix / norms
 
 
@@ -104,10 +110,14 @@ class VectorStore:
     def __init__(self, path: str):
         # check_same_thread=False は Streamlit が @st.cache_resource で保持した
         # 接続を別スレッドから触るため。UIの「差分を取り込む」はこの接続から
-        # 書くので、読むだけとは限らない。2つのセッションが同時に押すと同じ
-        # 接続の上で with が入れ子になり、片方の例外がもう片方の書き込みまで
-        # 巻き戻しうる。sqlite3 がモジュール内で直列化するため実害は出にくいが、
-        # 「読むだけだから安全」ではない点は正確に書いておく。
+        # 書くので、読むだけではない。
+        #
+        # sqlite3 が直列化するのはAPI呼び出し1回ごとであってトランザクションでは
+        # ない。2セッションが同時に取り込むと、片方のcommitがもう片方の途中の
+        # DELETEまで確定させ、そちらが例外で終わってもロールバックされない。
+        # 実測では資料が丸ごと消え、例外は誰にも出ず、count() は新しい値を
+        # 正しく返した。設計書4.2が消そうとしている故障そのものなので、
+        # 書き込みは _write_lock で直列化する。
         self._connection = sqlite3.connect(path, check_same_thread=False)
         self._connection.executescript(_SCHEMA)
         self._connection.commit()
@@ -116,6 +126,10 @@ class VectorStore:
         self._cached_revision = None
         self._entries = []
         self._matrix = None
+        # 書き込みトランザクションを直列化する。別プロセス（=別接続）の競合は
+        # SQLiteのロックが "database is locked" として表に出すが、同一接続を
+        # 共有するスレッド間ではそれが一切効かない。
+        self._write_lock = threading.Lock()
 
     def count(self) -> int:
         return self._connection.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
@@ -158,7 +172,7 @@ class VectorStore:
         )
 
     def add(self, ids, documents, metadatas, embeddings) -> None:
-        with self._connection:
+        with self._write_lock, self._connection:
             self._insert(
                 self._connection, ids, documents, metadatas, embeddings
             )
@@ -171,7 +185,15 @@ class VectorStore:
         資料が消えたまま残る。全部入るか1件も入らないかにするために、
         1つの with で囲う。
         """
-        with self._connection:
+        # 列とJSONで source が食い違うと、その行は source では二度と届かなく
+        # なる（DELETE は列を、delete(where=) はJSONを見る）。それでも count()
+        # に数えられ search にも出続ける。1つの事実に2つの帳簿を持たせない。
+        mismatched = [m.get("source") for m in metadatas if m.get("source") != source]
+        if mismatched:
+            raise VectorStoreError(
+                f"metadata の source が引数と違います: {source!r} に対して {mismatched!r}"
+            )
+        with self._write_lock, self._connection:
             self._connection.execute("DELETE FROM chunks WHERE source = ?", (source,))
             self._insert(
                 self._connection, ids, documents, metadatas, embeddings
@@ -182,7 +204,7 @@ class VectorStore:
         targets = self.get(where=where)["ids"]
         if not targets:
             return
-        with self._connection:
+        with self._write_lock, self._connection:
             self._connection.executemany(
                 "DELETE FROM chunks WHERE id = ?", [(t,) for t in targets]
             )
@@ -209,8 +231,10 @@ class VectorStore:
         """
         rows = self._rows()
         if ids is not None:
-            # 呼び出し側が渡した並びを保つ。lexical.search の順位を組み直す
-            # 経路（scripts/check_retrieval.py）がこの並びに依存する。
+            # 呼び出し側が渡した並びを保つ。現在の消費者はどちらも自前で
+            # 組み直しており（scripts/check_retrieval.py は「getは並び順を
+            # 保証しない」前提で書かれている）依存はしていないが、返り値だけで
+            # 対応付けできるほうが誤用を生みにくい。
             by_id = {chunk_id: (text, metadata) for chunk_id, text, metadata in rows}
             rows = [
                 (chunk_id, *by_id[chunk_id]) for chunk_id in ids if chunk_id in by_id

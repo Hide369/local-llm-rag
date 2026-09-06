@@ -1,3 +1,5 @@
+import threading
+
 import pytest
 
 from ingest.vector_store import WhereError, matches
@@ -43,7 +45,7 @@ def test_unsupported_operator_raises():
         matches({"k": 1}, {"k": {"$ne": 1}})
 
 
-from ingest.vector_store import VectorStoreError, open_store
+from ingest.vector_store import VectorStore, VectorStoreError, open_store
 
 
 def _vector(seed: float, dim: int = 4) -> list[float]:
@@ -134,9 +136,10 @@ def test_get_returns_everything_by_default(filled_store):
 
 
 def test_get_by_ids_keeps_them_aligned(filled_store):
+    """dictで比べると順序が見えない。渡した並びで返ることまで固定する。"""
     found = filled_store.get(ids=["b::1", "a::1"])
-    rows = dict(zip(found["ids"], found["documents"]))
-    assert rows == {"b::1": "い1", "a::1": "あ1"}
+    assert found["ids"] == ["b::1", "a::1"]
+    assert found["documents"] == ["い1", "あ1"]
 
 
 def test_get_ignores_unknown_ids(filled_store):
@@ -259,9 +262,23 @@ def test_unnormalised_query_gives_the_same_distance(filled_store):
     assert short == pytest.approx(long, abs=1e-6)
 
 
-def test_results_are_sorted_by_distance(filled_store):
-    distances = [distance for _, distance, _, _ in filled_store.search(_vector(1.0), limit=3)]
+def test_results_are_sorted_by_distance():
+    """filled_store の3件は共線で距離が全て0.0になり、どんな実装でも通ってしまう。
+
+    向きの違うベクトルを入れ、全件を返す（limit == 件数）ときの並びを確かめる。
+    上位k件を選ぶ経路は test_search_selects_the_nearest_when_limit_is_smaller_than_the_corpus
+    が別に押さえている。
+    """
+    store = open_store(":memory:")
+    store.add(
+        ids=["近い", "直交", "遠い"],
+        documents=["近い", "直交", "遠い"],
+        metadatas=[{"source": "x"}, {"source": "x"}, {"source": "x"}],
+        embeddings=[[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0]],
+    )
+    distances = [distance for _, distance, _, _ in store.search([1.0, 0.0], limit=3)]
     assert distances == sorted(distances)
+    assert distances[0] < distances[-1], "順位が付いていないと並び順を検証できない"
 
 
 def test_search_on_empty_store_returns_nothing(empty_store):
@@ -382,3 +399,102 @@ def test_a_second_connection_sees_the_first_ones_writes(tmp_path):
         embeddings=[_vector(1.0)],
     )
     assert reader.search(_vector(1.0), limit=1)[0][0] == "a::1"
+
+
+def test_unsupported_logical_operator_raises(filled_store):
+    """$or は「条件が消える」のではなく全件が落ちる方向に静かに壊れる。
+
+    metadata に "$or" というキーは無いため常に不一致になり、根拠が1件も
+    出ない理由が利用者にも開発者にも分からなくなる。
+    """
+    with pytest.raises(WhereError, match=r"\$or"):
+        matches({"source": "a.md"}, {"$or": [{"source": "a.md"}]})
+
+
+def test_replace_rejects_metadata_whose_source_disagrees(filled_store):
+    """列とJSONで source が食い違うと、その行は source では二度と届かない。
+
+    DELETE は列を、delete(where=) はJSONを見る。それでも count() には数えられ
+    search にも出続ける。ChromaDB が max_seq_id と HNSW 本体で起こした
+    「1つの事実に2つの帳簿」と同じ形なので、書く前に弾く。
+    """
+    with pytest.raises(VectorStoreError, match="source"):
+        filled_store.replace(
+            "a.md",
+            ids=["a::9"],
+            documents=["本文"],
+            metadatas=[{}],
+            embeddings=[_vector(9.0)],
+        )
+    assert sorted(filled_store.get()["ids"]) == ["a::1", "a::2", "b::1"]
+
+
+def test_replace_that_fails_while_writing_keeps_the_old_chunks(filled_store, monkeypatch):
+    """DELETEとINSERTが同一トランザクションであることを固定する。
+
+    既存の失敗テストは _insert が1文もSQLを実行する前（長さ検証・正規化）で
+    落ちるため、「検証を先に済ませ、DELETEとINSERTを別トランザクションで行う」
+    実装でも緑のまま通る。書き込みの途中で落ちる経路を作って境界を押さえる。
+    """
+    def explode(*_args, **_kwargs):
+        raise RuntimeError("書き込み中の中断")
+
+    monkeypatch.setattr(VectorStore, "_insert", explode)
+    with pytest.raises(RuntimeError):
+        filled_store.replace(
+            "a.md",
+            ids=["a::9"],
+            documents=["本文"],
+            metadatas=[{"source": "a.md"}],
+            embeddings=[_vector(9.0)],
+        )
+    assert sorted(filled_store.get()["ids"]) == ["a::1", "a::2", "b::1"]
+
+
+def test_a_failed_write_is_not_committed_by_a_concurrent_one(filled_store, monkeypatch):
+    """1つの接続を2スレッドが共有しても、失敗した側のDELETEが確定しないこと。
+
+    Streamlit は @st.cache_resource で接続を1つだけ持ち、全セッションが共有する。
+    2つのセッションが同時に「差分を取り込む」を押し、片方が失敗すると、
+    直列化しない実装では成功した側の commit が失敗した側の DELETE まで確定させる。
+    実測では a.md が丸ごと消え、例外は誰にも出ず、count() は新しい値を正しく
+    返した。設計書4.2が消そうとしている故障そのものである。
+    """
+    a_started, b_finished = threading.Event(), threading.Event()
+    original = VectorStore._insert
+
+    def blocking_insert(self, cursor, ids, documents, metadatas, embeddings):
+        if ids and ids[0].startswith("a"):
+            a_started.set()
+            b_finished.wait(timeout=5)
+            raise RuntimeError("Aの取り込みが失敗")
+        return original(self, cursor, ids, documents, metadatas, embeddings)
+
+    monkeypatch.setattr(VectorStore, "_insert", blocking_insert)
+
+    def failing_writer():
+        try:
+            filled_store.replace(
+                "a.md", ids=["a::9"], documents=["新"],
+                metadatas=[{"source": "a.md"}], embeddings=[_vector(9.0)],
+            )
+        except RuntimeError:
+            pass
+
+    def succeeding_writer():
+        a_started.wait(timeout=5)
+        try:
+            filled_store.replace(
+                "b.md", ids=["b::9"], documents=["新b"],
+                metadatas=[{"source": "b.md"}], embeddings=[[0.0, 0.0, 9.0, 0.0]],
+            )
+        finally:
+            b_finished.set()
+
+    threads = [threading.Thread(target=failing_writer), threading.Thread(target=succeeding_writer)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=20)
+
+    assert sorted(filled_store.get()["ids"]) == ["a::1", "a::2", "b::9"]
