@@ -89,6 +89,30 @@ def test_the_same_id_twice_overwrites_without_complaining(empty_store):
     assert empty_store.get(ids=["a::1"])["documents"] == ["あとの文章"]
 
 
+def test_the_same_text_from_two_sources_is_stored_once(empty_store):
+    """本文が同じなら行は1つ。出典は2つ数える。"""
+    for source in ("a.md", "b.md"):
+        empty_store.add(
+            ids=[f"{source}::1::0"],
+            documents=["共有されている本文"],
+            metadatas=[{"source": source}],
+            embeddings=[_vector(1.0)],
+        )
+    assert empty_store.count() == 2
+    assert empty_store.chunk_count() == 1
+
+
+def test_one_different_character_is_not_folded(empty_store):
+    """完全一致だけを畳む。1文字違えば別の本文である。"""
+    empty_store.add(
+        ids=["a.md::1::0", "b.md::1::0"],
+        documents=["講師プロフィール 年齢52歳", "講師プロフィール"],
+        metadatas=[{"source": "a.md"}, {"source": "b.md"}],
+        embeddings=[_vector(1.0), _vector(2.0)],
+    )
+    assert empty_store.chunk_count() == 2
+
+
 def test_zero_vector_is_rejected(empty_store):
     """ノルム0は正規化でゼロ除算になる。埋め込みが空を返した事故を静かに通さない。"""
     with pytest.raises(VectorStoreError):

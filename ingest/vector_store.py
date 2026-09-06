@@ -7,6 +7,7 @@ design: docs/superpowers/specs/2026-09-05-sqlite-vector-store-design.md
 妥協ではなく、索引の破損という故障モードを持たないための選択である。
 """
 
+import hashlib
 import json
 import sqlite3
 import threading
@@ -78,12 +79,17 @@ class VectorStoreError(Exception):
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS chunks (
     id        TEXT PRIMARY KEY,
-    source    TEXT NOT NULL,
     text      TEXT NOT NULL,
-    metadata  TEXT NOT NULL,
     embedding BLOB NOT NULL
 );
-CREATE INDEX IF NOT EXISTS chunks_source ON chunks(source);
+CREATE TABLE IF NOT EXISTS occurrences (
+    id       TEXT PRIMARY KEY,
+    chunk_id TEXT NOT NULL REFERENCES chunks(id),
+    source   TEXT NOT NULL,
+    metadata TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS occurrences_source ON occurrences(source);
+CREATE INDEX IF NOT EXISTS occurrences_chunk  ON occurrences(chunk_id);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value INTEGER);
 INSERT OR IGNORE INTO meta (key, value) VALUES ('revision', 0);
 """
@@ -100,6 +106,15 @@ def _normalised(embeddings) -> np.ndarray:
     if not np.all(norms > 0):
         raise VectorStoreError("ノルム0のベクトルは扱えません")
     return matrix / norms
+
+
+def _text_id(text: str) -> str:
+    """本文のSHA-256。短縮しない。
+
+    切り詰めると別々の本文が同じIDになり得る。そのとき起きるのは例外ではなく、
+    片方の本文が黙って消えることである。64文字の保存コストで構造的に防ぐ。
+    """
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def open_store(path: str) -> "VectorStore":
@@ -119,6 +134,10 @@ class VectorStore:
         # 正しく返した。設計書4.2が消そうとしている故障そのものなので、
         # 書き込みは _write_lock で直列化する。
         self._connection = sqlite3.connect(path, check_same_thread=False)
+        # sqlite3 は既定で外部キーを検査しない。本文の無い出現が生まれても
+        # 黙って通る。削除は「出現 → 孤児の本文」の順であり正しい手順なら
+        # 制約に触れないので、これが火を噴くのは手順を間違えたときだけである。
+        self._connection.execute("PRAGMA foreign_keys = ON")
         self._connection.executescript(_SCHEMA)
         self._connection.commit()
         # revisionは書き込みトランザクションの中で不可分に更新されるため、
@@ -132,6 +151,11 @@ class VectorStore:
         self._write_lock = threading.Lock()
 
     def count(self) -> int:
+        """出現の数。入れた件数がそのまま返るという既存の意味を保つ。"""
+        return self._connection.execute("SELECT COUNT(*) FROM occurrences").fetchone()[0]
+
+    def chunk_count(self) -> int:
+        """本文の種類数。畳み込みがどれだけ効いたかはこちらに現れる。"""
         return self._connection.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
 
     def _insert(self, cursor, ids, documents, metadatas, embeddings) -> None:
@@ -142,6 +166,10 @@ class VectorStore:
         短い方に切り詰める。`replace` の中でこれが起きると、DELETEで旧チャンクを
         消した後に新チャンクの一部だけを書いてコミットしてしまい、「帳簿は
         進んだのに実体が欠けている」という今回捨てたはずの壊れ方を作ってしまう。
+
+        本文が同じならベクトルも同じなので、通常この UPDATE は無駄である。
+        しかし埋め込みモデルを差し替えて入れ直したとき、IGNORE では古いモデルの
+        ベクトルが残る。件数は正しく、例外も出ず、距離だけが静かに狂う。
         """
         if not ids:
             return
@@ -154,20 +182,26 @@ class VectorStore:
         if len(set(lengths.values())) != 1:
             raise VectorStoreError(f"ids/documents/metadatas/embeddingsの件数が揃っていません: {lengths}")
         matrix = _normalised(embeddings)
+        chunk_ids = [_text_id(text) for text in documents]
         cursor.executemany(
-            "INSERT OR REPLACE INTO chunks"
-            " (id, source, text, metadata, embedding) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO chunks (id, text, embedding) VALUES (?, ?, ?)"
+            " ON CONFLICT(id) DO UPDATE SET embedding = excluded.embedding",
+            [
+                (chunk_id, text, vector.tobytes())
+                for chunk_id, text, vector in zip(chunk_ids, documents, matrix)
+            ],
+        )
+        cursor.executemany(
+            "INSERT OR REPLACE INTO occurrences"
+            " (id, chunk_id, source, metadata) VALUES (?, ?, ?, ?)",
             [
                 (
+                    occurrence_id,
                     chunk_id,
                     metadata.get("source", ""),
-                    text,
                     json.dumps(metadata, ensure_ascii=False),
-                    vector.tobytes(),
                 )
-                for chunk_id, text, metadata, vector in zip(
-                    ids, documents, metadatas, matrix
-                )
+                for occurrence_id, chunk_id, metadata in zip(ids, chunk_ids, metadatas)
             ],
         )
 
@@ -194,7 +228,7 @@ class VectorStore:
                 f"metadata の source が引数と違います: {source!r} に対して {mismatched!r}"
             )
         with self._write_lock, self._connection:
-            self._connection.execute("DELETE FROM chunks WHERE source = ?", (source,))
+            self._connection.execute("DELETE FROM occurrences WHERE source = ?", (source,))
             self._insert(
                 self._connection, ids, documents, metadatas, embeddings
             )
@@ -206,7 +240,7 @@ class VectorStore:
             return
         with self._write_lock, self._connection:
             self._connection.executemany(
-                "DELETE FROM chunks WHERE id = ?", [(t,) for t in targets]
+                "DELETE FROM occurrences WHERE id = ?", [(t,) for t in targets]
             )
             self._bump_revision(self._connection)
 
@@ -215,11 +249,12 @@ class VectorStore:
         cursor.execute("UPDATE meta SET value = value + 1 WHERE key = 'revision'")
 
     def _rows(self):
-        """(id, text, metadata) を全件返す。"""
+        """(出現ID, 本文, メタデータ) を全件返す。get() の土台。"""
         return [
-            (chunk_id, text, json.loads(metadata))
-            for chunk_id, text, metadata in self._connection.execute(
-                "SELECT id, text, metadata FROM chunks"
+            (occurrence_id, text, json.loads(metadata))
+            for occurrence_id, text, metadata in self._connection.execute(
+                "SELECT o.id, c.text, o.metadata"
+                " FROM occurrences o JOIN chunks c ON c.id = o.chunk_id"
             )
         ]
 
@@ -255,12 +290,14 @@ class VectorStore:
         代わりに毎回この配列を使う。
         """
         rows = self._connection.execute(
-            "SELECT id, text, metadata, embedding FROM chunks"
+            "SELECT o.id, c.text, o.metadata, c.embedding"
+            " FROM occurrences o JOIN chunks c ON c.id = o.chunk_id"
         ).fetchall()
         if not rows:
             return [], np.zeros((0, 0), dtype="float32")
         entries = [
-            (chunk_id, text, json.loads(metadata)) for chunk_id, text, metadata, _ in rows
+            (occurrence_id, text, json.loads(metadata))
+            for occurrence_id, text, metadata, _ in rows
         ]
         matrix = np.stack(
             [np.frombuffer(blob, dtype="float32") for _, _, _, blob in rows]
