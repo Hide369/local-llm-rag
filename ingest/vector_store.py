@@ -210,6 +210,7 @@ class VectorStore:
             self._insert(
                 self._connection, ids, documents, metadatas, embeddings
             )
+            self._delete_orphan_chunks(self._connection)
             self._bump_revision(self._connection)
 
     def replace(self, source, ids, documents, metadatas, embeddings) -> None:
@@ -228,10 +229,13 @@ class VectorStore:
                 f"metadata の source が引数と違います: {source!r} に対して {mismatched!r}"
             )
         with self._write_lock, self._connection:
-            self._connection.execute("DELETE FROM occurrences WHERE source = ?", (source,))
+            self._connection.execute(
+                "DELETE FROM occurrences WHERE source = ?", (source,)
+            )
             self._insert(
                 self._connection, ids, documents, metadatas, embeddings
             )
+            self._delete_orphan_chunks(self._connection)
             self._bump_revision(self._connection)
 
     def delete(self, where=None) -> None:
@@ -242,7 +246,20 @@ class VectorStore:
             self._connection.executemany(
                 "DELETE FROM occurrences WHERE id = ?", [(t,) for t in targets]
             )
+            self._delete_orphan_chunks(self._connection)
             self._bump_revision(self._connection)
+
+    @staticmethod
+    def _delete_orphan_chunks(cursor) -> None:
+        """どの資料からも参照されなくなった本文を消す。
+
+        参照が残っている限り消さないのがこの設計の要である。1つの資料を
+        取り込み直しただけで、他の資料が使っている本文まで消えてはならない。
+        """
+        cursor.execute(
+            "DELETE FROM chunks"
+            " WHERE id NOT IN (SELECT chunk_id FROM occurrences)"
+        )
 
     @staticmethod
     def _bump_revision(cursor) -> None:

@@ -134,6 +134,7 @@ def test_rejected_add_leaves_the_store_empty(empty_store):
             embeddings=[_vector(1.0), [0.0, 0.0, 0.0, 0.0]],
         )
     assert empty_store.count() == 0
+    assert empty_store.chunk_count() == 0
 
 
 def test_store_persists_across_connections(tmp_path):
@@ -491,6 +492,7 @@ def test_replace_that_fails_while_writing_keeps_the_old_chunks(filled_store, mon
             embeddings=[_vector(9.0)],
         )
     assert sorted(filled_store.get()["ids"]) == ["a::1", "a::2", "b::1"]
+    assert filled_store.chunk_count() == 3
 
 
 def test_a_failed_write_is_not_committed_by_a_concurrent_one(filled_store, monkeypatch):
@@ -540,3 +542,72 @@ def test_a_failed_write_is_not_committed_by_a_concurrent_one(filled_store, monke
         thread.join(timeout=20)
 
     assert sorted(filled_store.get()["ids"]) == ["a::1", "a::2", "b::9"]
+
+
+def _add_one(store, source, text, seed=1.0, location=1):
+    store.add(
+        ids=[f"{source}::{location}::0"],
+        documents=[text],
+        metadatas=[{"source": source, "location": location}],
+        embeddings=[_vector(seed)],
+    )
+
+
+def test_reingesting_one_source_keeps_the_shared_text_for_the_others(empty_store):
+    """A を入れ直しても、B が使っている本文は残る。
+
+    これを落とすと B の根拠が消える。例外は出ず、count() は減った値を
+    正しく返すため、次に検索するまで誰も気づかない。
+    """
+    _add_one(empty_store, "a.md", "共有されている本文")
+    _add_one(empty_store, "b.md", "共有されている本文", seed=2.0)
+    empty_store.replace(
+        source="a.md",
+        ids=["a.md::1::0"],
+        documents=["A だけの新しい本文"],
+        metadatas=[{"source": "a.md", "location": 1}],
+        embeddings=[_vector(3.0)],
+    )
+    remaining = empty_store.get(where={"source": "b.md"})
+    assert remaining["documents"] == ["共有されている本文"]
+    assert empty_store.chunk_count() == 2
+
+
+def test_the_last_source_to_drop_a_text_removes_it(empty_store):
+    """誰も使わなくなった本文は残さない。孤児はベクトル行列に載り続ける。"""
+    _add_one(empty_store, "a.md", "共有されている本文")
+    _add_one(empty_store, "b.md", "共有されている本文", seed=2.0)
+    for source in ("a.md", "b.md"):
+        empty_store.replace(
+            source=source,
+            ids=[f"{source}::1::0"],
+            documents=[f"{source} だけの本文"],
+            metadatas=[{"source": source, "location": 1}],
+            embeddings=[_vector(4.0)],
+        )
+    assert empty_store.chunk_count() == 2
+    assert "共有されている本文" not in empty_store.get()["documents"]
+
+
+def test_deleting_one_source_keeps_a_text_another_source_shares(empty_store):
+    """delete(where=) も同じ規則で動く。store.delete_orphans がこれを呼ぶ。"""
+    _add_one(empty_store, "a.md", "共有されている本文")
+    _add_one(empty_store, "b.md", "共有されている本文", seed=2.0)
+    empty_store.delete(where={"source": "a.md"})
+    assert empty_store.count() == 1
+    assert empty_store.chunk_count() == 1
+
+
+def test_the_same_text_twice_in_one_source_keeps_both_occurrences(empty_store):
+    """1資料が同じ本文を2箇所に持つとき、出現は2件のまま。"""
+    empty_store.add(
+        ids=["a.md::1::0", "a.md::5::0"],
+        documents=["繰り返される本文", "繰り返される本文"],
+        metadatas=[
+            {"source": "a.md", "location": 1},
+            {"source": "a.md", "location": 5},
+        ],
+        embeddings=[_vector(1.0), _vector(1.0)],
+    )
+    assert empty_store.count() == 2
+    assert empty_store.chunk_count() == 1
