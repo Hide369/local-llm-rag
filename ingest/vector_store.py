@@ -178,12 +178,12 @@ class VectorStore:
     def integrity(self) -> tuple[int, int]:
         """(孤児の本文, 本文の無い出現) を数える。0, 0 が健全である。"""
         orphans = self._connection.execute(
-            "SELECT COUNT(*) FROM chunks"
-            " WHERE id NOT IN (SELECT chunk_id FROM occurrences)"
+            "SELECT COUNT(*) FROM chunks c"
+            " WHERE NOT EXISTS (SELECT 1 FROM occurrences WHERE chunk_id = c.id)"
         ).fetchone()[0]
         dangling = self._connection.execute(
-            "SELECT COUNT(*) FROM occurrences"
-            " WHERE chunk_id NOT IN (SELECT id FROM chunks)"
+            "SELECT COUNT(*) FROM occurrences o"
+            " WHERE NOT EXISTS (SELECT 1 FROM chunks WHERE id = o.chunk_id)"
         ).fetchone()[0]
         return orphans, dangling
 

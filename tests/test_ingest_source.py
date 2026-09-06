@@ -278,6 +278,9 @@ class _FakeCollectionForMain:
     def chunk_count(self):
         return 0
 
+    def integrity(self):
+        return (0, 0)
+
 
 class _FakeHealthyCollection:
     """件数があり、開き直した検索もベクトルを返す健全なストア。"""
@@ -442,3 +445,72 @@ def test_ingest_fails_when_a_text_has_no_occurrence(monkeypatch, tmp_path, capsy
 def test_a_healthy_store_finishes_successfully(monkeypatch, tmp_path):
     """検証を足したせいで正常な取り込みまで失敗になっては本末転倒である。"""
     assert _run_main_with(monkeypatch, tmp_path, _FakeHealthyCollection()) == 0
+
+
+def test_integrity_detects_orphaned_chunks(collection):
+    """integrity() は出現を持たない本文を見つける。"""
+    # 本文を追加
+    from ingest.embedder import EMBED_DIM
+    collection.add(
+        ids=["test-id"],
+        documents=["テスト本文"],
+        metadatas=[{"source": "test.md"}],
+        embeddings=[[0.1] * EMBED_DIM],
+    )
+    # 正常な状態を確認
+    assert collection.integrity() == (0, 0)
+
+    # 外部キー制約を一時的に無効にして、出現だけを削除（孤児を作る）
+    collection._connection.execute("PRAGMA foreign_keys = OFF")
+    try:
+        collection._connection.execute("DELETE FROM occurrences WHERE source = ?", ("test.md",))
+        collection._connection.commit()
+        # 孤児がいることを確認
+        orphans, dangling = collection.integrity()
+        assert orphans == 1
+    finally:
+        collection._connection.execute("PRAGMA foreign_keys = ON")
+
+
+def test_integrity_detects_dangling_occurrences(collection):
+    """integrity() は本文を持たない出現を見つける。"""
+    from ingest.embedder import EMBED_DIM
+
+    # 健全な状態を確認
+    assert collection.integrity() == (0, 0)
+
+    # 本文と出現を追加
+    collection.add(
+        ids=["test-id"],
+        documents=["テスト本文"],
+        metadatas=[{"source": "test.md"}],
+        embeddings=[[0.1] * EMBED_DIM],
+    )
+    assert collection.integrity() == (0, 0)
+
+    # 外部キー制約を一時的に無効にして、本文だけを削除
+    collection._connection.execute("PRAGMA foreign_keys = OFF")
+    try:
+        collection._connection.execute("DELETE FROM chunks")
+        collection._connection.commit()
+        # 本文の無い出現が検出される
+        orphans, dangling = collection.integrity()
+        assert dangling == 1
+    finally:
+        collection._connection.execute("PRAGMA foreign_keys = ON")
+
+
+def test_integrity_returns_healthy_for_valid_store(collection):
+    """integrity() は健全な状態で (0, 0) を返す。"""
+    from ingest.embedder import EMBED_DIM
+
+    assert collection.integrity() == (0, 0)
+
+    # データを追加しても健全
+    collection.add(
+        ids=["id1", "id2"],
+        documents=["本文1", "本文2"],
+        metadatas=[{"source": "a.md"}, {"source": "b.md"}],
+        embeddings=[[0.1] * EMBED_DIM, [0.2] * EMBED_DIM],
+    )
+    assert collection.integrity() == (0, 0)
