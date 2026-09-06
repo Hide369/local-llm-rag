@@ -146,6 +146,8 @@ Ollamaに肩代わりさせられる。現在Colab側に置いているのは `g
 | `ingest/` | 取り込みパイプライン（UIに依存しない） |
 | `ingest/conditions.py` | 質問から絞り込み条件を抽出する（LLMに依存） |
 | `ingest/catalog.py` | 条件で資料を絞り込み仕様表に整形する（LLMに依存しない） |
+| `ingest/vector_store.py` | ベクトルストアの本体。SQLite・L2正規化・トランザクション・総当たりcosine検索 |
+| `ingest/store.py` | 取り込みの都合（資料単位の入れ替え、消えた資料の削除）。保管の詳細は持たない |
 | `scripts/ingest_source.py` | 取り込みCLI |
 | `ingest/lexical.py` | BM25の全文検索（文字bigramトークナイザ含む。外部依存なし） |
 | `ingest/retrieval.py` | ベクトル検索とBM25をRRFで融合し、圏内ゲートで採否を決める |
