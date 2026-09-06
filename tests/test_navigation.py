@@ -3,7 +3,8 @@
 捕まえるものより、捕まえてはいけないものを重く見る。規則を緩めると
 本文が消えるが、規則が当たらなくなっても消えるものは無いためである。
 """
-from ingest.navigation import is_navigation
+from ingest.models import SLIDE, ParsedUnit
+from ingest.navigation import drop_navigation, is_navigation
 
 
 # --- 落とすもの（実コーパスから採取） ---
@@ -77,3 +78,45 @@ def test_a_numbered_list_of_content_is_not_navigation():
 def test_empty_text_is_not_navigation():
     assert not is_navigation("")
     assert not is_navigation("   \n  \n ")
+
+
+def _slide(text, location):
+    return ParsedUnit(text=text, location_type=SLIDE, location=location)
+
+
+def test_drop_navigation_separates_the_two_groups():
+    units = [
+        _slide("－ 目次 ー\nRAGの基礎知識\n1", 4),
+        _slide("1\nRAGの基礎知識", 5),
+        _slide("RAGは検索した文書を根拠にして回答を組み立てる仕組みである。", 6),
+        _slide("ご清聴ありがとうございました\nAIとともに、新しい働き方を始めよう", 30),
+    ]
+    kept, dropped = drop_navigation(units)
+    assert [unit.location for unit in kept] == [6]
+    assert [unit.location for unit in dropped] == [4, 5, 30]
+
+
+def test_drop_navigation_keeps_the_original_order():
+    """出典の位置は location が持つが、並びが崩れると差分が読みにくくなる。"""
+    units = [_slide(f"本文{n}", n) for n in (3, 1, 2)]
+    kept, _ = drop_navigation(units)
+    assert [unit.location for unit in kept] == [3, 1, 2]
+
+
+def test_drop_navigation_returns_every_unit_when_none_is_navigation():
+    units = [_slide("本文です。これは中身のあるスライドである。", 1)]
+    kept, dropped = drop_navigation(units)
+    assert kept == units
+    assert dropped == []
+
+
+def test_drop_navigation_does_not_decide_what_to_do_when_everything_drops():
+    """全部落ちる場合の判断は呼び出し側に任せる。
+
+    ここで握り潰すと、規則が誤爆して資料が丸ごと消えたことに誰も気づけない。
+    scripts/ingest_source.py がこの場合に何も落とさず警告を出す。
+    """
+    units = [_slide("1\nRAGの基礎知識", 5), _slide("2\n導入手順", 9)]
+    kept, dropped = drop_navigation(units)
+    assert kept == []
+    assert dropped == units

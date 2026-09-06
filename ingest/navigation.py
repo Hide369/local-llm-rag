@@ -11,6 +11,8 @@
 当てて、誤検出ゼロ・取りこぼしゼロを確認している。内訳は章扉24・目次7・締め7。
 """
 
+from ingest.models import ParsedUnit
+
 # 章扉の生の行数（空行を含む）の上限。
 # モデル就業規則.pdf の表紙は先頭が全角の「１」で str.isdigit() が真になるが、
 # タイトルが空行に挟まれて生の行数が19行ある。本物の章扉は2〜3行しかない。
@@ -60,3 +62,24 @@ def is_navigation(text: str) -> bool:
         or _is_table_of_contents(text)
         or _is_closing(text)
     )
+
+
+def drop_navigation(
+    units: list[ParsedUnit],
+) -> tuple[list[ParsedUnit], list[ParsedUnit]]:
+    """残すユニットと、落としたユニットを (残す, 落とす) の順で返す。
+
+    落としたものを件数ではなく現物で返すのは、呼び出し側が「何を」落としたか
+    報告できるようにするためである。件数だけでは、誤検出が起きたときに何が
+    消えたのか追えない。
+
+    全ユニットが落ちる場合の判断はここでは行わない。握り潰すと、資料が丸ごと
+    DBから消えたことに誰も気づけない。scripts/ingest_source.py がこの場合に
+    何も落とさず警告を出す。
+    """
+    kept: list[ParsedUnit] = []
+    dropped: list[ParsedUnit] = []
+    for unit in units:
+        target = dropped if is_navigation(unit.text) else kept
+        target.append(unit)
+    return kept, dropped
