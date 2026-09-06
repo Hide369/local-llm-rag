@@ -71,6 +71,24 @@ def test_added_rows_are_counted(empty_store):
     assert empty_store.count() == 2
 
 
+def test_the_same_id_twice_overwrites_without_complaining(empty_store):
+    """IDが衝突すると、例外も出ずに前のチャンクが消える。
+
+    ingest/chunker.py がロケーションごとの通し番号でIDを振っているのは、
+    この振る舞いを避けるためである。ここで固定しておかないと、番号の付け方を
+    「単純な方」へ戻したときに何も失敗せずチャンクだけが減る。
+    """
+    for text in ("さいしょの文章", "あとの文章"):
+        empty_store.add(
+            ids=["a::1"],
+            documents=[text],
+            metadatas=[{"source": "a.md"}],
+            embeddings=[_vector(1.0)],
+        )
+    assert empty_store.count() == 1
+    assert empty_store.get(ids=["a::1"])["documents"] == ["あとの文章"]
+
+
 def test_zero_vector_is_rejected(empty_store):
     """ノルム0は正規化でゼロ除算になる。埋め込みが空を返した事故を静かに通さない。"""
     with pytest.raises(VectorStoreError):

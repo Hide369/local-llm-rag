@@ -195,7 +195,7 @@ def test_metadata_is_unchanged_for_units_without_attributes():
 
 def test_units_sharing_a_location_get_distinct_ids():
     """PPTXは1スライドが複数ユニットになる（spec 7.5）。IDが衝突すると
-    ChromaDBが黙って上書きし、チャンクが消える。例外は出ない。"""
+    ストアが黙って上書きし、チャンクが消える。例外は出ない。"""
     units = [
         _unit("スライドの前半について述べた文章です。", location=11, location_type="slide"),
         _unit("スライドの後半について述べた文章です。", location=11, location_type="slide"),

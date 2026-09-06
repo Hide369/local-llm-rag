@@ -10,7 +10,7 @@ design: docs/superpowers/specs/2026-08-30-reranker-design.md
 ingest/retrieval.py に集約する（ingest/lexical.py が (id, score) を返すだけで
 採否に関与しないのと同じ分担）。
 
-ChromaDBにもOllamaにも依存しない。
+ベクトルストアにもOllamaにも依存しない。
 """
 import numpy as np
 

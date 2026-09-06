@@ -21,12 +21,6 @@ class Product:
     attributes: dict
 
 
-def _where(conditions: dict) -> dict:
-    """ChromaDBは条件が2つ以上のとき $and で包む必要がある。"""
-    clauses = [{key: condition} for key, condition in conditions.items()]
-    return clauses[0] if len(clauses) == 1 else {"$and": clauses}
-
-
 def _fold(found) -> list[Product]:
     """チャンクの並びを1資料1件にまとめる。
 
@@ -49,7 +43,9 @@ def select(collection, conditions: dict) -> list[Product]:
     """条件に合う資料を、1資料1件にまとめて返す。"""
     if not conditions:
         return []
-    return _fold(collection.get(where=_where(conditions), include=["metadatas"]))
+    # 条件はそのまま渡す。ストアの where は同じ辞書に並べたキーを全て満たす
+    # ものだけを返すため、$and で包む必要が無い。
+    return _fold(collection.get(where=conditions, include=["metadatas"]))
 
 
 def _ranked_value(product: Product, ranking):
