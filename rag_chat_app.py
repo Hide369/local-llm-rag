@@ -5,7 +5,6 @@
 このUIのボタンは差分取り込み（通常は数秒）を想定している。
 """
 from datetime import datetime
-from pathlib import Path
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -25,7 +24,7 @@ from ingest.prompting import (
 from ingest.retrieval import build_index, contextual_query, search
 from scripts.ingest_source import DEFAULT_SOURCE_DIR, ingest_directory
 
-DB_PATH = str(Path(__file__).parent / store.DB_FILENAME)
+DB_PATH = str(store.DB_PATH)
 
 
 @st.cache_resource
@@ -34,8 +33,11 @@ def get_collection(db_path):
 
 
 @st.cache_resource
-def get_schema(_collection):
-    """絞り込みに使える属性の一覧。起動時に1回だけ集める。
+def get_schema(_collection, revision):
+    """絞り込みに使える属性の一覧。
+
+    revision を引数に取るのは、新しい数値属性を持つ資料を取り込んだあとも
+    プロセスを再起動するまで絞り込みに出てこない、という状態を防ぐため。
 
     先頭のアンダースコアは、Streamlitにこの引数をハッシュさせないための目印。
     VectorStoreはsqlite3.Connectionを抱えており、ハッシュ化できない。
@@ -44,15 +46,17 @@ def get_schema(_collection):
 
 
 @st.cache_resource
-def get_index(_collection, chunk_count):
+def get_index(_collection, revision):
     """BM25インデックスをDBから組む。
 
     ディスクに持たないため起動のたびに作り直す。DBとファイルで状態が二重管理に
     なると差分取り込みのたびに食い違い、例外も出ないまま検索結果が古くなるためで、
     ingest/store.py の「信頼できる情報源は常にDBひとつにする」方針に揃えてある。
 
-    chunk_count を引数に取るのは、差分取り込みでチャンク数が変わったときに
-    キャッシュを無効化するため。先頭のアンダースコアはStreamlitにこの引数を
+    revision を引数に取るのは、書き込みと不可分に進む値だけがキャッシュの
+    鮮度を正しく判定できるため。チャンク数を鍵にすると「同数の差し替え」を
+    取りこぼし、消えた旧チャンクIDを持ったままのBM25索引が、理由の説明なく
+    ヒットを落とす（設計書4.5節）。先頭のアンダースコアはStreamlitにこの引数を
     ハッシュさせないための目印で、VectorStoreはsqlite3.Connectionを抱えており
     ハッシュ化できない。
     """
@@ -111,7 +115,7 @@ SYSTEM_PROMPT = (
 )
 
 collection = get_collection(DB_PATH)
-index = get_index(collection, collection.count())
+index = get_index(collection, collection.revision())
 st.sidebar.metric("インデックス済みチャンク", collection.count())
 
 st.sidebar.divider()
@@ -138,8 +142,8 @@ if st.sidebar.button("差分を取り込む"):
                 caption_image=vlm.caption_image if use_vlm else None,
             )
         st.sidebar.success(format_report(report))
-        # 取り込んだ資料がベクトル検索でだけ引ける状態になるのを防ぐ。
-        get_index.clear()
+        # 明示的な clear() は要らない。再実行時に読み直す revision が
+        # 書き込みで進んでおり、BM25索引も属性一覧も鍵ごと入れ替わる。
         st.rerun()
 
 # 既定ON。VLMが既定OFFなのは画像1枚ごとに同期のAPI呼び出しが挟まり取り込みが
@@ -178,7 +182,7 @@ for message in st.session_state.messages:
         st.write(answer_text.strip_html_tags(message["content"]))
         render_evidence(message)
 
-schema = get_schema(collection)
+schema = get_schema(collection, collection.revision())
 
 
 def ask_json(prompt: str) -> str:

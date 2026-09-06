@@ -103,8 +103,11 @@ def open_store(path: str) -> "VectorStore":
 class VectorStore:
     def __init__(self, path: str):
         # check_same_thread=False は Streamlit が @st.cache_resource で保持した
-        # 接続を別スレッドから触るため。書き込みは取り込みプロセスのみで、
-        # このプロセスは読むだけなので競合しない。
+        # 接続を別スレッドから触るため。UIの「差分を取り込む」はこの接続から
+        # 書くので、読むだけとは限らない。2つのセッションが同時に押すと同じ
+        # 接続の上で with が入れ子になり、片方の例外がもう片方の書き込みまで
+        # 巻き戻しうる。sqlite3 がモジュール内で直列化するため実害は出にくいが、
+        # 「読むだけだから安全」ではない点は正確に書いておく。
         self._connection = sqlite3.connect(path, check_same_thread=False)
         self._connection.executescript(_SCHEMA)
         self._connection.commit()

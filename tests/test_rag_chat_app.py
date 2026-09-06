@@ -10,9 +10,10 @@ Ollamaが停止しており、質問すると ingest.embedder.EmbeddingError の
 ingest/chat.py のモジュールdocstring参照）。テストでは chat.ask_json /
 chat.stream_chat をこの階層で差し替える。
 
-AppTest は rag_chat_app.py を同じプロセスで実行する。本番のSQLiteストア
-（vector_store.sqlite3）を開くと起動中のStreamlitとの同時アクセスで壊す恐れが
-あるため（README「既知の制約」）、store.open_store をインメモリのものへ差し替える。
+AppTest は rag_chat_app.py を同じプロセスで実行する。本番のストア
+（vector_store.sqlite3）を開くと、テストの結果がその時点の取り込み内容に左右され、
+再現しなくなる。1チャンクだけの決まった状態を作るため、store.open_store を
+インメモリのものへ差し替える。
 """
 from pathlib import Path
 from unittest.mock import patch
@@ -483,3 +484,31 @@ def test_the_reranker_is_not_wired_into_search_when_the_checkbox_is_off(app):
 
     assert not app.exception
     assert calls == [None]
+
+
+def test_the_caches_are_keyed_on_the_revision_not_the_chunk_count(app):
+    """BM25索引と属性一覧の鍵は、書き込みと不可分に進む revision であること。
+
+    チャンク数を鍵にすると「同数の差し替え」を取りこぼす（設計書4.5節）。本文だけ
+    直したMarkdownを外部プロセスで取り込み直しても件数は変わらないため、BM25索引が
+    消えた旧チャンクIDを持ち続け、retrieval.search がその行を引けずに黙って落とす。
+    count() を鍵に戻すと revision() は一度も呼ばれなくなり、このテストが落ちる。
+    """
+    seen = []
+
+    def factory(*args, **kwargs):
+        collection = open_real_store(":memory:")
+        collection.add(
+            ids=["chunk-1"],
+            documents=["洗濯機の運転音は26dBです。"],
+            embeddings=[[0.1, 0.2]],
+            metadatas=[{"source": "a.md"}],
+        )
+        original = collection.revision
+        collection.revision = lambda: (seen.append(1), original())[1]
+        return collection
+
+    with patch("ingest.store.open_store", factory):
+        app.run()
+
+    assert len(seen) >= 2, "get_index と get_schema の両方が revision を鍵にすること"

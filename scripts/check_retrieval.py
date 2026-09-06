@@ -20,7 +20,6 @@ ingest/prompting.py の「根拠がなければ答えない」プロンプトが
 """
 import argparse
 from collections import defaultdict, deque
-from pathlib import Path
 
 from ingest import embedder, lexical, reranker, store
 from ingest.retrieval import (
@@ -32,7 +31,7 @@ from ingest.retrieval import (
     search,
 )
 
-DB_PATH = Path(__file__).resolve().parent.parent / store.DB_FILENAME
+DB_PATH = store.DB_PATH
 
 # 取り込んだ資料に確実に答えがある質問
 RELEVANT = [
@@ -95,7 +94,9 @@ def _vector_best(collection, question, session):
         embedder.embed_query(question, session=session), limit=1
     )
     if not found:
-        return None, ""
+        # 呼び出し側は距離を :.3f で書式化する。None を返すと3フレーム先で
+        # TypeError になり原因から遠ざかるため、ここで理由ごと止める。
+        raise RuntimeError(f"ベクトル検索が0件を返しました: {question}")
     _, distance, text, metadata = found[0]
     hit = Hit(text=text, distance=distance, metadata=metadata)
     return hit.distance, hit.citation
@@ -264,7 +265,13 @@ def main() -> int:
     if args.with_reranker:
         reranker.check_reranker()
     collection = store.open_store(str(DB_PATH))
-    print(f"総チャンク数: {collection.count()}")
+    indexed = collection.count()
+    print(f"総チャンク数: {indexed}")
+    if indexed == 0:
+        # open_store は存在しないパスに空のDBを黙って作る。移行直後はまだ
+        # 取り込んでいないため、ここが通常の順序で踏まれる経路になる。
+        print(f"{DB_PATH} が空です。先に `python -m scripts.ingest_source` を実行してください。")
+        return 1
     index = build_index(collection)
     print(f"BM25インデックス: {index.document_count}文書 / {len(index.postings)}トークン")
 

@@ -34,7 +34,7 @@ def _fold(found) -> list[Product]:
     誤って答えることになるため、source ごとに1つにする。
     """
     products: dict[str, dict] = {}
-    for metadata in found.get("metadatas") or []:
+    for metadata in found["metadatas"]:
         source = metadata.get("source")
         if source and source not in products:
             products[source] = {

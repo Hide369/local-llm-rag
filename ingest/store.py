@@ -8,10 +8,16 @@
 置く。このモジュールは「資料単位で入れ替える」「source/ から消えた資料を消す」
 という取り込みの都合だけを持つ。
 """
+from pathlib import Path
+
 from ingest.models import Chunk
 from ingest.vector_store import open_store  # noqa: F401  再公開
 
 DB_FILENAME = "vector_store.sqlite3"
+# パスの単一の情報源。呼び出し側が各自で組み立てると、片方だけ間違えても
+# open_store は例外を出さずに空のDBを新規作成するため、件数0で検索が全部空に
+# なるだけで、テストも緑のまま通ってしまう。
+DB_PATH = Path(__file__).resolve().parent.parent / DB_FILENAME
 
 
 def stored_file_hash(collection, source: str) -> str | None:

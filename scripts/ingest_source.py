@@ -25,7 +25,7 @@ from ingest.chunker import chunk_units
 from ingest.parsers import SUPPORTED_SUFFIXES, parse
 
 DEFAULT_SOURCE_DIR = Path(__file__).resolve().parent.parent / "source"
-DB_PATH = Path(__file__).resolve().parent.parent / store.DB_FILENAME
+DB_PATH = store.DB_PATH
 
 
 @dataclass

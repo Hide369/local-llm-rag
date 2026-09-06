@@ -3,6 +3,7 @@ import sys
 import pytest
 from docx import Document
 
+from ingest import store
 from ingest.embedder import EMBED_DIM
 from ingest.store import open_store, stored_file_hash
 from scripts import ingest_source
@@ -326,3 +327,23 @@ def test_main_forwards_only_suffix_to_ingest_directory(monkeypatch, tmp_path):
     )
     ingest_source.main()
     assert captured["only_suffix"] == "md"
+
+
+def test_main_opens_the_shared_store_path(monkeypatch, tmp_path):
+    """開く先を間違えても open_store は空のDBを黙って作り、件数0で検索が全部
+    空になるだけで例外は出ない。パスの出どころを1件だけ拘束しておく。"""
+    opened = []
+
+    monkeypatch.setattr(
+        ingest_source, "ingest_directory", lambda *a, **k: ingest_source.IngestReport()
+    )
+    monkeypatch.setattr(ingest_source.embedder, "check_ollama", lambda: None)
+    monkeypatch.setattr(
+        ingest_source.store,
+        "open_store",
+        lambda path: (opened.append(path), _FakeCollectionForMain())[1],
+    )
+    monkeypatch.setattr(sys, "argv", ["ingest_source", "--source-dir", str(tmp_path)])
+    ingest_source.main()
+
+    assert opened == [str(store.DB_PATH)]
