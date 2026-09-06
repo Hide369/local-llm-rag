@@ -70,27 +70,43 @@ class Hit:
         """
         return self.occurrences[0]
 
-    @property
-    def citation(self) -> str:
-        """「ファイル名 p.48（OCR）」の形式で出典を組み立てる。
+    @staticmethod
+    def _one_citation(metadata: dict) -> str:
+        """「ファイル名 p.48（OCR）」の形式で1つの出典を組み立てる。
 
-        出典整形はここが唯一の置き場所である。位置種別を増やすときはこのメソッドだけを直す。
+        出典整形はここが唯一の置き場所である。位置種別を増やすときはこのメソッド
+        だけを直す。
         """
-        source = self.metadata.get("source", "")
-        location_type = self.metadata.get("location_type")
-        location = self.metadata.get("location")
+        source = metadata.get("source", "")
+        location_type = metadata.get("location_type")
+        location = metadata.get("location")
         if location_type == "page":
             source = f"{source} p.{location}"
         elif location_type == "slide":
             source = f"{source} スライド{location}"
         elif location_type == "section":
             # 見出し文字列で示す。通し番号（location）は利用者にとって意味がない。
-            heading = self.metadata.get("heading")
+            heading = metadata.get("heading")
             if heading:
                 source = f"{source} ＞ {heading}"
-        if self.metadata.get("ocr"):
+        if metadata.get("ocr"):
             source = f"{source}（OCR）"
         return source
+
+    def all_citations(self) -> list[str]:
+        """すべての出典。画面の詳細表示で使う。"""
+        return [self._one_citation(metadata) for metadata in self.occurrences]
+
+    @property
+    def citation(self) -> str:
+        """代表の出典。2件以上あるときだけ残りの数を添える。
+
+        プロンプトにはこの短い形だけを入れる。7つのファイル名を読ませても、
+        どれを引くかの判断を増やすだけで精度に寄与しない。
+        """
+        citation = self._one_citation(self.metadata)
+        others = len(self.occurrences) - 1
+        return f"{citation} ほか{others}資料" if others else citation
 
 
 def contextual_query(question: str, history) -> str:

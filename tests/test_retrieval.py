@@ -371,3 +371,35 @@ def test_reranked_ties_are_broken_deterministically():
     assert [h.metadata["location"] for h in first] == [
         h.metadata["location"] for h in second
     ]
+
+
+def _hit(occurrences):
+    return Hit(text="本文", distance=0.1, occurrences=occurrences)
+
+
+def test_a_single_occurrence_reads_exactly_as_before():
+    """大半のチャンクは出典が1つである。文字列を変えてはならない。"""
+    hit = _hit([{"source": "資料.pdf", "location_type": "page", "location": 48}])
+    assert hit.citation == "資料.pdf p.48"
+
+
+def test_several_occurrences_name_the_first_and_count_the_rest():
+    hit = _hit(
+        [
+            {"source": "A.pptx", "location_type": "slide", "location": 25},
+            {"source": "B.pptx", "location_type": "slide", "location": 23},
+            {"source": "C.pptx", "location_type": "slide", "location": 24},
+        ]
+    )
+    assert hit.citation == "A.pptx スライド25 ほか2資料"
+
+
+def test_all_citations_lists_every_occurrence():
+    """画面の詳細表示はすべて出す。プロンプトに入るのは短い形だけ。"""
+    hit = _hit(
+        [
+            {"source": "A.pptx", "location_type": "slide", "location": 25},
+            {"source": "B.pptx", "location_type": "slide", "location": 23},
+        ]
+    )
+    assert hit.all_citations() == ["A.pptx スライド25", "B.pptx スライド23"]

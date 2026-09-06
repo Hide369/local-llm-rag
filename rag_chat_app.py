@@ -81,6 +81,11 @@ def render_hits(hits):
     with st.expander(f"参考にした情報（{len(hits)}件）"):
         for hit in hits:
             st.caption(format_hit_caption(hit))
+            others = hit.all_citations()[1:]
+            if others:
+                # 見出しは代表しか名乗らない。同じ記述がどこにあるかを
+                # 資料を開かずに追えるようにする。
+                st.caption("同じ記述: " + " ／ ".join(others))
             st.write(hit.text)
 
 
