@@ -317,8 +317,10 @@ class _FakeSilentlyBrokenCollection:
 class _FakeOrphanedCollection:
     """出現の無い本文が残っているストア。
 
-    孤児はベクトル行列に載って検索に出続けるが、count() には表れない。
-    件数と検索が両方とも正常に見えるため、整合性を数えない限り露見しない。
+    孤児はベクトル行列に載り続けるが、出現が引けないため結果からは落ちる。
+    上位の枠だけ取って消えるので、本物のヒットを黙って押し出す。count() は
+    出現を数えるので孤児は表れず、件数と検索が両方とも正常に見える。
+    整合性を数えない限り露見しない。
     """
 
     def count(self):
@@ -358,12 +360,12 @@ def test_main_forwards_force_flag_to_ingest_directory(tmp_path, monkeypatch):
     monkeypatch.setattr(
         sys, "argv", ["ingest_source.py", "--source-dir", str(source_dir), "--force"]
     )
-    ingest_source.main()
+    assert ingest_source.main() == 0
 
     monkeypatch.setattr(
         sys, "argv", ["ingest_source.py", "--source-dir", str(source_dir)]
     )
-    ingest_source.main()
+    assert ingest_source.main() == 0
 
     assert received_force == [True, False]
 
@@ -383,7 +385,7 @@ def test_main_forwards_only_suffix_to_ingest_directory(monkeypatch, tmp_path):
     monkeypatch.setattr(
         sys, "argv", ["ingest_source", "--source-dir", str(tmp_path), "--only-suffix", "md"]
     )
-    ingest_source.main()
+    assert ingest_source.main() == 0
     assert captured["only_suffix"] == "md"
 
 
@@ -402,7 +404,7 @@ def test_main_opens_the_shared_store_path(monkeypatch, tmp_path):
         lambda path: (opened.append(path), _FakeCollectionForMain())[1],
     )
     monkeypatch.setattr(sys, "argv", ["ingest_source", "--source-dir", str(tmp_path)])
-    ingest_source.main()
+    assert ingest_source.main() == 0
 
     # 取り込み用と、取り込み後に開き直す検証用の2回。どちらも同じパスであること。
     assert opened == [str(store.DB_PATH), str(store.DB_PATH)]
