@@ -14,7 +14,7 @@
 
 - **Python の起動は必ず `./myvenv313/Scripts/python.exe`。** システムの python には依存が入っていない。
 - **スクリプトは `python -m scripts.X` で起動する。** `python scripts/X.py` は `ModuleNotFoundError: No module named 'ingest'` で落ちる。`sys.path` を足して回避しないこと。
-- **テストは `./myvenv313/Scripts/python.exe -m pytest`。** 開始時点で 418 passed, 3 deselected。
+- **テストは `./myvenv313/Scripts/python.exe -m pytest`。** 開始時点で 487 passed, 3 deselected（実測 efcd780）。
 - **`git add -A` / `git add .` は禁止。** 触ったファイルを個別に指定する。作業ツリーには無関係の未追跡物（`.worktrees/generalize-coding-agent/`）がある。
 - **`ingest/chunker.py` と `ingest/retrieval.py` は変更しない**（設計書3.2・8節）。
 - **`chroma_db/` に書き込まない。** 旧アプリ `udemy3.py` がまだ使っている。
