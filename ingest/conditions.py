@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 
 from ingest.chunker import RESERVED_METADATA_KEYS
 
-# ChromaDBの where がそのまま受け取れる演算子だけを許す。変換層を挟まずに済む。
+# ストアの where がそのまま受け取れる演算子だけを許す。変換層を挟まずに済む。
 COMPARISONS = ("$lte", "$gte")
 EQUALITY = "$eq"
 
@@ -39,8 +39,9 @@ def available_keys(collection) -> dict[str, str]:
     """メタデータに実在する属性キーと、その型（number / string）を集める。
 
     キー一覧をコードに固定しない。資料を入れ替えてもコードを直さずに追従させるため。
-    件数を絞らず全件読むのは、ChromaDBの取得順が資料の並びを保証せず、属性を
-    持たないPDF由来のチャンクばかりを引いてスキーマが空になり得るため。
+    件数を絞らず全件読むのは、ストアの取得順が資料の並びを保証せず（SELECT に
+    ORDER BY を付けていない）、属性を持たないPDF由来のチャンクばかりを引いて
+    スキーマが空になり得るため。
     460件でも数十ミリ秒であり、起動時の1回だけ呼ぶ。
     """
     if collection.count() == 0:

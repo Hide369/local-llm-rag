@@ -17,7 +17,7 @@ class _FakeCollection:
         self._documents = documents
         self._distances = distances
         self._metadatas = metadatas
-        # 実Chromaは距離の昇順で返す。挿入順のまま返すと、RRFの並べ替えを検証する
+        # 実ストアは距離の昇順で返す。挿入順のまま返すと、RRFの並べ替えを検証する
         # テストが「ベクトル1位＝BM25 1位」の自明なケースになってしまう。
         self._order = sorted(range(len(documents)), key=lambda row: distances[row])
         # ベクトル側が返す件数の上限。BM25だけが見つけるチャンクを作るために使う。
@@ -40,7 +40,7 @@ class _FakeCollection:
 
     def get(self, ids=None, include=None):
         # ids 省略は全件（store.all_documents がこの形で呼ぶ）。
-        # 知らないIDは黙って落とす。実Chromaも消えたIDの行は返さない。
+        # 知らないIDは黙って落とす。実ストアも消えたIDの行は返さない。
         rows = (
             list(range(len(self._ids)))
             if ids is None
