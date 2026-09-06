@@ -48,9 +48,9 @@ def migrate(path: str) -> int:
     target_path.unlink(missing_ok=True)
     target = sqlite3.connect(target_path)
     try:
-        target.execute("PRAGMA foreign_keys = ON")
-        target.executescript(_SCHEMA)
         try:
+            target.execute("PRAGMA foreign_keys = ON")
+            target.executescript(_SCHEMA)
             with target:
                 for occurrence_id, text, metadata, embedding in rows:
                     chunk_id = _text_id(text)

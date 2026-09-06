@@ -93,19 +93,39 @@ def test_migration_returns_1_on_corrupted_json_and_leaves_original_untouched(tmp
     assert list(tmp_path.glob("old.sqlite3.bak-*"))
 
 
-def test_migration_failure_invariant_original_stays_untouched(tmp_path):
-    """失敗の原因がなんであれ、元のファイルは無傷で、.migratingは残らない。
+def test_migration_returns_1_on_validation_failure_and_leaves_original_untouched(tmp_path, monkeypatch):
+    """検証に失敗しても、元のファイルは無傷で、.migratingは残らない。
 
-    検証ロジックの失敗、例外経路、どちらでも原本を書き換えないことを保証する。
+    本文数の不一致を検出する検証が失敗する場合、
+    原本を書き換えず、一時ファイルも片付け、退避を示して終了する。
     """
     path = tmp_path / "old.sqlite3"
-    _old_store(path, [("a.md::1::0", "a.md", "本文", '{"source": "a.md"}')])
+    # 異なる本文を2件
+    _old_store(
+        path,
+        [
+            ("a.md::1::0", "a.md", "text1", '{"source": "a.md"}'),
+            ("b.md::1::0", "b.md", "text2", '{"source": "b.md"}'),
+        ],
+    )
 
     original_content = path.read_bytes()
-    migrate(str(path))
 
-    # 成功しても失敗しても、元のファイルは必ず保護される
-    # 一時ファイルは完全に片付けられている
-    assert not list(tmp_path.glob("old.sqlite3.migrating"))
-    # 退避は常に作られている
-    assert list(tmp_path.glob("old.sqlite3.bak-*"))
+    # ハッシュ衝突を起こす。違う本文が同じIDを返すようにする。
+    # これは64文字IDが防ぐためにある実災害。
+    import scripts.migrate_store
+    def fake_text_id(text: str) -> str:
+        return "collision"  # 常に同じIDを返す
+    monkeypatch.setattr(scripts.migrate_store, "_text_id", fake_text_id)
+
+    # 移行は検証に失敗する。期待する本文数は2だが、
+    # ハッシュ衝突で1つのチャンクにまとまり、チャンク数は1になる。
+    result = migrate(str(path))
+    assert result == 1, "検証失敗時は1を返すべき"
+
+    # 元のファイルが変わっていない
+    assert path.read_bytes() == original_content, "元のファイルは書き換わっていない"
+    # 一時ファイルが残っていない
+    assert not list(tmp_path.glob("old.sqlite3.migrating")), ".migratingが残されていない"
+    # 退避が残っている
+    assert list(tmp_path.glob("old.sqlite3.bak-*")), "退避が作られている"
