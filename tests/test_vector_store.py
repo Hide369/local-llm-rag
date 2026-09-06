@@ -644,46 +644,6 @@ def test_chunks_by_ids_drops_unknown_ids(empty_store):
     assert list(found) == [chunk_id]
 
 
-def test_chunks_by_ids_ties_are_broken_deterministically(empty_store):
-    """同じ本文が同じ資料の同じ location に2回現れるとき、並びが決定的に決まる。
-
-    挿入順に左右されない。取り込み順を変えても出現の順序は変わらない。
-    """
-    chunk_id = None
-    # 最初の挿入順: a.md::1::0, a.md::1::1
-    empty_store.add(
-        ids=["a.md::1::0", "a.md::1::1"],
-        documents=["同じ本文", "同じ本文"],
-        metadatas=[
-            {"source": "a.md", "location": 1},
-            {"source": "a.md", "location": 1},
-        ],
-        embeddings=[_vector(1.0), _vector(1.0)],
-    )
-    (chunk_id,), _ = empty_store.chunks()
-    first_result = empty_store.chunks_by_ids([chunk_id])[chunk_id]
-
-    # 二番目の挿入順を変える: a.md::1::1, a.md::1::0
-    empty_store2 = open_store(":memory:")
-    empty_store2.add(
-        ids=["a.md::1::1", "a.md::1::0"],
-        documents=["同じ本文", "同じ本文"],
-        metadatas=[
-            {"source": "a.md", "location": 1},
-            {"source": "a.md", "location": 1},
-        ],
-        embeddings=[_vector(1.0), _vector(1.0)],
-    )
-    (chunk_id2,), _ = empty_store2.chunks()
-    second_result = empty_store2.chunks_by_ids([chunk_id2])[chunk_id2]
-
-    # 出現の並びが同じになることを確かめる
-    # occurrence_idを返していないので、ここでは「持つキーが同じ」で確認
-    first_ids = [o["source"] + "::" + str(o["location"]) + "::" + str(o.get("chunk_index", 0)) for o in first_result[1]]
-    second_ids = [o["source"] + "::" + str(o["location"]) + "::" + str(o.get("chunk_index", 0)) for o in second_result[1]]
-    assert first_ids == second_ids
-
-
 def test_chunks_by_ids_preserves_requested_id_order(empty_store):
     """複数IDを渡したとき、リクエスト順が保たれること。
 
@@ -713,33 +673,27 @@ def test_chunks_by_ids_preserves_requested_id_order(empty_store):
     assert list(result.keys()) == requested_order
 
 
-def test_chunks_by_ids_ties_require_occurrence_id_as_tiebreaker(empty_store):
-    """同着は occurrence_id で決定的に決まること。
+def test_chunks_by_ids_ties_are_broken_by_occurrence_id(empty_store):
+    """同じ本文が同じ資料の同じ location に複数回現れるとき、chunk_index の昇順に決まる。
 
-    同じ本文が同じ資料の同じ location に複数回現れたとき、
-    occurrence_id がなければ順序は不定になる。
+    同じ出現に異なる chunk_index が付く。挿入順を逆にしても、出現は
+    chunk_index の昇順に返される。これは occurrence_id (source::location::index)
+    が決着子として機能しているから。
     """
-    # 同じ本文を同じ location に3回入れる
+    # 逆順で挿入: index=1 を先に、index=0 を後に
+    # 挿入順だけでは [1, 0] の順になるはずだが、tiebreaker があれば [0, 1] が返る
     empty_store.add(
-        ids=["x.md::5::0", "x.md::5::1", "x.md::5::2"],
-        documents=["同じ本文", "同じ本文", "同じ本文"],
+        ids=["a.md::5::1", "a.md::5::0"],
+        documents=["同じ本文", "同じ本文"],
         metadatas=[
-            {"source": "x.md", "location": 5},
-            {"source": "x.md", "location": 5},
-            {"source": "x.md", "location": 5},
+            {"source": "a.md", "location": 5, "chunk_index": 1},
+            {"source": "a.md", "location": 5, "chunk_index": 0},
         ],
-        embeddings=[_vector(1.0), _vector(1.0), _vector(1.0)],
+        embeddings=[_vector(1.0), _vector(1.0)],
     )
     (chunk_id,), _ = empty_store.chunks()
+    text, occurrences = empty_store.chunks_by_ids([chunk_id])[chunk_id]
 
-    # 同じチャンクに対して複数回クエリを実行しても、出現の順序が変わらない
-    results = []
-    for _ in range(5):
-        text, occurrences = empty_store.chunks_by_ids([chunk_id])[chunk_id]
-        # occurrence_id は返されないので、chunk_index を確認できないが、
-        # 出現が同じ順序で返されることを確認する
-        results.append([(o["source"], o["location"]) for o in occurrences])
-
-    # 全ての結果が同じ順序であること
-    for i in range(1, len(results)):
-        assert results[i] == results[0], f"クエリ{i}の順序が異なります"
+    # chunk_index の昇順に返されること
+    chunk_indices = [o["chunk_index"] for o in occurrences]
+    assert chunk_indices == [0, 1], f"期待: [0, 1], 実際: {chunk_indices}"

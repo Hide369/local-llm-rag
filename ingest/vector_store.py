@@ -325,6 +325,11 @@ class VectorStore:
         location は型が混ざるので文字列で比べる。同着がなければ出現順は
         (source, location) で固定されるが、同じ資料の同じ場所に同じ本文が
         複数回現れた場合に取り込み順に左右されないようにする。
+
+        occurrence_id を選ぶ理由: metadata の chunk_index ではなく、
+        occurrence_id (主キー) を使う。chunk_index は将来のコード変更で
+        持つとは限らないが、occurrence_id は構造的に一意で、かつ
+        source::location::index 形式で出現ごとに必ず異なるため。
         """
         return (
             occurrence.get("source", ""),
