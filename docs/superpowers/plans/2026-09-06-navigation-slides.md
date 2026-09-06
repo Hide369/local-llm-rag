@@ -88,8 +88,13 @@ def test_a_cover_page_padded_with_blank_lines_is_not_navigation():
 
 
 def test_a_run_of_page_numbers_is_not_navigation():
-    """モデル就業規則.pdf 34ページ。数字だけの行が続く。"""
-    assert not is_navigation("17\n18\n19\n10\n11\n12\n13\n14")
+    """モデル就業規則.pdf 34ページ由来。数字だけの行が続く。
+
+    3行に切り詰めてあるのは、生の行数ガード（4行以下）ではなく数字連続ガードが
+    効いていることを確かめるため。原文の長さのままだと行数ガードだけで False に
+    なり、数字連続ガードを消してもこのテストは通ってしまう（実行で確認）。
+    """
+    assert not is_navigation("17\n18\n19")
 
 
 def test_body_text_that_mentions_a_table_of_contents_is_not_navigation():
