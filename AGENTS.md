@@ -1,7 +1,8 @@
-# Codex development guidance
+# Codex 開発ガイドライン
 
-- When `.agents/skills/using-superpowers/SKILL.md` exists, read it before responding or running a command, then follow its skill-selection workflow.
-- A skill explicitly named with `$skill-name` is mandatory. Read `.agents/skills/<skill-name>/SKILL.md` before acting.
-- Use the Windows PowerShell commands and Python virtual environment documented in this repository.
-- If the current tool set has no `apply_patch` tool, make a small, direct edit with PowerShell instead of retrying an unavailable tool.
-- Report a test as passing only after its actual command output shows a successful exit and zero failures.
+- `.agents/skills/using-superpowers/SKILL.md` が存在する場合は、応答やコマンドの実行前にその内容を確認し、記載されているスキル選択のワークフローに従ってください。
+- `$skill-name` で明示的に指定されたスキルは必須です。実行前に `.agents/skills/<skill-name>/SKILL.md` を確認してください。
+- 本リポジトリに記載されている Windows PowerShell コマンドおよび Python 仮想環境を使用してください。
+- 現在のツールセットに `apply_patch` ツールが含まれていない場合は、利用できないツールを再試行するのではなく、PowerShell を使用して直接、小規模な編集を行ってください。
+- テストの実行結果において、コマンドの出力が正常終了（成功）を示し、かつ失敗がゼロであることを確認した後にのみ、テストが合格したと報告してください。
+
