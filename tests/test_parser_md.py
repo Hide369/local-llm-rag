@@ -146,7 +146,7 @@ def test_scalar_frontmatter_becomes_attributes(sample):
 
 
 def test_numeric_attributes_keep_numeric_types(sample):
-    """文字列のままだと ChromaDB の $lte が働かず、絞り込みが静かに失敗する。"""
+    """文字列のままだと $lte が数値比較にならず、絞り込みが静かに失敗する。"""
     attributes = parse_md(sample)[0].attributes
     assert attributes["noise_wash_db"] == 27
     assert isinstance(attributes["noise_wash_db"], int)
@@ -155,7 +155,10 @@ def test_numeric_attributes_keep_numeric_types(sample):
 
 
 def test_array_attributes_are_skipped(sample):
-    """ChromaDBのメタデータはスカラーしか持てず、where も部分一致を扱えない。"""
+    """メタデータはスカラーだけの平らな辞書に保ち、where も部分一致を扱わない。
+
+    値そのものは捨てず _array_values が本文へ載せる（別のテストで確認する）。
+    """
     assert "tags" not in parse_md(sample)[0].attributes
 
 

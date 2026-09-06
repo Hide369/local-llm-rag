@@ -35,8 +35,9 @@ def _read_lines(path: Path) -> list[str]:
 def _scalar(value: str):
     """YAMLのスカラー値をPythonの型に直す。採用しない値には None を返す。
 
-    数値に見えるものを int / float にするのは、ChromaDB の where が
-    数値比較をするため。文字列のまま入れると $lte が黙って効かなくなる。
+    数値に見えるものを int / float にするのは、絞り込みの where が数値比較を
+    するため（ingest/vector_store.py の _compare）。文字列のまま入れると
+    26 <= "9.0" のような比較になり、$lte が黙って効かなくなる。
     """
     text = value.strip()
     if not text or text.startswith("["):
