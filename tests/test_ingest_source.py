@@ -591,3 +591,35 @@ def test_ingest_keeps_everything_when_every_unit_looks_like_navigation(
     assert collection.count() == 1, "資料がDBから消えていないことを直接見る"
     assert report.kept_all_navigation == ["nav_only.md"]
     assert any("警告" in message and "nav_only.md" in message for message in messages)
+
+
+class _BrokenSession:
+    """埋め込みが必ず失敗するセッション。
+
+    requests の例外ではなく RuntimeError を投げる。requests の例外だと
+    ingest/embedder.py が指数バックオフで再試行し、テストが数秒待たされる。
+    """
+
+    def post(self, url, json, timeout):
+        raise RuntimeError("Ollama に接続できません")
+
+    def close(self):
+        pass
+
+
+def test_a_file_that_fails_is_not_reported_as_kept_all_navigation(
+    source_dir, collection
+):
+    """埋め込みに失敗した資料を kept_all_navigation に載せない。
+
+    載せると要約に「失敗」と「全ユニットがナビゲーション判定のため除外しません
+    でした」が両方出る。後者は「丸ごと取り込んだ」と読めるが、実際はDBに1件も
+    入っていない。
+    """
+    _write_md(source_dir, "nav_only.md", _NAV_SECTION)
+
+    report = ingest_directory(source_dir, collection, session=_BrokenSession())
+
+    assert "nav_only.md" in report.failed
+    assert report.kept_all_navigation == []
+    assert collection.count() == 0

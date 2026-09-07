@@ -119,14 +119,14 @@ def ingest_directory(
             try:
                 units = parse(path, caption_image=caption_image)
                 kept, dropped = navigation.drop_navigation(units)
-                if dropped and not kept:
+                kept_all_navigation = bool(dropped) and not kept
+                if kept_all_navigation:
                     # 規則が誤爆したときに資料が丸ごと消えるのを防ぐ。空のチャンク列を
                     # store.replace_source() に渡すと、その資料はDBから消える。
                     # 中身のある資料からノイズを取り除くのがこの機能の目的であり、
                     # 「中身が1つも無い資料」は規則の誤りである可能性のほうが高い。
                     notify(f"警告: {source} は全ユニットがナビゲーション判定。除外しません")
                     dropped = []
-                    report.kept_all_navigation.append(source)
                 else:
                     units = kept
                 chunks = chunk_units(units, source, current_hash, today)
@@ -140,6 +140,12 @@ def ingest_directory(
                 continue
 
             report.indexed[source] = len(chunks)
+            # 報告に載せるのは取り込みが成功した資料だけである。埋め込みで失敗した
+            # 資料をここに載せると、要約に「失敗」と「全ユニットがナビゲーション
+            # 判定のため除外しませんでした」が並び、後者が「丸ごと取り込んだ」と
+            # 読めてしまう（実際はDBに1件も入っていない）。
+            if kept_all_navigation:
+                report.kept_all_navigation.append(source)
             if dropped:
                 report.dropped[source] = len(dropped)
                 notify(
