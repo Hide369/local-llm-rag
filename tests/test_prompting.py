@@ -71,6 +71,47 @@ def test_report_counts_chunks_files_and_skips_separately():
     assert "削除: 1ファイル" in text
 
 
+def test_report_shows_how_many_navigation_slides_were_dropped():
+    report = IngestReport(
+        indexed={"a.pptx": 30, "b.pptx": 24},
+        skipped=[],
+        failed={},
+        removed=[],
+        dropped={"a.pptx": 4, "b.pptx": 3},
+    )
+    text = format_report(report)
+    assert "ナビゲーション除外: 7件" in text
+    assert "2ファイル" in text
+
+
+def test_report_says_nothing_about_navigation_when_none_was_dropped():
+    """何も落ちていないのに行が出ると、落ちたのかどうか読み取れない。"""
+    report = IngestReport(indexed={"a.pdf": 3}, skipped=[], failed={}, removed=[])
+    assert "ナビゲーション" not in format_report(report)
+
+
+def test_report_names_sources_kept_whole_because_every_unit_was_navigation():
+    """全滅を検知しても report.dropped には載らない（落としていないため）。
+    GUI経路はnotify()のprintを受け取らないため、この情報がformat_report自体に
+    出ないと利用者に届かない。"""
+    report = IngestReport(
+        indexed={"nav_only.pptx": 3},
+        skipped=[],
+        failed={},
+        removed=[],
+        kept_all_navigation=["nav_only.pptx"],
+    )
+    text = format_report(report)
+    assert "全ユニットがナビゲーション判定のため除外しませんでした" in text
+    assert "nav_only.pptx" in text
+
+
+def test_report_says_nothing_about_kept_whole_when_nothing_was_kept_whole():
+    """空なら行を出さない。常に出すと、起きたのかどうか読み取れない。"""
+    report = IngestReport(indexed={"a.pdf": 3}, skipped=[], failed={}, removed=[])
+    assert "除外しませんでした" not in format_report(report)
+
+
 def test_report_lists_failures():
     report = IngestReport(indexed={}, skipped=[], failed={"壊れた.pdf": "読めません"}, removed=[])
     text = format_report(report)

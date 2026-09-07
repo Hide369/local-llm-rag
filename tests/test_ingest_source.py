@@ -449,6 +449,33 @@ def test_a_healthy_store_finishes_successfully(monkeypatch, tmp_path):
     assert _run_main_with(monkeypatch, tmp_path, _FakeHealthyCollection()) == 0
 
 
+def test_main_prints_the_navigation_summary_lines(monkeypatch, tmp_path, capsys):
+    """CLI要約のナビゲーション関連の2行はformat_report()を経由せずmain()が
+    直接printしている。ここを直接見るテストが無いと、main()を触ったときに
+    無言でこの2行が消えても誰も気づけない（ingest/prompting.pyのformat_report()を
+    見るtest_prompting.pyのテストはCLI側の出力を検証しない）。
+    """
+    def fake_ingest_directory(*_args, **_kwargs):
+        report = ingest_source.IngestReport()
+        report.dropped = {"a.pptx": 4}
+        report.kept_all_navigation = ["nav_only.pptx"]
+        return report
+
+    monkeypatch.setattr(ingest_source, "ingest_directory", fake_ingest_directory)
+    monkeypatch.setattr(ingest_source.embedder, "check_ollama", lambda: None)
+    monkeypatch.setattr(
+        ingest_source.store, "open_store", lambda path: _FakeHealthyCollection()
+    )
+    monkeypatch.setattr(sys, "argv", ["ingest_source", "--source-dir", str(tmp_path)])
+
+    assert ingest_source.main() == 0
+    out = capsys.readouterr().out
+    assert "ナビゲーション除外: 4件 / 1ファイル" in out
+    assert (
+        "全ユニットがナビゲーション判定のため除外しませんでした: nav_only.pptx" in out
+    )
+
+
 def test_integrity_detects_orphaned_chunks(collection):
     """integrity() は出現を持たない本文を見つける。"""
     # 本文を追加
@@ -516,3 +543,138 @@ def test_integrity_returns_healthy_for_valid_store(collection):
         embeddings=[[0.1] * EMBED_DIM, [0.2] * EMBED_DIM],
     )
     assert collection.integrity() == (0, 0)
+
+
+_NAV_SECTION = "## 1\n\n転移学習とファインチューニング\n"
+
+
+def test_ingest_drops_a_navigation_section_and_reports_how_many(
+    source_dir, collection
+):
+    """章扉は取り込まれず、除外件数が報告に載る。本文の節は残る。"""
+    _write_md(
+        source_dir,
+        "mixed.md",
+        _NAV_SECTION
+        + "\n## 本編\n\nRAGは検索した文書を根拠にして回答を組み立てる仕組みである。"
+        "実務では社内文書を対象にする。\n",
+    )
+
+    report = ingest_directory(source_dir, collection, session=_FakeSession())
+
+    assert report.dropped == {"mixed.md": 1}
+    stored = collection.get()["documents"]
+    assert "1\n転移学習とファインチューニング" not in stored
+    assert any("RAGは検索した文書を根拠に" in text for text in stored)
+
+
+def test_ingest_keeps_everything_when_every_unit_looks_like_navigation(
+    source_dir, collection
+):
+    """全滅したら何も落とさない。
+
+    落とすと store.replace_source() が空のチャンク列を受け取り、資料が
+    DBから丸ごと消える。規則が誤爆したときに最も起きてほしくない結果である。
+    """
+    messages = []
+    _write_md(source_dir, "nav_only.md", _NAV_SECTION)
+
+    report = ingest_directory(
+        source_dir,
+        collection,
+        session=_FakeSession(),
+        on_progress=messages.append,
+    )
+
+    assert "nav_only.md" not in report.dropped
+    assert report.indexed["nav_only.md"] == 1
+    assert collection.count() == 1, "資料がDBから消えていないことを直接見る"
+    assert report.kept_all_navigation == ["nav_only.md"]
+    assert any("警告" in message and "nav_only.md" in message for message in messages)
+
+
+class _BrokenSession:
+    """埋め込みが必ず失敗するセッション。
+
+    requests の例外ではなく RuntimeError を投げる。requests の例外だと
+    ingest/embedder.py が指数バックオフで再試行し、テストが数秒待たされる。
+    """
+
+    def post(self, url, json, timeout):
+        raise RuntimeError("Ollama に接続できません")
+
+    def close(self):
+        pass
+
+
+def test_a_file_that_fails_is_not_reported_as_kept_all_navigation(
+    source_dir, collection
+):
+    """埋め込みに失敗した資料を kept_all_navigation に載せない。
+
+    載せると要約に「失敗」と「全ユニットがナビゲーション判定のため除外しません
+    でした」が両方出る。後者は「丸ごと取り込んだ」と読めるが、実際はDBに1件も
+    入っていない。
+    """
+    _write_md(source_dir, "nav_only.md", _NAV_SECTION)
+
+    report = ingest_directory(source_dir, collection, session=_BrokenSession())
+
+    assert "nav_only.md" in report.failed
+    assert report.kept_all_navigation == []
+    assert collection.count() == 0
+
+
+def test_the_progress_line_names_which_units_were_dropped(source_dir, collection):
+    """件数だけでなく、どの位置が消えたのかを出す。
+
+    誤検出が起きたときに何が消えたのか追える唯一の手段である。
+    """
+    messages = []
+    _write_md(
+        source_dir,
+        "mixed.md",
+        _NAV_SECTION
+        + "\n## 本編\n\nRAGは検索した文書を根拠にして回答を組み立てる仕組みである。"
+        "実務では社内文書を対象にする。\n",
+    )
+
+    ingest_directory(
+        source_dir,
+        collection,
+        session=_FakeSession(),
+        on_progress=messages.append,
+    )
+
+    assert any("ナビゲーション1件を除外: 1" in message for message in messages)
+
+
+def test_dropped_positions_uses_the_same_wording_as_the_citation():
+    """スライドとページは出典表示と同じ言い方で並べる。"""
+    from ingest.models import PAGE, SLIDE, ParsedUnit
+
+    dropped = [
+        ParsedUnit(text="1\n序論", location_type=SLIDE, location=4),
+        ParsedUnit(text="－ 目次 －", location_type=SLIDE, location=5),
+        ParsedUnit(text="ご清聴ありがとうございました", location_type=SLIDE, location=27),
+    ]
+    assert ingest_source._dropped_positions(dropped) == "スライド4,5,27"
+
+    pages = [ParsedUnit(text="3\n第3章", location_type=PAGE, location=48)]
+    assert ingest_source._dropped_positions(pages) == "p.48"
+
+
+def test_dropped_positions_uses_the_heading_when_the_number_means_nothing():
+    """Markdownの通し番号は利用者にとって意味がないので見出しを出す。"""
+    from ingest.models import SECTION, ParsedUnit
+
+    dropped = [
+        ParsedUnit(text="1\n転移学習", location_type=SECTION, location=1, heading="1"),
+        ParsedUnit(
+            text="ご清聴ありがとうございました",
+            location_type=SECTION,
+            location=7,
+            heading="おわりに",
+        ),
+    ]
+    assert ingest_source._dropped_positions(dropped) == "1,おわりに"
