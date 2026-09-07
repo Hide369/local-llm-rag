@@ -449,6 +449,33 @@ def test_a_healthy_store_finishes_successfully(monkeypatch, tmp_path):
     assert _run_main_with(monkeypatch, tmp_path, _FakeHealthyCollection()) == 0
 
 
+def test_main_prints_the_navigation_summary_lines(monkeypatch, tmp_path, capsys):
+    """CLI要約のナビゲーション関連の2行はformat_report()を経由せずmain()が
+    直接printしている。ここを直接見るテストが無いと、main()を触ったときに
+    無言でこの2行が消えても誰も気づけない（ingest/prompting.pyのformat_report()を
+    見るtest_prompting.pyのテストはCLI側の出力を検証しない）。
+    """
+    def fake_ingest_directory(*_args, **_kwargs):
+        report = ingest_source.IngestReport()
+        report.dropped = {"a.pptx": 4}
+        report.kept_all_navigation = ["nav_only.pptx"]
+        return report
+
+    monkeypatch.setattr(ingest_source, "ingest_directory", fake_ingest_directory)
+    monkeypatch.setattr(ingest_source.embedder, "check_ollama", lambda: None)
+    monkeypatch.setattr(
+        ingest_source.store, "open_store", lambda path: _FakeHealthyCollection()
+    )
+    monkeypatch.setattr(sys, "argv", ["ingest_source", "--source-dir", str(tmp_path)])
+
+    assert ingest_source.main() == 0
+    out = capsys.readouterr().out
+    assert "ナビゲーション除外: 4件 / 1ファイル" in out
+    assert (
+        "全ユニットがナビゲーション判定のため除外しませんでした: nav_only.pptx" in out
+    )
+
+
 def test_integrity_detects_orphaned_chunks(collection):
     """integrity() は出現を持たない本文を見つける。"""
     # 本文を追加
