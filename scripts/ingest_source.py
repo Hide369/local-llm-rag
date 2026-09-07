@@ -22,6 +22,7 @@ load_dotenv()
 
 from ingest import embedder, navigation, store, vlm
 from ingest.chunker import chunk_units
+from ingest.models import PAGE, SLIDE, ParsedUnit
 from ingest.parsers import SUPPORTED_SUFFIXES, parse
 
 DEFAULT_SOURCE_DIR = Path(__file__).resolve().parent.parent / "source"
@@ -88,6 +89,30 @@ def _source_key(path: Path, source_dir: Path) -> str:
     return path.relative_to(source_dir).as_posix()
 
 
+# 位置の呼び方は ingest/retrieval.py の Hit._one_citation() に揃える。
+# 利用者が画面で見る出典と同じ言い方でないと、どのスライドの話か照合できない。
+_POSITION_LABELS = {PAGE: "p.", SLIDE: "スライド"}
+
+
+def _dropped_positions(dropped: list[ParsedUnit]) -> str:
+    """落としたユニットの位置を「スライド4,5,17」の形にまとめる。
+
+    件数だけでは、規則が誤爆したときに何が消えたのか追えない。
+    navigation.drop_navigation() が件数ではなく現物を返しているのはこのためで、
+    ここがその現物を使う唯一の場所である。
+
+    通し番号が利用者にとって意味を持たない形式（Markdownの見出し）は見出し文字列を
+    出す。1つの資料は1つのパーサーが読むので種別が混ざることはないが、混ざっても
+    壊れないよう種別ごとにまとめる。
+    """
+    groups: dict[str, list[str]] = {}
+    for unit in dropped:
+        label = _POSITION_LABELS.get(unit.location_type, "")
+        position = str(unit.location) if label else (unit.heading or str(unit.location))
+        groups.setdefault(label, []).append(position)
+    return "、".join(f"{label}{','.join(items)}" for label, items in groups.items())
+
+
 def ingest_directory(
     source_dir: Path,
     collection,
@@ -150,7 +175,8 @@ def ingest_directory(
                 report.dropped[source] = len(dropped)
                 notify(
                     f"完了: {source}（{len(chunks)}チャンク、"
-                    f"ナビゲーション{len(dropped)}件を除外）"
+                    f"ナビゲーション{len(dropped)}件を除外: "
+                    f"{_dropped_positions(dropped)}）"
                 )
             else:
                 notify(f"完了: {source}（{len(chunks)}チャンク）")

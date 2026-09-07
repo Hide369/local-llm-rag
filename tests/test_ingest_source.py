@@ -623,3 +623,58 @@ def test_a_file_that_fails_is_not_reported_as_kept_all_navigation(
     assert "nav_only.md" in report.failed
     assert report.kept_all_navigation == []
     assert collection.count() == 0
+
+
+def test_the_progress_line_names_which_units_were_dropped(source_dir, collection):
+    """件数だけでなく、どの位置が消えたのかを出す。
+
+    誤検出が起きたときに何が消えたのか追える唯一の手段である。
+    """
+    messages = []
+    _write_md(
+        source_dir,
+        "mixed.md",
+        _NAV_SECTION
+        + "\n## 本編\n\nRAGは検索した文書を根拠にして回答を組み立てる仕組みである。"
+        "実務では社内文書を対象にする。\n",
+    )
+
+    ingest_directory(
+        source_dir,
+        collection,
+        session=_FakeSession(),
+        on_progress=messages.append,
+    )
+
+    assert any("ナビゲーション1件を除外: 1" in message for message in messages)
+
+
+def test_dropped_positions_uses_the_same_wording_as_the_citation():
+    """スライドとページは出典表示と同じ言い方で並べる。"""
+    from ingest.models import PAGE, SLIDE, ParsedUnit
+
+    dropped = [
+        ParsedUnit(text="1\n序論", location_type=SLIDE, location=4),
+        ParsedUnit(text="－ 目次 －", location_type=SLIDE, location=5),
+        ParsedUnit(text="ご清聴ありがとうございました", location_type=SLIDE, location=27),
+    ]
+    assert ingest_source._dropped_positions(dropped) == "スライド4,5,27"
+
+    pages = [ParsedUnit(text="3\n第3章", location_type=PAGE, location=48)]
+    assert ingest_source._dropped_positions(pages) == "p.48"
+
+
+def test_dropped_positions_uses_the_heading_when_the_number_means_nothing():
+    """Markdownの通し番号は利用者にとって意味がないので見出しを出す。"""
+    from ingest.models import SECTION, ParsedUnit
+
+    dropped = [
+        ParsedUnit(text="1\n転移学習", location_type=SECTION, location=1, heading="1"),
+        ParsedUnit(
+            text="ご清聴ありがとうございました",
+            location_type=SECTION,
+            location=7,
+            heading="おわりに",
+        ),
+    ]
+    assert ingest_source._dropped_positions(dropped) == "1,おわりに"
