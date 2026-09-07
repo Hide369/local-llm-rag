@@ -80,6 +80,63 @@ def test_empty_text_is_not_navigation():
     assert not is_navigation("   \n  \n ")
 
 
+# --- 締めの上限で塞いだ穴 ---
+
+def test_a_long_body_starting_with_the_closing_greeting_is_not_navigation():
+    """締めの挨拶で始まっても、中身が続く本文は落とさない。
+
+    _MAX_CLOSING_CHARS を足すまでは落ちていた（実行で確認）。締めの実測は33字で、
+    この本文は69字ある。
+    """
+    body = (
+        "ご清聴ありがとうございました。続いて質疑応答に移ります。"
+        "Q: 有給休暇の付与日数は？ A: 6箇月継続勤務した労働者に10日付与されます。"
+    )
+    assert not is_navigation(body)
+
+
+def test_the_real_closing_slide_still_fits_under_the_length_cap():
+    """上限を実測33字より下げると、本物の締めスライドが残ってしまう。"""
+    assert is_navigation("ご清聴ありがとうございました\nAIとともに、新しい働き方を始めよう")
+
+
+# --- 既知の限界（設計書2.4節）。直っていないものを直ったように見せない ---
+#
+# 以下は本文でありながら落ちる。塞ぐには規則そのものを設計し直す必要があり、
+# 本ブランチでは塞いでいない。挙動が変わったらこのテストが赤くなるので、
+# 変わったこと自体には気づける。
+
+def test_known_limitation_short_body_after_a_page_number_is_dropped():
+    """先頭が数字だけの行で始まる短い本文は章扉と区別できない。
+
+    これは既知の限界であり、設計書2.4節に記載がある。PDFのページ番号が本文の
+    先頭に来る資料では実際に起こり得る形で、モデル就業規則.pdf の1〜9ページは
+    生の行数ガード（16〜38行）だけで救われている。
+    """
+    body = (
+        "38\n年次有給休暇は、雇入れの日から起算して6箇月間継続勤務し"
+        "全労働日の8割以上出勤した労働者に対して10労働日の有給休暇を与える。"
+    )
+    assert is_navigation(body), "落ちる。これは現状の挙動であって望ましさではない"
+
+
+def test_known_limitation_body_starting_with_a_circled_number_is_dropped():
+    """丸数字は str.isdigit() が真になるため章扉と判定される。
+
+    これは既知の限界であり、設計書2.4節に記載がある。
+    """
+    assert is_navigation("①\n転移学習の概要とその効果について説明する。")
+
+
+def test_known_limitation_body_with_a_short_heading_about_contents_is_dropped():
+    """「目次」を含む10字以下の見出しを持つ本文は目次スライドと区別できない。
+
+    これは既知の限界であり、設計書2.4節に記載がある。
+    """
+    body = "目次の作り方\nWord では参照タブから目次を挿入する。見出しスタイルを設定しておく必要がある。"
+    assert is_navigation(body)
+
+
 def _slide(text, location):
     return ParsedUnit(text=text, location_type=SLIDE, location=location)
 
