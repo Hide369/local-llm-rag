@@ -1,3 +1,5 @@
+> このページは旧草案です。実際の配置には [Windowsサーバー配置手順](server-deployment-windows.md) を使用してください。以下は参考用に保持しています。
+
 ご提示いただいた手順書（`server-deployment.md`）の内容を元に、**Linux/systemd前提の記述（パス、コマンド、設定ファイル等）を Windows サーバー環境（Windows Service, PowerShell, IIS / Nginx for Windows 等）に合わせて書き換えたドキュメント**を作成しました。
 
 ---

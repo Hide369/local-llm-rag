@@ -33,6 +33,10 @@ $env:OLLAMA_HOST="http://127.0.0.1:12000"
 
 ## セットアップ
 
+Windowsサーバーへ配置し、別PCのブラウザーから利用する場合は、
+[Windowsサーバー配置手順](docs/server-deployment-windows.md) を参照する
+（既存の資料・ベクトルDBは移行しない構成）。
+
 ```powershell
 .\myvenv313\Scripts\python.exe -m pip install -r requirements.txt
 ```
