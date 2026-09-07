@@ -94,6 +94,12 @@ STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
 
 Colabなど認証付きの外部Ollamaへ接続する場合に限り、`OLLAMA_API_KEY`をこのファイルに追加する。値をGitや `.streamlit/config.toml` に直接書かない。
 
+STREAMLIT_SERVER_COOKIE_SECRETはPythonで以下を実行して取得する。
+python -c "import secrets; print(secrets.token_hex(32))"
+
+または、PowerShellで以下を実行して取得する。
+[Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+
 ### 4. StreamlitをWindowsサービスとして登録・起動する
 
 バックグラウンドサービスとして常駐させるため、**NSSM** 等を用いてサービス登録を行う。
@@ -157,8 +163,25 @@ server {
 }
 
 ```
-
 Streamlit側のCORS・XSRF保護は無効にしない。サーバー名が固定なら、`.streamlit/config.toml`（Gitには秘密を書かない）に許可するホストとオリジンを設定する。
+
+nginxをインストールし、上記ファイルを、C:\nginx\conf\nginx.conf に配置する。配置したら、以下を実行
+```
+cd C:\nginx
+
+# 設定ファイルの文法チェック（エラーがないか確認）
+.\nginx.exe -t
+
+# 設定の再読み込み（リロード）
+.\nginx.exe -s reload
+```
+
+PowerShellで以下を実行し、tomlファイルを配置する。
+# フォルダの作成
+New-Item -ItemType Directory -Path "C:\App\local-llm-rag\.streamlit" -Force
+
+# ファイルの作成・保存（メモ帳などで開いて内容を貼り付けてください）
+notepad C:\App\local-llm-rag\.streamlit\config.toml
 
 ```toml
 [server]
