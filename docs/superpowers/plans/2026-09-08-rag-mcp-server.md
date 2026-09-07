@@ -442,14 +442,20 @@ def test_the_reranker_is_not_loaded_until_the_first_search(monkeypatch):
     Codex はセッション開始時にサーバを起こす。起動時にロードすると、検索を
     1度もしないセッションが3.3秒と約570MBを払う（実測）。常にロードするよう
     壊しても例外は出ず、遅くなるだけなのでテストでしか捕まえられない。
+
+    spy を仕掛けてから reload するのが要点である。import 済みのモジュールに
+    後から spy を入れて表明しても、起動時ロードは既に終わっており、壊れた実装
+    でもテストが通ってしまう（隔離環境で再現済み）。
     """
+    import importlib
+
+    from ingest import reranker
     from scripts import rag_mcp_server
 
     loaded = []
-    monkeypatch.setattr(
-        rag_mcp_server.reranker, "check_reranker", lambda: loaded.append(1)
-    )
-    # モジュールを読み込んだだけの状態
+    monkeypatch.setattr(reranker, "check_reranker", lambda: loaded.append(1))
+    importlib.reload(rag_mcp_server)
+
     assert loaded == [], "検索していないのにリランカーをロードしている"
 
 
@@ -626,7 +632,7 @@ Expected: PASS（13件）
 
 - [ ] **Step 5: 遅延ロードを壊すとテストが赤くなることを確かめる**
 
-モジュール末尾（`if __name__` の直前）に `reranker.check_reranker()` を一時的に足す。これは「起動時にロードする」実装を模したものである。
+モジュール末尾（`if __name__` の直前）に `reranker.check_reranker()` を一時的に足す。これは「起動時にロードする」実装を模したものである。テストは spy を仕掛けてから `importlib.reload` するので、この行が spy を通って落ちる。
 
 Run: `../../myvenv313/Scripts/python.exe -m pytest tests/test_rag_mcp_server.py -q -k reranker`
 Expected: FAIL — `test_the_reranker_is_not_loaded_until_the_first_search`
