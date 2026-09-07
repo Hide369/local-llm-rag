@@ -20,8 +20,9 @@ from dotenv import load_dotenv
 # importより先に .env を読み込む必要がある。
 load_dotenv()
 
-from ingest import embedder, store, vlm
+from ingest import embedder, navigation, store, vlm
 from ingest.chunker import chunk_units
+from ingest.models import PAGE, SLIDE, ParsedUnit
 from ingest.parsers import SUPPORTED_SUFFIXES, parse
 
 DEFAULT_SOURCE_DIR = Path(__file__).resolve().parent.parent / "source"
@@ -34,6 +35,14 @@ class IngestReport:
     skipped: list[str] = field(default_factory=list)
     failed: dict[str, str] = field(default_factory=dict)
     removed: list[str] = field(default_factory=list)
+    # 資料キー → ナビゲーション用スライドとして除外した件数。
+    # 1件も落ちなかった資料はキーを持たない。
+    dropped: dict[str, int] = field(default_factory=dict)
+    # 全ユニットがナビゲーション判定になり、何も落とさなかった資料のキー。
+    # notify() のログはCLIでしか見えない（Streamlit経路は on_progress を渡して
+    # いない）。この情報を報告に載せておかないと、GUIから取り込んだときに
+    # 全滅の警告が見えないところで消える。
+    kept_all_navigation: list[str] = field(default_factory=list)
 
 
 def file_hash(path: Path) -> str:
@@ -80,6 +89,30 @@ def _source_key(path: Path, source_dir: Path) -> str:
     return path.relative_to(source_dir).as_posix()
 
 
+# 位置の呼び方は ingest/retrieval.py の Hit._one_citation() に揃える。
+# 利用者が画面で見る出典と同じ言い方でないと、どのスライドの話か照合できない。
+_POSITION_LABELS = {PAGE: "p.", SLIDE: "スライド"}
+
+
+def _dropped_positions(dropped: list[ParsedUnit]) -> str:
+    """落としたユニットの位置を「スライド4,5,17」の形にまとめる。
+
+    件数だけでは、規則が誤爆したときに何が消えたのか追えない。
+    navigation.drop_navigation() が件数ではなく現物を返しているのはこのためで、
+    ここがその現物を使う唯一の場所である。
+
+    通し番号が利用者にとって意味を持たない形式（Markdownの見出し）は見出し文字列を
+    出す。1つの資料は1つのパーサーが読むので種別が混ざることはないが、混ざっても
+    壊れないよう種別ごとにまとめる。
+    """
+    groups: dict[str, list[str]] = {}
+    for unit in dropped:
+        label = _POSITION_LABELS.get(unit.location_type, "")
+        position = str(unit.location) if label else (unit.heading or str(unit.location))
+        groups.setdefault(label, []).append(position)
+    return "、".join(f"{label}{','.join(items)}" for label, items in groups.items())
+
+
 def ingest_directory(
     source_dir: Path,
     collection,
@@ -110,6 +143,17 @@ def ingest_directory(
             notify(f"処理中: {source}")
             try:
                 units = parse(path, caption_image=caption_image)
+                kept, dropped = navigation.drop_navigation(units)
+                kept_all_navigation = bool(dropped) and not kept
+                if kept_all_navigation:
+                    # 規則が誤爆したときに資料が丸ごと消えるのを防ぐ。空のチャンク列を
+                    # store.replace_source() に渡すと、その資料はDBから消える。
+                    # 中身のある資料からノイズを取り除くのがこの機能の目的であり、
+                    # 「中身が1つも無い資料」は規則の誤りである可能性のほうが高い。
+                    notify(f"警告: {source} は全ユニットがナビゲーション判定。除外しません")
+                    dropped = []
+                else:
+                    units = kept
                 chunks = chunk_units(units, source, current_hash, today)
                 vectors = embedder.embed_texts(
                     [chunk.text for chunk in chunks], session=session
@@ -121,7 +165,21 @@ def ingest_directory(
                 continue
 
             report.indexed[source] = len(chunks)
-            notify(f"完了: {source}（{len(chunks)}チャンク）")
+            # 報告に載せるのは取り込みが成功した資料だけである。埋め込みで失敗した
+            # 資料をここに載せると、要約に「失敗」と「全ユニットがナビゲーション
+            # 判定のため除外しませんでした」が並び、後者が「丸ごと取り込んだ」と
+            # 読めてしまう（実際はDBに1件も入っていない）。
+            if kept_all_navigation:
+                report.kept_all_navigation.append(source)
+            if dropped:
+                report.dropped[source] = len(dropped)
+                notify(
+                    f"完了: {source}（{len(chunks)}チャンク、"
+                    f"ナビゲーション{len(dropped)}件を除外: "
+                    f"{_dropped_positions(dropped)}）"
+                )
+            else:
+                notify(f"完了: {source}（{len(chunks)}チャンク）")
 
         # source/ を唯一の入力とするため、消えた資料はDBからも消す。
         # ただし部分取り込みのときは行わない。対象外の拡張子のファイルが
@@ -190,6 +248,16 @@ def main() -> int:
     print(f"取り込み: {sum(report.indexed.values())}チャンク / {len(report.indexed)}ファイル")
     print(f"スキップ: {len(report.skipped)}ファイル")
     print(f"削除: {len(report.removed)}ファイル")
+    if report.dropped:
+        print(
+            f"ナビゲーション除外: {sum(report.dropped.values())}件"
+            f" / {len(report.dropped)}ファイル"
+        )
+    if report.kept_all_navigation:
+        print(
+            "全ユニットがナビゲーション判定のため除外しませんでした: "
+            + "、".join(report.kept_all_navigation)
+        )
     if report.failed:
         print(f"失敗: {len(report.failed)}ファイル")
         for source, message in report.failed.items():
