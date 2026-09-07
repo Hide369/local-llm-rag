@@ -91,3 +91,63 @@ def test_hits_are_numbered_in_order():
     assert text.index("[1]") < text.index("いち")
     assert text.index("[2]") < text.index("に")
     assert text.index("いち") < text.index("[2]")
+
+
+class _FakeCollection:
+    """revision() と count() だけを持つ最小のストア。"""
+
+    def __init__(self, revision=1):
+        self._revision = revision
+
+    def revision(self):
+        return self._revision
+
+    def count(self):
+        return 512
+
+    def bump(self):
+        self._revision += 1
+
+
+def test_the_index_is_built_once_and_reused(monkeypatch):
+    """revision が変わらない限り組み直さない。
+
+    判定を誤って常に真にすると、毎リクエストで57msの索引構築が走る。
+    例外は出ず、遅くなるだけなので、テストでしか捕まえられない。
+    """
+    from scripts import rag_mcp_server
+
+    calls = []
+    monkeypatch.setattr(
+        rag_mcp_server, "build_index", lambda collection: calls.append(1) or "索引"
+    )
+    state = rag_mcp_server._State()
+    collection = _FakeCollection()
+
+    assert rag_mcp_server._get_index(state, collection) == "索引"
+    assert rag_mcp_server._get_index(state, collection) == "索引"
+    assert rag_mcp_server._get_index(state, collection) == "索引"
+    assert len(calls) == 1, "revisionが変わっていないのに組み直している"
+
+
+def test_the_index_is_rebuilt_when_the_revision_changes(monkeypatch):
+    """取り込みが走ったら組み直す。
+
+    revision は書き込みトランザクションの内側で加算される。チャンク数を鍵に
+    すると「同数の差し替え」を取りこぼし、消えた旧チャンクIDを持ったままの
+    索引が理由の説明なくヒットを落とす（設計書6節）。
+    """
+    from scripts import rag_mcp_server
+
+    calls = []
+    monkeypatch.setattr(
+        rag_mcp_server, "build_index", lambda collection: calls.append(1) or "索引"
+    )
+    state = rag_mcp_server._State()
+    collection = _FakeCollection()
+
+    rag_mcp_server._get_index(state, collection)
+    collection.bump()
+    rag_mcp_server._get_index(state, collection)
+
+    assert len(calls) == 2

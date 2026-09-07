@@ -8,7 +8,10 @@
 取り込み中でもロックは取らない。SQLiteの読み手は書き込み中も一貫した
 スナップショットを得るため（設計書5節、実測で待ち0ms）。
 """
+from dataclasses import dataclass
+
 from ingest.prompting import format_hit_caption
+from ingest.retrieval import build_index
 
 # 0件のときに返す文言。空文字や空配列を返してはならない。エージェントは根拠が
 # 無いときこそ自分の知識で答えにいくため、「探したが無かった」ことを明示的に
@@ -48,3 +51,31 @@ def format_results(hits: list) -> str:
         blocks.append(f"## [{number}] {scores}\n出典:\n{citations}\n\n{hit.text}")
     blocks.append(_CAUTION)
     return "\n\n".join(blocks)
+
+
+@dataclass
+class _State:
+    """プロセスの生存期間だけ持つ状態。
+
+    サーバは Codex がセッションごとに起こす子プロセスであり、常駐する。
+    常駐する理由はDBを開くのが重いからではない（実測0.40ms）。BM25索引の
+    構築が57msかかり、エージェントは1タスク中に何度も検索するためである
+    （2026-09-08、570出現・本文512種の実測）。
+    """
+
+    index: object | None = None
+    index_revision: int | None = None
+
+
+def _get_index(state: _State, collection):
+    """BM25索引を返す。revision が変わっていれば組み直す。
+
+    revision は replace_source() の書き込みトランザクションの内側で加算される
+    ため、これだけを見れば鮮度を判定できる。読むコストは0.02msで、57msの
+    組み直しを避けられるかの判定には十分に軽い。
+    """
+    revision = collection.revision()
+    if state.index is None or revision != state.index_revision:
+        state.index = build_index(collection)
+        state.index_revision = revision
+    return state.index
