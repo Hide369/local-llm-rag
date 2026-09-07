@@ -137,6 +137,40 @@ def test_known_limitation_body_with_a_short_heading_about_contents_is_dropped():
     assert is_navigation(body)
 
 
+# --- 定数の値そのものの境界 ---
+#
+# ガードの有無ではなく値を1つ動かしただけの変異を捕まえる。実データのマージンは
+# 広いが、値が意味を持つことをテストで示しておく。
+
+def test_a_divider_of_exactly_the_line_limit_is_navigation():
+    """生の行数がちょうど上限（4行）なら章扉である。上限を下げると落ちなくなる。"""
+    assert is_navigation("3\n転移学習と\nファインチューニングの\n進め方")
+
+
+def test_one_line_over_the_divider_line_limit_is_not_navigation():
+    """生の行数が上限を1行超えたら章扉ではない。上限を上げるとこの本文が消える。"""
+    assert not is_navigation("3\n転移学習と\nファインチューニングの\n進め方と\n注意点")
+
+
+def test_a_lone_number_is_not_navigation():
+    """内容行が1行しかないものは章扉ではない。
+
+    章扉は「番号＋見出し」で2行以上ある。1行だけの数字はページ番号の断片であり、
+    見出しを持たない。内容行の下限を1に緩めるとこれが落ちる。
+    """
+    assert not is_navigation("38")
+
+
+def test_a_table_of_contents_heading_of_exactly_the_limit_is_navigation():
+    """先頭行がちょうど上限（10字）の目次見出しは落とす。上限を下げると残る。"""
+    assert is_navigation("－ 目次 ー第1部門\n1\nRAGの基礎知識")
+
+
+def test_a_heading_one_char_over_the_limit_is_not_navigation():
+    """先頭行が上限を1字超えたら目次スライドではない。上限を上げるとこれが消える。"""
+    assert not is_navigation("目次を作る手順について\nWord では参照タブから挿入する。")
+
+
 def _slide(text, location):
     return ParsedUnit(text=text, location_type=SLIDE, location=location)
 
