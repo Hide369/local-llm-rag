@@ -250,3 +250,81 @@ def test_ollama_failure_is_returned_as_its_own_message(monkeypatch):
 
     text = rag_mcp_server.search_documents("質問")
     assert "Ollamaに接続できません" in text
+
+
+def test_an_unexpected_error_is_not_disguised_as_a_search_result(monkeypatch):
+    """想定外の例外は握りつぶさず、そのまま外へ出す。
+
+    mcp 2.2.0 は、ツール関数が投げた例外を
+    `CallToolResult(content=[...], is_error=True)` に変換して返す
+    （mcp/server/mcpserver/tools/base.py:199、
+    mcp/server/mcpserver/server.py:447 を読んで確認、実測ではない）。
+    ここで拾ってしまうと、TypeError のようなバグが「0件でした」や
+    「Ollamaが落ちています」と見分けがつかない、正常な検索結果の顔をして
+    エージェントに届く。
+    """
+    import pytest
+
+    from scripts import rag_mcp_server
+
+    def boom(*a, **k):
+        raise TypeError("bad argument")
+
+    monkeypatch.setattr(rag_mcp_server, "_open", lambda: _FakeCollection())
+    monkeypatch.setattr(rag_mcp_server, "build_index", lambda collection: "索引")
+    monkeypatch.setattr(rag_mcp_server, "_ensure_reranker", lambda: None)
+    monkeypatch.setattr(rag_mcp_server, "search", boom)
+
+    with pytest.raises(TypeError):
+        rag_mcp_server.search_documents("質問")
+
+
+def test_check_reranker_is_called_only_once_across_two_searches(monkeypatch):
+    """一度用意できたら、以降の検索では確認をやり直さない。
+
+    やり直しても例外にはならず、無駄な確認が毎回走るだけなので、テストでしか
+    捕まえられない。
+    """
+    from scripts import rag_mcp_server
+
+    monkeypatch.setattr(rag_mcp_server, "_state", rag_mcp_server._State())
+    monkeypatch.setattr(rag_mcp_server, "_open", lambda: _FakeCollection())
+    monkeypatch.setattr(rag_mcp_server, "build_index", lambda collection: "索引")
+    monkeypatch.setattr(rag_mcp_server, "search", lambda *a, **k: [])
+
+    calls = []
+    monkeypatch.setattr(
+        rag_mcp_server.reranker, "check_reranker", lambda: calls.append(1)
+    )
+
+    rag_mcp_server.search_documents("質問1")
+    rag_mcp_server.search_documents("質問2")
+
+    assert len(calls) == 1, "reranker_ready になった後も確認をやり直している"
+
+
+def test_a_failed_reranker_check_is_retried_on_the_next_search(monkeypatch):
+    """確認が失敗したら ready にしない。次の検索でまた試す。
+
+    失敗しても ready を立てたままにすると、Ollama やモデル取得が後で直っても
+    リランカーが二度と有効にならない。
+    """
+    from scripts import rag_mcp_server
+
+    monkeypatch.setattr(rag_mcp_server, "_state", rag_mcp_server._State())
+    monkeypatch.setattr(rag_mcp_server, "_open", lambda: _FakeCollection())
+    monkeypatch.setattr(rag_mcp_server, "build_index", lambda collection: "索引")
+    monkeypatch.setattr(rag_mcp_server, "search", lambda *a, **k: [])
+
+    calls = []
+
+    def boom():
+        calls.append(1)
+        raise rag_mcp_server.reranker.RerankError("モデルを取得できません")
+
+    monkeypatch.setattr(rag_mcp_server.reranker, "check_reranker", boom)
+
+    rag_mcp_server.search_documents("質問1")
+    rag_mcp_server.search_documents("質問2")
+
+    assert len(calls) == 2, "確認が失敗したのに ready のまま扱っている"

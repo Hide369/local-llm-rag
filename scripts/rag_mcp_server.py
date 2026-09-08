@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from mcp.server import MCPServer
 
 from ingest import reranker, store
+from ingest.embedder import EmbeddingError
 from ingest.prompting import format_hit_caption
 from ingest.retrieval import SEARCH_RESULT_COUNT, build_index, search
 
@@ -68,6 +69,7 @@ class _State:
 
     index: object | None = None
     index_revision: int | None = None
+    reranker_ready: bool = False
 
 
 def _get_index(state: _State, collection):
@@ -86,7 +88,6 @@ def _get_index(state: _State, collection):
 
 mcp = MCPServer("local_docs")
 _state = _State()
-_reranker_ready = False
 
 
 def _open():
@@ -109,14 +110,13 @@ def _ensure_reranker():
 
     取得に失敗しても検索は続ける。既存の劣化運転方針に揃える（設計書7節）。
     """
-    global _reranker_ready
-    if _reranker_ready:
+    if _state.reranker_ready:
         return reranker.rerank
     try:
         reranker.check_reranker()
     except reranker.RerankError:
         return None
-    _reranker_ready = True
+    _state.reranker_ready = True
     return reranker.rerank
 
 
@@ -145,9 +145,23 @@ def search_documents(query: str, n_results: int = SEARCH_RESULT_COUNT) -> str:
             n_results=n_results,
             rerank=_ensure_reranker(),
         )
-    except Exception as error:
+    except (EmbeddingError, reranker.RerankError) as error:
         # 文言をそのまま返す。embedder は「ollama pull bge-m3 を実行して
         # ください」のように、利用者が次に何をすればよいかを書いている。
+        #
+        # ここで拾うのはこの2種類だけにする。広く Exception を拾っていた版は、
+        # 「サーバを落とさない」という理由で正当化していたが、その心配は
+        # 要らない。インストール済み mcp 2.2.0 のソースを読むと、ツール関数が
+        # 投げた例外は mcp/server/mcpserver/tools/base.py:199 の
+        # `except Exception as exc: raise UnexpectedToolError(...) from exc`
+        # を通り、mcp/server/mcpserver/server.py:447 の
+        # `CallToolResult(content=[TextContent(...)], is_error=True)` に
+        # 変換されるだけで、サーバプロセスは死なない（実測ではなく、上記2箇所
+        # のソースコードを読んで確認）。広い except は、この is_error=True と
+        # いう「異常でした」という信号を、素通しにして正常な検索結果へ
+        # ロンダリングしてしまう。TypeError のようなバグが、エージェントには
+        # 「0件でした」や「Ollamaが落ちています」と見分けがつかない形で
+        # 届くことになる。
         return str(error)
     return format_results(hits)
 
