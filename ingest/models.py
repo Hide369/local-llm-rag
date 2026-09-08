@@ -1,11 +1,12 @@
 """取り込みパイプライン全体で共有するデータ構造。
 
-各パーサーはPDF・PPTX・DOCX・Markdownの違いをすべて ParsedUnit に吸収する。
+各パーサーはPDF・PPTX・DOCX・XLSX・Markdown・テキストの違いをすべて ParsedUnit に
+吸収する。
 これにより後続のチャンク分割・埋め込み・保存は元の形式を知る必要がない。
 """
 from dataclasses import dataclass, field
 
-# 出典位置の種別。docxのようにページ概念を持たない形式は "document" を使う。
+# 出典位置の種別。docxやテキストのようにページ概念を持たない形式は "document" を使う。
 PAGE = "page"
 SLIDE = "slide"
 DOCUMENT = "document"
