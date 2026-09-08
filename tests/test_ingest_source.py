@@ -122,7 +122,9 @@ def test_deleted_file_is_pruned(source_dir, collection):
 
 
 def test_unsupported_files_are_ignored(source_dir, collection):
-    (source_dir / "memo.txt").write_text("本文", encoding="utf-8")
+    # 未対応の拡張子は _target_files が拾わない。対応形式が増えても
+    # 意味が残るよう、テキストを取り出せない形式を使う。
+    (source_dir / "資料.zip").write_bytes(b"PK")
     report = ingest_directory(source_dir, collection, session=_FakeSession())
     assert report.indexed == {}
     assert report.failed == {}

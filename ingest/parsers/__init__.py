@@ -9,6 +9,7 @@ from ingest.parsers.docx_parser import parse_docx
 from ingest.parsers.md_parser import parse_md
 from ingest.parsers.pdf_parser import parse_pdf
 from ingest.parsers.pptx_parser import parse_pptx
+from ingest.parsers.txt_parser import parse_txt
 
 
 class UnsupportedFormatError(Exception):
@@ -20,6 +21,7 @@ _PARSERS = {
     ".docx": parse_docx,
     ".pptx": parse_pptx,
     ".md": parse_md,
+    ".txt": parse_txt,
 }
 
 SUPPORTED_SUFFIXES = set(_PARSERS)
