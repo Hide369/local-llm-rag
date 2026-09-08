@@ -15,6 +15,11 @@ search_documents(query: str, n_results: int = 4) -> str
 [2026-09-05-rag-mcp-server-design.md](superpowers/specs/2026-09-05-rag-mcp-server-design.md)
 にある。本ドキュメントは導入先で手を動かすための手順に絞る。
 
+**本書は1台のPCで完結する構成である。** Codex がサーバを子プロセスとして
+起動する（stdio）。サーバ機を1台立てて複数のPCから引く構成は
+[mcp-server-network.md](mcp-server-network.md) にある。`config.toml` の
+書き方が異なり、両方を書くと衝突する。
+
 ## 前提
 
 - Ollama がセットアップ済みで、`bge-m3` が導入済みであること（下記）
