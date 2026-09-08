@@ -35,6 +35,36 @@ def test_bigrams_do_not_cross_a_boundary():
     assert "ぬね" not in tokens
 
 
+def test_kanji_digits_and_arabic_digits_become_the_same_tokens():
+    """「一人暮らし」と「1人暮らし」は同じ語である。
+
+    実データ（2026-09-08、本文512種）では「一人」が37チャンク、「三六協定」が
+    5チャンクあり、質問側は算用数字で書かれることが多い。索引側とクエリ側は
+    どちらもこの関数を通るため、ここで変換すれば対称性は構造的に保証される。
+    本文そのものは書き換えないので、表示は「一人暮らし」のままである。
+    """
+    assert lexical.tokenize("一人暮らし") == lexical.tokenize("1人暮らし")
+    assert lexical.tokenize("三六協定") == lexical.tokenize("36協定")
+
+
+def test_every_kanji_digit_maps_to_its_arabic_digit():
+    """〇と零はどちらも0にする。資料により両方の書き方が現れる。"""
+    assert lexical.tokenize("〇一二三四五六七八九") == lexical.tokenize("0123456789")
+    assert lexical.tokenize("零") == lexical.tokenize("0")
+
+
+def test_ten_hundred_and_thousand_are_left_alone():
+    """十・百・千は数値として解釈しない。
+
+    実データを測ると、複合数（二十三のような形）は0箇所である一方、「十分」
+    （＝じゅうぶん）が21チャンクある（2026-09-08、本文512種）。十を10にすると
+    「十分な休憩」が「10分な休憩」になり、所要時間を尋ねた質問に混ざる。
+    得るものが無く失うものだけがあるため、単体の漢数字だけを変換する。
+    """
+    assert lexical.tokenize("十分") != lexical.tokenize("10分")
+    assert lexical.tokenize("十分") == lexical.tokenize("十分")
+
+
 def test_empty_text_produces_no_tokens():
     assert lexical.tokenize("") == []
 
