@@ -407,6 +407,10 @@ collection.revision()   # 0.02ms
 
 ### 8.1 `~/.codex/config.toml`
 
+以下は1台のPCで完結する構成（stdio）である。サーバ機を1台立てて複数のPCから
+HTTP で引く構成は本設計の範囲外として別途 `docs/mcp-server-network.md` に
+まとめた。そちらは `command` / `args` / `cwd` ではなく `url` を書く。
+
 ```toml
 [mcp_servers.local_docs]
 command = "C:\\...\\local_llm\\myvenv313\\Scripts\\python.exe"
