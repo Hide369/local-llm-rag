@@ -15,16 +15,29 @@ from dataclasses import dataclass
 # だけが境界になる。区切りを跨いだbigramは作らない（実在しない語で一致するため）。
 _BOUNDARY = re.compile(r"\W+", re.UNICODE)
 
+# 漢数字を算用数字に寄せる。索引側とクエリ側がどちらも tokenize を通るため、
+# ここに置けば対称性は構造的に保証される。本文そのものは書き換えないので、
+# 出典に表示される原文は「一人暮らし」のままである。
+#
+# 十・百・千は入れない。実データ（2026-09-08、本文512種）を数えると、複合数
+# （二十三のような形）は0箇所、漢数字の「第○条」も0件である一方、「十分」
+# （＝じゅうぶん）が21チャンクある。十を10にすれば得るものが無いまま
+# 「十分な休憩」が所要時間の質問に混ざる。単体の漢数字だけを対象にする。
+#
+# 〇と零を両方持つのは、資料によってどちらの書き方も現れるためである。
+_KANJI_DIGITS = str.maketrans("〇零一二三四五六七八九", "00123456789")
+
 
 def tokenize(text: str) -> list[str]:
-    """NFKC正規化して小文字化し、文字bigramへ分割する。
+    """NFKC正規化して小文字化し、漢数字を算用数字へ寄せ、文字bigramへ分割する。
 
     正規化は全角/半角と大文字/小文字の揺れを吸収する。実データには全角の
-    「ＲＡＧ」と半角の「RAG」が混在する。
+    「ＲＡＧ」と半角の「RAG」が混在する。漢数字も同じ揺れであり、本文の
+    「一人暮らし」を質問側が「1人暮らし」と書くことがある。
 
     1文字のセグメントはbigramが作れず消滅してしまうため、そのまま1トークンとする。
     """
-    normalised = unicodedata.normalize("NFKC", text).lower()
+    normalised = unicodedata.normalize("NFKC", text).lower().translate(_KANJI_DIGITS)
     tokens: list[str] = []
     for segment in _BOUNDARY.split(normalised):
         if not segment:

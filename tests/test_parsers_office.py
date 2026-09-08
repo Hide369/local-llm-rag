@@ -254,8 +254,10 @@ def test_dispatch_passes_caption_image_to_pptx_only(docx_path, pptx_with_large_p
 
 
 def test_dispatch_rejects_unsupported_suffix(tmp_path):
-    other = tmp_path / "memo.txt"
-    other.write_text("本文", encoding="utf-8")
+    # 拡張子は「現に未対応のもの」を使う。対応形式が増えるたびにこのテストが
+    # 意味を失わないよう、書庫のようにテキストを取り出せない形式を選ぶ。
+    other = tmp_path / "資料.zip"
+    other.write_bytes(b"PK")
     with pytest.raises(UnsupportedFormatError):
         parse(other)
 

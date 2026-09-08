@@ -78,6 +78,23 @@ def test_slide_citation():
     assert hit.citation == "a.pdf スライド12"
 
 
+def test_sheet_citation_shows_the_sheet_name():
+    """Excelは通し番号ではなくシート名で示す。
+
+    「一覧.xlsx シート2」では利用者がブックを開いて数えることになる。
+    位置の一意性は location が持ち、表示は heading が持つ（Markdownの
+    見出しと同じ分担）。
+    """
+    hit = Hit(
+        text="本文",
+        distance=0.1,
+        occurrences=[
+            _meta(source="一覧.xlsx", location_type="sheet", location=1, heading="商品一覧")
+        ],
+    )
+    assert hit.citation == "一覧.xlsx シート「商品一覧」"
+
+
 def test_document_citation_has_no_position():
     hit = Hit(text="本文", distance=0.1, occurrences=[_meta(location_type="document", location=0)])
     assert hit.citation == "a.pdf"
