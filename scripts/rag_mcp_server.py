@@ -10,8 +10,11 @@
 """
 from dataclasses import dataclass
 
+from mcp.server import MCPServer
+
+from ingest import reranker, store
 from ingest.prompting import format_hit_caption
-from ingest.retrieval import build_index
+from ingest.retrieval import SEARCH_RESULT_COUNT, build_index, search
 
 # 0件のときに返す文言。空文字や空配列を返してはならない。エージェントは根拠が
 # 無いときこそ自分の知識で答えにいくため、「探したが無かった」ことを明示的に
@@ -79,3 +82,75 @@ def _get_index(state: _State, collection):
         state.index = build_index(collection)
         state.index_revision = revision
     return state.index
+
+
+mcp = MCPServer("local_docs")
+_state = _State()
+_reranker_ready = False
+
+
+def _open():
+    """DBを開く。
+
+    パスは store.DB_PATH（rag_chat_app.py・scripts/ingest_source.py と共通）を
+    使う。引数や環境変数で受け取らないのは、3か所で食い違うと open_store が
+    例外を出さずに空のDBを新規作成し、検索が黙って全部空になる状態が
+    生まれるためである（ingest/store.py のコメント参照）。
+    """
+    return store.open_store(str(store.DB_PATH))
+
+
+def _ensure_reranker():
+    """初回検索時にだけリランカーを用意する。
+
+    起動時にロードしない。Codex はセッション開始時にサーバを起こすため、
+    検索を1度もしないセッションが3.3秒と約570MBを払うことになる（実測）。
+    代償は初回検索が4.75秒になることで、2回目以降は0.72秒である。
+
+    取得に失敗しても検索は続ける。既存の劣化運転方針に揃える（設計書7節）。
+    """
+    global _reranker_ready
+    if _reranker_ready:
+        return reranker.rerank
+    try:
+        reranker.check_reranker()
+    except reranker.RerankError:
+        return None
+    _reranker_ready = True
+    return reranker.rerank
+
+
+@mcp.tool()
+def search_documents(query: str, n_results: int = SEARCH_RESULT_COUNT) -> str:
+    """社内資料を検索し、根拠となる原文を出典つきで返す。
+
+    Args:
+        query: 検索したい内容。自然文で書く。
+        n_results: 返すチャンク数。
+    """
+    try:
+        collection = _open()
+        if collection.count() == 0:
+            # 「関連する記述が無い」と取り違えさせない。取り込みを忘れている
+            # 利用者は、質問を言い換え続けても永遠に0件を得る（設計書7節）。
+            return (
+                "ベクトルDBが空です。取り込みが未実行の可能性があります。"
+                "python -m scripts.ingest_source を実行してください。"
+            )
+        index = _get_index(_state, collection)
+        hits = search(
+            collection,
+            query,
+            index=index,
+            n_results=n_results,
+            rerank=_ensure_reranker(),
+        )
+    except Exception as error:
+        # 文言をそのまま返す。embedder は「ollama pull bge-m3 を実行して
+        # ください」のように、利用者が次に何をすればよいかを書いている。
+        return str(error)
+    return format_results(hits)
+
+
+if __name__ == "__main__":
+    mcp.run()

@@ -96,11 +96,15 @@ def test_hits_are_numbered_in_order():
 class _FakeCollection:
     """revision() と count() だけを持つ最小のストア。"""
 
-    def __init__(self, revision=1):
+    def __init__(self, revision=1000):
         self._revision = revision
 
     def revision(self):
-        return self._revision
+        # 実物は SQLite から毎回読むため、同じ値でも別のオブジェクトが返る。
+        # CPython が整数をキャッシュするのは256までなので、257以上では
+        # `is` 比較が毎回偽になり、毎リクエスト索引を組み直す実装が
+        # 静かに通ってしまう。ここで別オブジェクトを返して差を出す。
+        return int(str(self._revision))
 
     def count(self):
         return 512
@@ -151,3 +155,98 @@ def test_the_index_is_rebuilt_when_the_revision_changes(monkeypatch):
     rag_mcp_server._get_index(state, collection)
 
     assert len(calls) == 2
+
+
+def test_the_reranker_is_not_loaded_until_the_first_search(monkeypatch):
+    """検索しないセッションはリランカーを払わない。
+
+    Codex はセッション開始時にサーバを起こす。起動時にロードすると、検索を
+    1度もしないセッションが3.3秒と約570MBを払う（実測）。常にロードするよう
+    壊しても例外は出ず、遅くなるだけなのでテストでしか捕まえられない。
+
+    spy を仕掛けてから reload するのが要点である。import 済みのモジュールに
+    後から spy を入れて表明しても、起動時ロードは既に終わっており、壊れた実装
+    でもテストが通ってしまう（隔離環境で再現済み）。
+    """
+    import importlib
+
+    from ingest import reranker
+    from scripts import rag_mcp_server
+
+    loaded = []
+    monkeypatch.setattr(reranker, "check_reranker", lambda: loaded.append(1))
+    importlib.reload(rag_mcp_server)
+
+    assert loaded == [], "検索していないのにリランカーをロードしている"
+
+
+def test_search_returns_the_no_hits_text_when_nothing_is_in_range(monkeypatch):
+    """圏外なら0件が返り、その旨の文言になる。"""
+    from scripts import rag_mcp_server
+
+    monkeypatch.setattr(rag_mcp_server, "_open", lambda: _FakeCollection())
+    monkeypatch.setattr(rag_mcp_server, "build_index", lambda collection: "索引")
+    monkeypatch.setattr(rag_mcp_server, "_ensure_reranker", lambda: None)
+    monkeypatch.setattr(rag_mcp_server, "search", lambda *a, **k: [])
+
+    text = rag_mcp_server.search_documents("圏外の質問")
+    assert "見つかりませんでした" in text
+
+
+def test_search_passes_n_results_through(monkeypatch):
+    """n_results がそのまま search() に渡る。"""
+    from scripts import rag_mcp_server
+
+    seen = {}
+
+    def fake_search(collection, query, **kwargs):
+        seen.update(kwargs)
+        return []
+
+    monkeypatch.setattr(rag_mcp_server, "_open", lambda: _FakeCollection())
+    monkeypatch.setattr(rag_mcp_server, "build_index", lambda collection: "索引")
+    monkeypatch.setattr(rag_mcp_server, "_ensure_reranker", lambda: None)
+    monkeypatch.setattr(rag_mcp_server, "search", fake_search)
+
+    rag_mcp_server.search_documents("質問", n_results=2)
+    assert seen["n_results"] == 2
+
+
+def test_an_empty_store_says_the_ingest_has_not_run(monkeypatch):
+    """0チャンクは「見つかりませんでした」ではない（設計書7節）。
+
+    取り込みを忘れているのか、資料に無いのかを取り違えると、利用者は
+    延々と質問を言い換えることになる。
+    """
+    from scripts import rag_mcp_server
+
+    class _Empty(_FakeCollection):
+        def count(self):
+            return 0
+
+    monkeypatch.setattr(rag_mcp_server, "_open", lambda: _Empty())
+
+    text = rag_mcp_server.search_documents("質問")
+    assert "取り込みが未実行" in text
+
+
+def test_ollama_failure_is_returned_as_its_own_message(monkeypatch):
+    """Ollama 未疎通の文言をそのまま返す。
+
+    サーバは起動時に疎通確認しない。Codex がセッション開始時にサーバを起こす
+    ため、そこで失敗させると Ollama を使わない作業まで巻き添えになる
+    （設計書4.4節）。確認は最初の検索時に行う。
+    """
+    from ingest.embedder import EmbeddingError
+    from scripts import rag_mcp_server
+
+    def boom(*a, **k):
+        raise EmbeddingError("Ollamaに接続できません（http://localhost:11434）")
+
+    monkeypatch.setattr(rag_mcp_server, "_open", lambda: _FakeCollection())
+    monkeypatch.setattr(rag_mcp_server, "build_index", lambda collection: "索引")
+    monkeypatch.setattr(rag_mcp_server, "_ensure_reranker", lambda: None)
+    monkeypatch.setattr(rag_mcp_server, "search", boom)
+
+    text = rag_mcp_server.search_documents("質問")
+    assert "Ollamaに接続できません" in text
