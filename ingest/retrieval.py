@@ -92,6 +92,11 @@ class Hit:
             source = f"{source} p.{location}"
         elif location_type == "slide":
             source = f"{source} スライド{location}"
+        elif location_type == "sheet":
+            # シート名で示す。通し番号（location）は利用者にとって意味がない。
+            heading = metadata.get("heading")
+            if heading:
+                source = f"{source} シート「{heading}」"
         elif location_type == "section":
             # 見出し文字列で示す。通し番号（location）は利用者にとって意味がない。
             heading = metadata.get("heading")

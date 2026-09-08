@@ -10,6 +10,7 @@ PAGE = "page"
 SLIDE = "slide"
 DOCUMENT = "document"
 SECTION = "section"
+SHEET = "sheet"
 
 
 @dataclass(frozen=True)
