@@ -430,3 +430,83 @@ def test_the_store_is_opened_once_across_two_searches(monkeypatch):
     rag_mcp_server.search_documents("質問2")
 
     assert len(opens) == 1, "リクエストごとにDBを開き直している"
+
+
+def test_the_default_transport_is_stdio(monkeypatch):
+    """引数なしの起動は今までどおり stdio である。
+
+    1台構成（Codex が子プロセスとして起こす）を壊さないための表明である。
+    既定が http に倒れると、Codex は標準入出力で話しかけて応答を得られず、
+    「サーバが応答しない」としか分からない形で失敗する。
+    """
+    seen = {}
+    monkeypatch.setattr(
+        rag_mcp_server.mcp, "run", lambda *a, **k: seen.update(args=a, kwargs=k)
+    )
+
+    rag_mcp_server.main([])
+
+    assert seen["args"] == ()
+    assert seen["kwargs"] == {}
+
+
+def test_http_mode_passes_the_host_and_port_through(monkeypatch):
+    """--http は streamable-http へ、host と port をそのまま渡す。
+
+    SDK の既定は 127.0.0.1 であり、それでは他のPCから届かない。ここを
+    取り違えると、サーバは起動して見えるのにクライアントからだけ繋がらない。
+    """
+    seen = {}
+    monkeypatch.setattr(
+        rag_mcp_server.mcp, "run", lambda *a, **k: seen.update(args=a, kwargs=k)
+    )
+
+    rag_mcp_server.main(["--http", "--host", "0.0.0.0", "--port", "8080"])
+
+    assert seen["args"] == ("streamable-http",)
+    assert seen["kwargs"]["host"] == "0.0.0.0"
+    assert seen["kwargs"]["port"] == 8080
+
+
+def test_two_searches_never_run_at_the_same_time(monkeypatch):
+    """検索は直列化される。
+
+    stdio では Codex が単一クライアントなのでリクエストが直列に届き、共有状態の
+    競合は起きなかった。HTTP で複数PCから引くとその前提が消える。
+    VectorStore._current() は self._entries, self._matrix を2回に分けて代入し、
+    ロックを持たない（_write_lock は書き込み専用）。片方のスレッドが新しい
+    entries と古い matrix の組を読むと、例外を出さずに検索結果がずれる。
+
+    ロックが無ければ4スレッドは重なり、peak は1にならない。
+    """
+    import threading
+    import time
+
+    inflight = []
+    peak = []
+    guard = threading.Lock()
+
+    def slow_search(*a, **k):
+        with guard:
+            inflight.append(1)
+            peak.append(len(inflight))
+        time.sleep(0.05)
+        with guard:
+            inflight.pop()
+        return []
+
+    monkeypatch.setattr(rag_mcp_server, "_open", lambda: _FakeCollection())
+    monkeypatch.setattr(rag_mcp_server, "build_index", lambda collection: "索引")
+    monkeypatch.setattr(rag_mcp_server, "_ensure_reranker", lambda: None)
+    monkeypatch.setattr(rag_mcp_server, "search", slow_search)
+
+    threads = [
+        threading.Thread(target=rag_mcp_server.search_documents, args=("質問",))
+        for _ in range(4)
+    ]
+    for one in threads:
+        one.start()
+    for one in threads:
+        one.join()
+
+    assert max(peak) == 1, f"検索が同時に走っている（最大 {max(peak)} 本）"

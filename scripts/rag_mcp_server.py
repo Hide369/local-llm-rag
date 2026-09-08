@@ -9,6 +9,8 @@
 （_get_store の説明を参照）、取り込み中の検索が待たされる可能性は
 「サーバの生存期間に最大1回」まで減らせるが、ゼロにはならない（設計書5節）。
 """
+import argparse
+import threading
 from dataclasses import dataclass
 
 from mcp.server import MCPServer
@@ -94,6 +96,23 @@ def _get_index(state: _State, collection):
 mcp = MCPServer("local_docs")
 _state = _State()
 
+# 検索を直列化する。stdio では Codex が単一クライアントであり、リクエストは
+# 直列に届くので競合しなかった。--http で複数PCから引くとその前提が消える。
+#
+# 守る相手は _state だけではない。VectorStore._current()
+# （ingest/vector_store.py:430-436）は self._entries, self._matrix を2回に
+# 分けて代入し、ロックを持たない（_write_lock は書き込み専用である）。
+# 片方のスレッドが新しい entries と古い matrix の組を読むと、行が食い違った
+# まま検索が成立し、例外を出さずに結果がずれる。リランカーの遅延初期化も
+# 同じく無防備である。
+#
+# ingest/ を触らずに全部まとめて塞げるのが、ツールの入口で直列化する理由で
+# ある。代償は同時アクセスが順番待ちになること。検索1回は約3.5秒（大半が
+# リランカー、2026-09-08 の実測）なので、3人が同時に叩けば最後の1人は
+# 約10秒待つ。少人数を前提にした割り切りであり、常時の同時利用が増えるなら
+# 直列化ではなく読み取り側の作り直しが要る。
+_search_lock = threading.Lock()
+
 
 def _open():
     """DBを開く。
@@ -157,6 +176,12 @@ def search_documents(query: str, n_results: int = SEARCH_RESULT_COUNT) -> str:
         query: 検索したい内容。自然文で書く。
         n_results: 返すチャンク数。
     """
+    with _search_lock:
+        return _search(query, n_results)
+
+
+def _search(query: str, n_results: int) -> str:
+    """検索の本体。_search_lock を握った状態で呼ばれる。"""
     try:
         collection = _get_store(_state)
         if collection.count() == 0:
@@ -200,5 +225,38 @@ def search_documents(query: str, n_results: int = SEARCH_RESULT_COUNT) -> str:
     return format_results(hits)
 
 
+def main(argv=None) -> None:
+    """引数を読んでサーバを起動する。
+
+    既定は stdio のままにする。Codex が子プロセスとして起こす1台構成が
+    現状の標準であり、既定を http に倒すとその構成が黙って壊れる。
+    Codex は標準入出力で話しかけて応答を得られず、「サーバが応答しない」と
+    しか分からない形で失敗する。
+
+    --http は別のPCから引くための構成である。SDK の既定 host は 127.0.0.1 で
+    他のPCから届かないため、--host で明示的に開ける必要がある。
+    """
+    parser = argparse.ArgumentParser(description="社内資料を引く MCP サーバ")
+    parser.add_argument(
+        "--http",
+        action="store_true",
+        help="stdio ではなく streamable-http で待ち受ける（別PCから引く構成）",
+    )
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="--http のときの bind 先。既定は自機のみ。LANへ出すなら 0.0.0.0",
+    )
+    parser.add_argument(
+        "--port", type=int, default=8080, help="--http のときの待ち受けポート"
+    )
+    args = parser.parse_args(argv)
+
+    if not args.http:
+        mcp.run()
+        return
+    mcp.run("streamable-http", host=args.host, port=args.port)
+
+
 if __name__ == "__main__":
-    mcp.run()
+    main()
