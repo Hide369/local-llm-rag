@@ -5,8 +5,9 @@
 できる原文だからである（設計書3.2節）。
 
 サーバは常駐し、リクエストのたびに revision() を読んでBM25索引の鮮度を見る。
-取り込み中でもロックは取らない。SQLiteの読み手は書き込み中も一貫した
-スナップショットを得るため（設計書5節、実測で待ち0ms）。
+ストアはプロセスの生存期間で1度だけ開く。開く操作は読み取りではないため
+（_get_store の説明を参照）、取り込み中の検索が待たされる可能性は
+「サーバの生存期間に最大1回」まで減らせるが、ゼロにはならない（設計書5節）。
 """
 from dataclasses import dataclass
 
@@ -50,7 +51,10 @@ def format_results(hits: list) -> str:
     blocks = [f"社内資料から {len(hits)} 件が見つかりました。"]
     for number, hit in enumerate(hits, start=1):
         # スコア部分だけを取る。出典は下で全件並べるため重複させない。
-        scores = format_hit_caption(hit).split(" ／ ", 1)[1]
+        # 右から刻む。caption は「出典 ／ 距離 ／ BM25 ／ Reranker」の4欄で
+        # 固定だが、左から1回で切ると、出典（ファイル名）自身が " ／ " を
+        # 含んだときに見出しへその後半が紛れ込む。
+        scores = " ／ ".join(format_hit_caption(hit).rsplit(" ／ ", 3)[1:])
         citations = "\n".join(f"- {one}" for one in hit.all_citations())
         blocks.append(f"## [{number}] {scores}\n出典:\n{citations}\n\n{hit.text}")
     blocks.append(_CAUTION)
@@ -67,6 +71,7 @@ class _State:
     （2026-09-08、570出現・本文512種の実測）。
     """
 
+    store: object | None = None
     index: object | None = None
     index_revision: int | None = None
     reranker_ready: bool = False
@@ -101,12 +106,36 @@ def _open():
     return store.open_store(str(store.DB_PATH))
 
 
+def _get_store(state: _State):
+    """ストアを返す。開くのはプロセスの生存期間で1度だけ。
+
+    リクエストごとに開き直してはならない。open_store() は読み取りではなく、
+    VectorStore.__init__（ingest/vector_store.py:146-150）が
+    executescript(_SCHEMA) と commit() を実行する。つまり開くたびにSQLiteの
+    書き込みロックを取りにいくため、取り込みの書き込みと重なると busy_timeout
+    ぶん待たされ、"database is locked" で終わる。開きっぱなしにするのは
+    rag_chat_app.py:30-32 の @st.cache_resource と同じ形である。
+
+    これで消えるのは「毎リクエスト」であって「必ず」ではない。最初の検索は
+    今もそのスキーマ確認の書き込みを1回行うので、サーバ起動後の最初の検索が
+    たまたま取り込みの書き込みと重なれば、その1回はやはり待たされる。
+    """
+    if state.store is None:
+        state.store = _open()
+    return state.store
+
+
 def _ensure_reranker():
     """初回検索時にだけリランカーを用意する。
 
     起動時にロードしない。Codex はセッション開始時にサーバを起こすため、
-    検索を1度もしないセッションが3.3秒と約570MBを払うことになる（実測）。
-    代償は初回検索が4.75秒になることで、2回目以降は0.72秒である。
+    検索を1度もしないセッションにモデルの取得と読み込みを払わせないためである
+    （設計書4.4節は3.3秒・約570MBと見積もっている）。
+
+    代償は初回検索が遅いこと。同一クエリ5回の実測（2026-09-08、i5-1240P、
+    570出現・本文512種）で 6.99秒 → 3.55 / 3.41 / 3.48 / 3.53秒。初回の
+    上乗せ約3.5秒のうち、この check_reranker() 自体は1.18秒（HuggingFace Hub
+    へのHEAD6回）で、残りは初回 rerank() のONNXセッション構築である。
 
     取得に失敗しても検索は続ける。既存の劣化運転方針に揃える（設計書7節）。
     """
@@ -129,7 +158,7 @@ def search_documents(query: str, n_results: int = SEARCH_RESULT_COUNT) -> str:
         n_results: 返すチャンク数。
     """
     try:
-        collection = _open()
+        collection = _get_store(_state)
         if collection.count() == 0:
             # 「関連する記述が無い」と取り違えさせない。取り込みを忘れている
             # 利用者は、質問を言い換え続けても永遠に0件を得る（設計書7節）。
@@ -145,23 +174,28 @@ def search_documents(query: str, n_results: int = SEARCH_RESULT_COUNT) -> str:
             n_results=n_results,
             rerank=_ensure_reranker(),
         )
-    except (EmbeddingError, reranker.RerankError) as error:
+    except EmbeddingError as error:
         # 文言をそのまま返す。embedder は「ollama pull bge-m3 を実行して
         # ください」のように、利用者が次に何をすればよいかを書いている。
         #
-        # ここで拾うのはこの2種類だけにする。広く Exception を拾っていた版は、
-        # 「サーバを落とさない」という理由で正当化していたが、その心配は
-        # 要らない。インストール済み mcp 2.2.0 のソースを読むと、ツール関数が
-        # 投げた例外は mcp/server/mcpserver/tools/base.py:199 の
+        # 拾うのはこの1種類だけにする。広く Exception を拾っていた版は
+        # 「サーバを落とさない」ことを理由にしていたが、その心配は要らない。
+        # インストール済み mcp 2.2.0 のソースでは、ツール関数が投げた例外は
+        # mcp/server/mcpserver/tools/base.py:208-210 の
         # `except Exception as exc: raise UnexpectedToolError(...) from exc`
-        # を通り、mcp/server/mcpserver/server.py:447 の
-        # `CallToolResult(content=[TextContent(...)], is_error=True)` に
-        # 変換されるだけで、サーバプロセスは死なない（実測ではなく、上記2箇所
-        # のソースコードを読んで確認）。広い except は、この is_error=True と
-        # いう「異常でした」という信号を、素通しにして正常な検索結果へ
-        # ロンダリングしてしまう。TypeError のようなバグが、エージェントには
-        # 「0件でした」や「Ollamaが落ちています」と見分けがつかない形で
-        # 届くことになる。
+        # を通り、mcp/server/mcpserver/server.py:447 で is_error=True の
+        # CallToolResult になる。ただし**そこに載るのは元の例外文ではない**。
+        # 定型文 "Error executing tool search_documents" だけであり、
+        # mcp/server/mcpserver/exceptions.py:66-67 が「nothing from the original
+        # reaches the client」と明記している（実測ではなく、上記のソースを
+        # 読んで確認）。
+        # それでも狭めるのは、詳細が失われる代償を払ってでも、バグが正常な
+        # 検索結果と見分けのつく形で届くほうが良いからである。広い except では
+        # TypeError が「0件でした」や「Ollamaが落ちています」と同じ顔をして
+        # エージェントに届く。
+        #
+        # RerankError はここへ来ない。check_reranker の失敗は _ensure_reranker
+        # が、rerank の失敗は retrieval._reranked が、それぞれ手前で捕まえる。
         return str(error)
     return format_results(hits)
 

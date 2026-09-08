@@ -68,6 +68,23 @@ def test_the_caption_comes_from_prompting_not_a_reimplementation():
     assert scores in text
 
 
+def test_a_citation_containing_the_separator_does_not_leak_into_the_heading():
+    """出典がスコアの区切りと同じ " ／ " を含んでも見出しを汚さない。
+
+    caption は「出典 ／ 距離 ／ BM25 ／ Reranker」の4欄で固定である。左から
+    1回だけ切ると、区切りを含むファイル名の後半が見出しに残り、出典が二重に
+    出たうえスコア行として読めなくなる。例外は出ない。
+    """
+    hit = _hit(occurrences=[
+        {"source": "設計 ／ 運用ガイド.pptx", "location_type": "slide", "location": 3},
+    ])
+    text = format_results([hit])
+
+    heading = next(line for line in text.splitlines() if line.startswith("## [1]"))
+    assert heading.startswith("## [1] cosine距離"), heading
+    assert "運用ガイド" not in heading, heading
+
+
 def test_the_body_text_is_included():
     text = format_results([_hit(text="第38条 年次有給休暇は…")])
     assert "第38条 年次有給休暇は…" in text
@@ -184,6 +201,7 @@ def test_search_returns_the_no_hits_text_when_nothing_is_in_range(monkeypatch):
     """圏外なら0件が返り、その旨の文言になる。"""
     from scripts import rag_mcp_server
 
+    monkeypatch.setattr(rag_mcp_server, "_state", rag_mcp_server._State())
     monkeypatch.setattr(rag_mcp_server, "_open", lambda: _FakeCollection())
     monkeypatch.setattr(rag_mcp_server, "build_index", lambda collection: "索引")
     monkeypatch.setattr(rag_mcp_server, "_ensure_reranker", lambda: None)
@@ -193,23 +211,63 @@ def test_search_returns_the_no_hits_text_when_nothing_is_in_range(monkeypatch):
     assert "見つかりませんでした" in text
 
 
-def test_search_passes_n_results_through(monkeypatch):
-    """n_results がそのまま search() に渡る。"""
+def test_every_argument_search_needs_is_wired_through(monkeypatch):
+    """search() への配線を4つとも固定する。
+
+    どれを外しても例外は出ない。index を落とせばハイブリッド検索のBM25側が
+    黙って消え、rerank を落とせば並べ替えが効かなくなり、query を取り違えれば
+    別の質問の答えが返る。いずれも「それらしい検索結果」の顔をして届くため、
+    ここで固定しなければ気づけない。
+    """
     from scripts import rag_mcp_server
 
     seen = {}
+    reranker_marker = object()
 
-    def fake_search(collection, query, **kwargs):
-        seen.update(kwargs)
+    def fake_search(*args, **kwargs):
+        seen["args"] = args
+        seen["kwargs"] = kwargs
         return []
 
+    monkeypatch.setattr(rag_mcp_server, "_state", rag_mcp_server._State())
+    monkeypatch.setattr(rag_mcp_server, "_open", lambda: _FakeCollection())
+    monkeypatch.setattr(rag_mcp_server, "build_index", lambda collection: "索引")
+    monkeypatch.setattr(rag_mcp_server, "_ensure_reranker", lambda: reranker_marker)
+    monkeypatch.setattr(rag_mcp_server, "search", fake_search)
+
+    rag_mcp_server.search_documents("有給休暇の付与日数", n_results=2)
+
+    # query は位置引数で渡るため、kwargs だけを見ていると空文字への
+    # すり替えを見逃す。
+    args, kwargs = seen["args"], seen["kwargs"]
+    positional = dict(zip(("collection", "query"), args))
+    passed = {**positional, **kwargs}
+    assert passed["query"] == "有給休暇の付与日数", "検索語がそのまま渡っていない"
+    assert passed["index"] == "索引", "BM25索引を渡していない（ベクトル単独に退化する）"
+    assert passed["rerank"] is reranker_marker, "リランカーを渡していない"
+    assert passed["n_results"] == 2
+
+
+def test_every_hit_search_returns_is_formatted(monkeypatch):
+    """search() が返した件数をそのまま整形する。
+
+    切り詰めても例外は出ず、エージェントには「2件しか無かった」と読める
+    結果が届く。
+    """
+    from scripts import rag_mcp_server
+
+    hits = [_hit(text="いち"), _hit(text="に"), _hit(text="さん")]
+
+    monkeypatch.setattr(rag_mcp_server, "_state", rag_mcp_server._State())
     monkeypatch.setattr(rag_mcp_server, "_open", lambda: _FakeCollection())
     monkeypatch.setattr(rag_mcp_server, "build_index", lambda collection: "索引")
     monkeypatch.setattr(rag_mcp_server, "_ensure_reranker", lambda: None)
-    monkeypatch.setattr(rag_mcp_server, "search", fake_search)
+    monkeypatch.setattr(rag_mcp_server, "search", lambda *a, **k: hits)
 
-    rag_mcp_server.search_documents("質問", n_results=2)
-    assert seen["n_results"] == 2
+    text = rag_mcp_server.search_documents("質問")
+    assert "3 件が見つかりました" in text
+    for body in ("いち", "に", "さん"):
+        assert body in text
 
 
 def test_an_empty_store_says_the_ingest_has_not_run(monkeypatch):
@@ -224,6 +282,7 @@ def test_an_empty_store_says_the_ingest_has_not_run(monkeypatch):
         def count(self):
             return 0
 
+    monkeypatch.setattr(rag_mcp_server, "_state", rag_mcp_server._State())
     monkeypatch.setattr(rag_mcp_server, "_open", lambda: _Empty())
 
     text = rag_mcp_server.search_documents("質問")
@@ -243,6 +302,7 @@ def test_ollama_failure_is_returned_as_its_own_message(monkeypatch):
     def boom(*a, **k):
         raise EmbeddingError("Ollamaに接続できません（http://localhost:11434）")
 
+    monkeypatch.setattr(rag_mcp_server, "_state", rag_mcp_server._State())
     monkeypatch.setattr(rag_mcp_server, "_open", lambda: _FakeCollection())
     monkeypatch.setattr(rag_mcp_server, "build_index", lambda collection: "索引")
     monkeypatch.setattr(rag_mcp_server, "_ensure_reranker", lambda: None)
@@ -257,11 +317,16 @@ def test_an_unexpected_error_is_not_disguised_as_a_search_result(monkeypatch):
 
     mcp 2.2.0 は、ツール関数が投げた例外を
     `CallToolResult(content=[...], is_error=True)` に変換して返す
-    （mcp/server/mcpserver/tools/base.py:199、
+    （mcp/server/mcpserver/tools/base.py:208-210 の
+    `raise UnexpectedToolError(f"Error executing tool {self.name}") from exc` と
     mcp/server/mcpserver/server.py:447 を読んで確認、実測ではない）。
-    ここで拾ってしまうと、TypeError のようなバグが「0件でした」や
-    「Ollamaが落ちています」と見分けがつかない、正常な検索結果の顔をして
-    エージェントに届く。
+    エージェントが読めるのは定型文 "Error executing tool search_documents"
+    だけで、元の例外文は届かない（mcp/server/mcpserver/exceptions.py:66-67 が
+    「nothing from the original reaches the client」と明記している）。
+    それでも外へ出すのは、詳細が失われる代償を払ってでも、バグが正常な検索結果と
+    見分けのつく形で届くほうが良いからである。ここで拾うと、TypeError のような
+    バグが「0件でした」や「Ollamaが落ちています」と見分けのつかない、正常な
+    検索結果の顔をしてエージェントに届く。
     """
     import pytest
 
@@ -270,6 +335,7 @@ def test_an_unexpected_error_is_not_disguised_as_a_search_result(monkeypatch):
     def boom(*a, **k):
         raise TypeError("bad argument")
 
+    monkeypatch.setattr(rag_mcp_server, "_state", rag_mcp_server._State())
     monkeypatch.setattr(rag_mcp_server, "_open", lambda: _FakeCollection())
     monkeypatch.setattr(rag_mcp_server, "build_index", lambda collection: "索引")
     monkeypatch.setattr(rag_mcp_server, "_ensure_reranker", lambda: None)
@@ -328,3 +394,33 @@ def test_a_failed_reranker_check_is_retried_on_the_next_search(monkeypatch):
     rag_mcp_server.search_documents("質問2")
 
     assert len(calls) == 2, "確認が失敗したのに ready のまま扱っている"
+
+
+def test_the_store_is_opened_once_across_two_searches(monkeypatch):
+    """ストアを開くのはプロセスで1度だけ。
+
+    open_store() は読み取りではない。VectorStore.__init__ が
+    executescript(_SCHEMA) と commit() を実行するため、開くたびにSQLiteの
+    書き込みロックを取りにいく。毎リクエスト開き直す実装は、取り込みが
+    走っている最中の検索を busy_timeout ぶん待たせたうえ
+    "database is locked" で落とす。平時は何も起きないので、テストでしか
+    捕まえられない。
+    """
+    from scripts import rag_mcp_server
+
+    opens = []
+
+    def counting_open():
+        opens.append(1)
+        return _FakeCollection()
+
+    monkeypatch.setattr(rag_mcp_server, "_state", rag_mcp_server._State())
+    monkeypatch.setattr(rag_mcp_server, "_open", counting_open)
+    monkeypatch.setattr(rag_mcp_server, "build_index", lambda collection: "索引")
+    monkeypatch.setattr(rag_mcp_server, "_ensure_reranker", lambda: None)
+    monkeypatch.setattr(rag_mcp_server, "search", lambda *a, **k: [])
+
+    rag_mcp_server.search_documents("質問1")
+    rag_mcp_server.search_documents("質問2")
+
+    assert len(opens) == 1, "リクエストごとにDBを開き直している"
