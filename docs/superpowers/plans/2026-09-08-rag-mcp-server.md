@@ -625,6 +625,13 @@ if __name__ == "__main__":
     mcp.run()
 ```
 
+> **訂正（2026-09-08）:** 上のコード片にある「初回4.75秒・2回目以降0.72秒」は
+> 再現しなかった。同一CPU（i5-1240P / Windows 11、570出現・本文512種）での
+> 実測は初回 6.99 秒、2回目以降 3.4〜3.5 秒である。確定値は設計書
+> `docs/superpowers/specs/2026-09-05-rag-mcp-server-design.md` 4.4節の表にある。
+> この計画書は実行時点の記録として残すため、コード片自体は書き換えていない。
+
+
 - [ ] **Step 4: 通ることを確認する**
 
 Run: `../../myvenv313/Scripts/python.exe -m pytest tests/test_rag_mcp_server.py -q`

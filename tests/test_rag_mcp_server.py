@@ -3,8 +3,23 @@
 サーバを起動せずに検証する。@mcp.tool() は元の関数をそのまま返すため、
 ツール関数もモジュールから直接呼べる。
 """
+import pytest
+
 from ingest.retrieval import Hit
+from scripts import rag_mcp_server
 from scripts.rag_mcp_server import format_results
+
+
+@pytest.fixture(autouse=True)
+def _fresh_state(monkeypatch):
+    """テストごとに常駐状態を捨てる。
+
+    _state はプロセスの生存期間だけ持つキャッシュで、開いたストア・BM25索引・
+    リランカーの準備済みフラグを抱える。テスト側で差し替え忘れると、前の
+    テストが開いたストアをそのまま引き継ぎ、そのテストは何も検証しないまま
+    緑になる。autouse にするのは、忘れる余地を無くすためである。
+    """
+    monkeypatch.setattr(rag_mcp_server, "_state", rag_mcp_server._State())
 
 
 def _hit(text="本文です。", distance=0.413, bm25=45.76, rerank=1.9, occurrences=None):
@@ -201,7 +216,6 @@ def test_search_returns_the_no_hits_text_when_nothing_is_in_range(monkeypatch):
     """圏外なら0件が返り、その旨の文言になる。"""
     from scripts import rag_mcp_server
 
-    monkeypatch.setattr(rag_mcp_server, "_state", rag_mcp_server._State())
     monkeypatch.setattr(rag_mcp_server, "_open", lambda: _FakeCollection())
     monkeypatch.setattr(rag_mcp_server, "build_index", lambda collection: "索引")
     monkeypatch.setattr(rag_mcp_server, "_ensure_reranker", lambda: None)
@@ -229,7 +243,6 @@ def test_every_argument_search_needs_is_wired_through(monkeypatch):
         seen["kwargs"] = kwargs
         return []
 
-    monkeypatch.setattr(rag_mcp_server, "_state", rag_mcp_server._State())
     monkeypatch.setattr(rag_mcp_server, "_open", lambda: _FakeCollection())
     monkeypatch.setattr(rag_mcp_server, "build_index", lambda collection: "索引")
     monkeypatch.setattr(rag_mcp_server, "_ensure_reranker", lambda: reranker_marker)
@@ -258,7 +271,6 @@ def test_every_hit_search_returns_is_formatted(monkeypatch):
 
     hits = [_hit(text="いち"), _hit(text="に"), _hit(text="さん")]
 
-    monkeypatch.setattr(rag_mcp_server, "_state", rag_mcp_server._State())
     monkeypatch.setattr(rag_mcp_server, "_open", lambda: _FakeCollection())
     monkeypatch.setattr(rag_mcp_server, "build_index", lambda collection: "索引")
     monkeypatch.setattr(rag_mcp_server, "_ensure_reranker", lambda: None)
@@ -282,7 +294,6 @@ def test_an_empty_store_says_the_ingest_has_not_run(monkeypatch):
         def count(self):
             return 0
 
-    monkeypatch.setattr(rag_mcp_server, "_state", rag_mcp_server._State())
     monkeypatch.setattr(rag_mcp_server, "_open", lambda: _Empty())
 
     text = rag_mcp_server.search_documents("質問")
@@ -302,7 +313,6 @@ def test_ollama_failure_is_returned_as_its_own_message(monkeypatch):
     def boom(*a, **k):
         raise EmbeddingError("Ollamaに接続できません（http://localhost:11434）")
 
-    monkeypatch.setattr(rag_mcp_server, "_state", rag_mcp_server._State())
     monkeypatch.setattr(rag_mcp_server, "_open", lambda: _FakeCollection())
     monkeypatch.setattr(rag_mcp_server, "build_index", lambda collection: "索引")
     monkeypatch.setattr(rag_mcp_server, "_ensure_reranker", lambda: None)
@@ -335,7 +345,6 @@ def test_an_unexpected_error_is_not_disguised_as_a_search_result(monkeypatch):
     def boom(*a, **k):
         raise TypeError("bad argument")
 
-    monkeypatch.setattr(rag_mcp_server, "_state", rag_mcp_server._State())
     monkeypatch.setattr(rag_mcp_server, "_open", lambda: _FakeCollection())
     monkeypatch.setattr(rag_mcp_server, "build_index", lambda collection: "索引")
     monkeypatch.setattr(rag_mcp_server, "_ensure_reranker", lambda: None)
@@ -353,7 +362,6 @@ def test_check_reranker_is_called_only_once_across_two_searches(monkeypatch):
     """
     from scripts import rag_mcp_server
 
-    monkeypatch.setattr(rag_mcp_server, "_state", rag_mcp_server._State())
     monkeypatch.setattr(rag_mcp_server, "_open", lambda: _FakeCollection())
     monkeypatch.setattr(rag_mcp_server, "build_index", lambda collection: "索引")
     monkeypatch.setattr(rag_mcp_server, "search", lambda *a, **k: [])
@@ -377,7 +385,6 @@ def test_a_failed_reranker_check_is_retried_on_the_next_search(monkeypatch):
     """
     from scripts import rag_mcp_server
 
-    monkeypatch.setattr(rag_mcp_server, "_state", rag_mcp_server._State())
     monkeypatch.setattr(rag_mcp_server, "_open", lambda: _FakeCollection())
     monkeypatch.setattr(rag_mcp_server, "build_index", lambda collection: "索引")
     monkeypatch.setattr(rag_mcp_server, "search", lambda *a, **k: [])
@@ -414,7 +421,6 @@ def test_the_store_is_opened_once_across_two_searches(monkeypatch):
         opens.append(1)
         return _FakeCollection()
 
-    monkeypatch.setattr(rag_mcp_server, "_state", rag_mcp_server._State())
     monkeypatch.setattr(rag_mcp_server, "_open", counting_open)
     monkeypatch.setattr(rag_mcp_server, "build_index", lambda collection: "索引")
     monkeypatch.setattr(rag_mcp_server, "_ensure_reranker", lambda: None)
