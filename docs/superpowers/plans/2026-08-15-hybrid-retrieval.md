@@ -20,7 +20,7 @@
 - PPTXのグルーピング目標は `GROUP_TARGET_CHARS = 200`、行の丸め幅は `ROW_TOLERANCE = 228600`（0.25インチをEMUで表した値）（spec 7.2, 7.5）
 - テストは `.\myvenv313\Scripts\python.exe -m pytest` で実行する。着手時点で212件成功・1件deselected（integration）
 - コメントは「なぜ」を書く。実測値を根拠として残す（既存コードの作法）
-- コミットメッセージは英語のコンベンショナルコミット。末尾に `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`
+- コミットメッセージは英語のコンベンショナルコミット。
 - 作業ブランチは `feat/hybrid-retrieval`（作成済み）
 
 ## 前提となる実測値
@@ -160,9 +160,7 @@ git commit -m "feat: tokenize Japanese text into character bigrams for BM25
 
 A morphological analyser splits unknown words differently depending on its
 dictionary, and unknown words - model numbers, new jargon - are exactly what
-this search exists to rescue. Character bigrams carry no dictionary.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+this search exists to rescue. Character bigrams carry no dictionary."
 ```
 
 ---
@@ -352,9 +350,7 @@ git commit -m "feat: score documents with Okapi BM25 over an in-memory index
 
 The index is never written to disk. Keeping a file beside the DB means the
 two drift apart on every incremental ingest, and nothing raises - the search
-just goes quietly stale.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+just goes quietly stale."
 ```
 
 ---
@@ -488,9 +484,7 @@ git commit -m "fix: number chunks per location so ids cannot collide
 
 Two units at the same location both produced index 0, and Chroma's add
 overwrites a duplicate id without raising. No format hits this today; the
-pptx split in the next commit does.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+pptx split in the next commit does."
 ```
 
 ---
@@ -816,9 +810,7 @@ A slide held up to seven topics in 364 characters, so its vector settled on
 the slide's average and lost to chunks that never mention the term. Text
 boxes are where the author already drew the topic boundaries.
 
-Also recurses into grouped shapes, whose text was being dropped silently.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+Also recurses into grouped shapes, whose text was being dropped silently."
 ```
 
 ---
@@ -1112,9 +1104,7 @@ git commit -m "feat: measure both retrieval arms to pick a BM25 floor
 
 BM25 scores are not normalised - they depend on the corpus IDF - so the floor
 has to be measured the same way the distance threshold was, and re-measured
-whenever the corpus changes.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+whenever the corpus changes."
 ```
 
 ---
@@ -1427,9 +1417,7 @@ git commit -m "feat: fuse vector and BM25 results with RRF and an OR cutoff
 Cosine distance and BM25 scores cannot be normalised against each other, so
 ordering uses ranks alone. The RRF score cannot gate relevance either - an
 out-of-domain query still scores 1/(k+1) at rank one - so each arm keeps its
-own floor and a hit needs to clear only one of them.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+own floor and a hit needs to clear only one of them."
 ```
 
 ---
@@ -1625,9 +1613,7 @@ git commit -m "feat: search with both arms and show how each hit was found
 
 The index is rebuilt from the DB at startup and cleared after an incremental
 ingest; without the clear, freshly ingested documents would be reachable by
-vector search only.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+vector search only."
 ```
 
 ---
@@ -1685,9 +1671,7 @@ Expected:
 
 ```bash
 git add README.md
-git commit -m "docs: describe hybrid retrieval and the two measured thresholds
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+git commit -m "docs: describe hybrid retrieval and the two measured thresholds"
 ```
 
 - [ ] **Step 6: 完了を報告する**

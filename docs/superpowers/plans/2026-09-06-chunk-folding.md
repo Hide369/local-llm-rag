@@ -22,7 +22,7 @@
 - **`ingest/catalog.py` は変更しない。**
 - テストは振る舞いを書く。SQL を直接検査しない。
 - 実行環境: `./myvenv313/Scripts/python.exe -m pytest`
-- コミットメッセージは英語。末尾に `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>` を付ける。
+- コミットメッセージは英語。
 
 ---
 
@@ -243,8 +243,6 @@ per-document.
 Behaviour is unchanged in this commit: count(), get() and search() still
 answer per occurrence. Only the layout moves, so the refactor can be
 reviewed on its own.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
 ```
 
@@ -437,8 +435,6 @@ a failure still leaves neither table changed.
 
 The failure this guards against is silent: the row vanishes, no exception
 is raised, and count() reports the smaller number correctly.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
 ```
 
@@ -716,8 +712,6 @@ temporary file, and only replaces the original once the occurrence count,
 the distinct-text count and the orphan count all check out.
 
 No re-embedding: the old database already holds every vector.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
 ```
 
@@ -832,8 +826,6 @@ every document it appears in, ordered by (source, location) so the
 representative does not move when documents are re-ingested.
 
 Purely additive; get() stays addressed by occurrence.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
 ```
 
@@ -1109,8 +1101,6 @@ seven. Measured on the real corpus, the expected slide for "ファイン
 search() returns the occurrences of a hit rather than a single metadata
 dict, and Hit.metadata becomes a property over that list so the two can
 never disagree.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
 ```
 
@@ -1259,8 +1249,6 @@ wording is not told it is absent. Chunks with one source read exactly as
 before.
 
 The prompt gets the short form only; the detail view lists them all.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
 ```
 
@@ -1423,8 +1411,6 @@ Splitting the ledger creates a new way to break that the counts do not
 show: a text with no occurrence still rides in the vector matrix and keeps
 appearing in results. Fail the ingest when either side is dangling, and
 report both numbers in the summary.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
 ```
 
@@ -1537,8 +1523,6 @@ The regression case is still NG. Three navigational slides — a section
 divider, the folded 事前質問 chunk and a table of contents — now hold the
 top three. That is a separate problem from duplication and is left to its
 own branch.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
 git push -u origin feat/fold-duplicate-chunks
 ```

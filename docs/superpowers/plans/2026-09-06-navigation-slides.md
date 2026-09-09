@@ -18,7 +18,7 @@
 - **`git add -A` / `git add .` は禁止。** 触ったファイルを個別に指定する。作業ツリーには無関係の未追跡物（`.worktrees/generalize-coding-agent/`）がある。
 - **`ingest/chunker.py` と `ingest/retrieval.py` は変更しない**（設計書3.2・8節）。
 - **`chroma_db/` に書き込まない。** 旧アプリ `udemy3.py` がまだ使っている。
-- コミットはコンベンショナルコミット形式、英語、末尾に `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`。
+- コミットはコンベンショナルコミット形式、英語。
 - 数字を書くときは実測するか、いつ・どの規模で測ったかを添える。測っていない数字を実測済みに見せない。
 
 ---
@@ -228,9 +228,7 @@ answers a question.
 The guards matter more than the rules. A full-width digit makes a PDF
 cover page look like a section divider, and body text quoting the word
 mokuji looks like a table of contents; both are pinned by tests, and
-loosening either constant turns them red.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+loosening either constant turns them red."
 ```
 
 ---
@@ -352,9 +350,7 @@ git commit -m "feat: sift parsed units into kept and dropped
 Returns the dropped units themselves rather than a count, so the caller
 can report what disappeared. A count alone leaves a misfire untraceable.
 
-Deciding what to do when every unit drops is left to the caller.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+Deciding what to do when every unit drops is left to the caller."
 ```
 
 ---
@@ -525,9 +521,7 @@ convention, so no existing test moves.
 
 When every unit in a file looks like navigation, nothing is dropped and a
 warning is printed instead. Dropping would hand replace_source an empty
-chunk list and erase the document.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+chunk list and erase the document."
 ```
 
 ---
@@ -621,9 +615,7 @@ git commit -m "feat: report dropped navigation slides in both summaries
 
 The sidebar and the CLI render the report separately; fixing one alone
 would make the two disagree. The line is omitted when nothing dropped, so
-a zero cannot be confused with the feature not running.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+a zero cannot be confused with the feature not running."
 ```
 
 ---
@@ -691,9 +683,7 @@ Expected: `0 problem(s)`
 
 ```bash
 git add README.md "docs/処理箇所マップ.md" "docs/依存関係一覧.md"
-git commit -m "docs: describe what gets dropped at ingest and how to see it
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+git commit -m "docs: describe what gets dropped at ingest and how to see it"
 ```
 
 ---
@@ -765,7 +755,5 @@ Expected: PASS
 
 ```bash
 git add README.md "docs/superpowers/specs/2026-09-06-navigation-slides-design.md"
-git commit -m "docs: record what dropping navigation slides actually bought
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+git commit -m "docs: record what dropping navigation slides actually bought"
 ```

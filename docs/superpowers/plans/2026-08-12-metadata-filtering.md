@@ -270,8 +270,6 @@ and every question about it unanswerable.
 Numbers are parsed into int/float because ChromaDB compares metadata by
 type, and a numeric string would make $lte silently match nothing. Lists
 are skipped since where() cannot do partial matches on them.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
 ```
 
@@ -406,8 +404,6 @@ section can still be filtered on. Attributes that collide with a reserved
 key are dropped rather than allowed to overwrite it: a frontmatter
 "source" would break both the citation and the hash-based skip, and
 neither failure raises.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
 ```
 
@@ -643,8 +639,6 @@ to .md re-indexes the 30 product sheets in seconds.
 Orphan pruning is skipped whenever the filter is active: with the other
 extensions filtered out of the file list, every one of their sources would
 otherwise be judged an orphan and deleted.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
 ```
 
@@ -962,8 +956,6 @@ The LLM call is injected so the conversion rules can be tested without a
 running Ollama. A malformed condition is dropped on its own rather than
 discarding its siblings, and a failed extraction is reported separately
 from a question that simply has no conditions.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
 ```
 
@@ -1238,8 +1230,6 @@ counted six times.
 Relaxing each condition in turn answers the second half of the measured
 question - which models share the noise rating but still cannot be
 installed - and costs nothing, since get() runs no embedding.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
 ```
 
@@ -1365,8 +1355,6 @@ as the model's only guidance.
 
 The catalogue prompt states that the list is complete for the conditions
 given, so there is nothing for the model to fill in.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
 ```
 
@@ -1569,8 +1557,6 @@ UD-1100S and UD-1100iS, and UD-1100iS alone at 26dB.
 
 A failed extraction is surfaced rather than silently degrading, so a
 fallback to vector search is visible to the reader.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
 ```
 

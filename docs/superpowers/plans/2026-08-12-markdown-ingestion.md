@@ -151,9 +151,7 @@ git commit -m "refactor: give parsed units a heading and drop the unused label
 Markdown sections need their heading carried to the citation, and the
 position stays numeric so chunk IDs cannot collide on repeated headings.
 ParsedUnit.label was never called outside its own tests and duplicated the
-citation formatting that Hit.citation already owns.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+citation formatting that Hit.citation already owns."
 ```
 
 ---
@@ -216,9 +214,7 @@ git add ingest/chunker.py tests/test_chunker.py
 git commit -m "feat: carry the unit heading into chunk metadata
 
 Every chunk of a split section keeps the heading so the citation can name
-the section regardless of which fragment matched.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+the section regardless of which fragment matched."
 ```
 
 ---
@@ -498,9 +494,7 @@ A heading is already a topic boundary, so each becomes one unit the way a
 slide does; measured sections top out at 448 characters and never hit the
 800-character split. Every unit is prefixed with the document's H1 so a
 lone spec section still identifies its product, and YAML frontmatter is
-skipped because the prose carries the same facts in searchable Japanese.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+skipped because the prose carries the same facts in searchable Japanese."
 ```
 
 ---
@@ -602,9 +596,7 @@ git add ingest/retrieval.py tests/test_retrieval.py
 git commit -m "feat: cite Markdown hits by their heading
 
 The section number means nothing to a reader, so the citation names the
-heading instead and falls back to the file alone when a document has none.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+heading instead and falls back to the file alone when a document has none."
 ```
 
 ---
@@ -732,9 +724,7 @@ git commit -m "feat: walk source subdirectories and key chunks by relative path
 Documents can now be filed into folders. The identifier is the path
 relative to source/ with forward slashes, which keeps top-level files on
 their existing key — so the 279 chunks already indexed are untouched — and
-stops same-named files in different folders from overwriting each other.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+stops same-named files in different folders from overwriting each other."
 ```
 
 ---
@@ -846,9 +836,7 @@ git commit -m "feat: index the product spec sheets and recalibrate the threshold
 
 The corpus grew from 279 to roughly 460 chunks and now mixes internal
 documents with a product catalogue, so the relevance threshold was
-re-measured against questions of both kinds rather than carried over.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+re-measured against questions of both kinds rather than carried over."
 ```
 
 ---
