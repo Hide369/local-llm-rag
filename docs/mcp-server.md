@@ -102,6 +102,24 @@ Windows で `npx.cmd` を `command` に指定すると、絶対パス指定や `
 起動する都合上ローカル実行が必須で、`url` 方式は選べない。Node.js / `npx` は
 playwright を使う導入先に別途必要になる。
 
+## `~/.codex/AGENTS.md` への追記
+
+`config.toml` が書けるのは接続先までで、**どの質問で検索するか**は書けない。ツール
+の説明文（[rag_mcp_server.py:205](../scripts/rag_mcp_server.py#L205)）にも呼ぶべき
+条件は含まれないため、Codex が自分の知識で答えてしまえば検索は一度も走らない。
+
+`~/.codex/AGENTS.md` に、本リポジトリの [AGENTS.md](../AGENTS.md) から「社内資料の
+参照」「外部ドキュメントの参照」の2節をそのまま貼る。ホーム直下の AGENTS.md は
+リポジトリを問わず読まれるので、利用者が別のリポジトリで作業していても効く。
+
+**冒頭の開発ガイドライン部分は貼らないこと。** superpowers スキル・PowerShell・
+仮想環境の取り決めであり、本リポジトリを開発しない利用者には無関係である。
+
+0件時の歯止めはサーバ側にもあるため二重になっている。何がサーバ側だけで足り、何が
+AGENTS.md にしか無いのかは
+[mcp-server-network.md](mcp-server-network.md) の「AGENTS.md が無いと何が壊れるか」
+にある。
+
 ## 動作確認
 
 設定を保存したら、Codex を起動し直す。`/mcp` などで `local_docs` が接続済みで
@@ -175,7 +193,8 @@ Ollama が起動していない、あるいは `bge-m3` が未導入の場合は
 2. `ollama pull bge-m3`（生成モデルは不要）
 3. 資料を `source/` に配置し、`python -m scripts.ingest_source` で取り込む
 4. `~/.codex/config.toml` に上記3サーバを登録する
-5. Codex を起動し直し、動作確認の手順で出典が返ることを見る
+5. `~/.codex/AGENTS.md` に `AGENTS.md` の「社内資料の参照」「外部ドキュメントの参照」を貼る
+6. Codex を起動し直し、動作確認の手順で出典が返ることを見る
 
 リランカー（`bge-reranker-v2-m3` ONNX）のモデルは初回実行時に HuggingFace Hub
 から自動取得される。導入先はインターネットに到達できる前提のため、事前の
