@@ -45,7 +45,43 @@ def test_no_hits_returns_the_instruction_not_an_empty_string():
     text = format_results([])
     assert text.strip()
     assert "見つかりませんでした" in text
-    assert "推測で答えず" in text
+
+
+def test_no_hits_allows_answering_from_general_knowledge():
+    """0件は「答えるな」ではなく「社内資料には無い」である。
+
+    初版は「推測で答えず、社内資料からは回答できない旨を伝えてください」と
+    書いており、モデル自身の一般知識を使うことまで禁じていた。Codex はそれでも
+    回答を出そうとして代替の根拠を外部に探し、ウェブ検索を数回繰り返した末に
+    諦めのメッセージを出して止まる（2026-09-09 の実機報告）。社内資料と無縁の
+    質問まで巻き込まれるため、一般知識で答えてよいことを明示する。
+    """
+    text = format_results([])
+    assert "一般的な知識" in text
+    assert "社内資料に基づかない" in text
+
+
+def test_no_hits_forbids_compensating_with_another_search():
+    """ウェブ検索の繰り返しを名指しで止める。
+
+    「答えるな」を外すだけでは足りない。根拠を外に探しにいく動きは、0件が
+    「まだ根拠が見つかっていない」と読まれることから来る。探索を打ち切って
+    よいことを明示しないと、同じループが残る。
+    """
+    text = format_results([])
+    assert "ウェブ検索" in text
+    assert "補おうとせず" in text
+
+
+def test_no_hits_still_forbids_guessing_internal_facts():
+    """一般知識を許しても、社内固有の事項は推測させない。
+
+    この歯止めを外すと「就業規則の有給日数」を検索が外したときに、モデルが
+    それらしい日数を創作する。フォールバックを許す範囲は一般知識までである。
+    """
+    text = format_results([])
+    assert "社内固有の事項" in text
+    assert "推測せず" in text
 
 
 def test_every_source_is_listed_not_rolled_up():
@@ -116,6 +152,29 @@ def test_the_caution_is_appended_to_the_results():
     text = format_results([_hit()])
     assert "関連しない場合は根拠に使わず" in text
     assert "資料に書かれていない主体を補わないでください" in text
+
+
+def test_the_caution_does_not_order_an_unconditional_refusal():
+    """歯止めと出口を同じ段落で矛盾させない。
+
+    「資料からは回答できない旨を伝えてください」と「一般知識でなら答えてよい」を
+    並べると、エージェントはどちらに従えばよいか決められない。無関係だったときの
+    指示は、一般知識か社内固有かで分岐する _FALLBACK 側に一本化する。
+    """
+    text = format_results([_hit()])
+    assert "資料からは回答できない旨を伝えてください" not in text
+
+
+def test_the_caution_offers_the_same_fallback_as_the_no_hits_message():
+    """無関係な結果が返ったときも袋小路に入れない。
+
+    0件と「ヒットしたが無関係」は、エージェントから見れば同じ「根拠が無い」で
+    ある。片方だけ出口を用意すると、しきい値をぎりぎり通った無関係な結果が
+    返ったときに、0件のときと同じウェブ検索のループが残る。
+    """
+    text = format_results([_hit()])
+    assert "一般的な知識" in text
+    assert "社内固有の事項" in text
 
 
 def test_hits_are_numbered_in_order():
