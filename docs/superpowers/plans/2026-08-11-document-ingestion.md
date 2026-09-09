@@ -182,9 +182,7 @@ git add ingest/ tests/ pytest.ini
 git commit -m "feat: add shared data structures for the ingestion pipeline
 
 ParsedUnit is the common intermediate representation that lets every
-parser hide its format from the rest of the pipeline.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+parser hide its format from the rest of the pipeline."
 ```
 
 ---
@@ -358,9 +356,7 @@ git commit -m "feat: split parsed units into chunks with source metadata
 
 Units are chunked independently so every chunk keeps an unambiguous page
 or slide number for citation. Units at or below 800 characters pass
-through whole, which keeps each meeting minute in one piece.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+through whole, which keeps each meeting minute in one piece."
 ```
 
 ---
@@ -575,9 +571,7 @@ git commit -m "feat: add DOCX and PPTX parsers with suffix dispatch
 
 Slides become one unit each since a slide is already a topic boundary,
 and speaker notes are included because they carry context the slide body
-does not.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+does not."
 ```
 
 ---
@@ -745,9 +739,7 @@ git commit -m "feat: add lazily initialised Japanese OCR wrapper
 
 Building the RapidOCR engine costs ~4.8s and keeps models resident, so it
 is deferred until an image page is actually encountered. Rendering is
-fixed at 200dpi because 150/200/300 measured the same.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+fixed at 200dpi because 150/200/300 measured the same."
 ```
 
 ---
@@ -918,9 +910,7 @@ git commit -m "feat: add PDF parser with OCR fallback for image-only pages
 
 Pages yielding fewer than 30 characters are rendered and OCR'd. The
 threshold separates the real corpus cleanly: the text PDF's thinnest page
-holds 66 characters and the image PDF's pages hold none.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+holds 66 characters and the image PDF's pages hold none."
 ```
 
 ---
@@ -1207,9 +1197,7 @@ git commit -m "feat: add batched bge-m3 embedding client over a reused session
 
 Binds to 127.0.0.1 rather than localhost: on Windows the latter resolves
 to ::1 first and costs ~2.1s per request against Ollama's ~80ms of actual
-work. Batches are capped at 8, which measured faster per item than 32.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+work. Batches are capped at 8, which measured faster per item than 32."
 ```
 
 ---
@@ -1431,9 +1419,7 @@ git commit -m "feat: add Chroma store with hash-based incremental re-ingest
 
 The file hash lives in chunk metadata rather than a side manifest, so the
 database stays the single source of truth. Sources are replaced whole and
-sources missing from disk are pruned to avoid stale citations.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+sources missing from disk are pruned to avoid stale citations."
 ```
 
 ---
@@ -1756,9 +1742,7 @@ git commit -m "feat: add source directory ingestion CLI
 
 Commits to the database per file so a failure twelve minutes into the
 initial run does not discard completed work; re-running skips what already
-succeeded. A broken file is recorded and the remaining files continue.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+succeeded. A broken file is recorded and the remaining files continue."
 ```
 
 - [ ] **Step 6: 実データで初回取り込みを実行する**
@@ -2033,9 +2017,7 @@ git commit -m "feat: add retrieval with citations and a calibrated threshold
 The cutoff is measured rather than guessed: check_retrieval.py reports the
 farthest relevant hit and the nearest irrelevant one, and the threshold
 sits between them. Both figures are recorded in the code comment so the
-next person can recalibrate after swapping documents.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+next person can recalibrate after swapping documents."
 ```
 
 ---
@@ -2297,9 +2279,7 @@ git commit -m "feat: add RAG chat UI with document citations
 Retrieved passages carry their file and page into the prompt so the model
 can cite them, and the expander shows the same citation with its distance.
 The sidebar button handles incremental ingestion only; the initial 13
-minute run belongs on the CLI.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+minute run belongs on the CLI."
 ```
 
 ---
@@ -2402,9 +2382,7 @@ Expected: PASS（全62件）
 
 ```bash
 git add README.md
-git commit -m "docs: add README covering setup, ingestion, and known limits
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+git commit -m "docs: add README covering setup, ingestion, and known limits"
 ```
 
 ---

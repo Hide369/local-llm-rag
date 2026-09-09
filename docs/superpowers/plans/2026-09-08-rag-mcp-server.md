@@ -20,7 +20,7 @@
 - **`ingest/` 配下と `scripts/ingest_source.py` は変更しない**（設計書4.2節）。サーバは `retrieval.search()` を呼ぶだけである。
 - **`vector_store.sqlite3` に書き込まない。** テストはインメモリのストアを使う。
 - **MCP SDK の API は実測で確認済み。** `mcp` 2.2.0 で `from mcp.server import MCPServer`。**`FastMCP` は存在しない**（`ModuleNotFoundError`）。`@mcp.tool()` は元の関数をそのまま返すため、テストから直接呼べる。`mcp.run()` の既定は stdio。
-- コミットはコンベンショナルコミット形式、英語、末尾に `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`。
+- コミットはコンベンショナルコミット形式、英語。
 - 数字を書くときは実測するか、いつ・どの規模で測ったかを添える。測っていない数字を実測済みに見せない。
 
 ---
@@ -252,9 +252,7 @@ opens the source files it is given; 'and 6 others' names none of them.
 
 Returning the no-hits instruction instead of an empty string matters for
 the same reason build_prompt has a zero-hit branch: an agent with no
-grounds falls back on its own knowledge.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+grounds falls back on its own knowledge."
 ```
 
 ---
@@ -414,9 +412,7 @@ chunk count would miss.
 
 Both directions are pinned by tests: always rebuilding and never
 rebuilding are each silent failures that only cost time or serve stale
-hits.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+hits."
 ```
 
 ---
@@ -671,9 +667,7 @@ sessions that never search. A test pins that, because loading eagerly
 raises nothing - it only costs time.
 
 Errors are returned as their own text. embedder already writes messages
-that say what to do next, such as running ollama pull bge-m3.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+that say what to do next, such as running ollama pull bge-m3."
 ```
 
 ---
@@ -746,7 +740,5 @@ Expected: PASS（Task 1 Step 1 で控えた件数 + 13）
 
 ```bash
 git add "docs/mcp-server.md" AGENTS.md "docs/処理箇所マップ.md"
-git commit -m "docs: describe how to wire the MCP server into Codex
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+git commit -m "docs: describe how to wire the MCP server into Codex"
 ```
