@@ -28,6 +28,10 @@ from ingest.parsers import SUPPORTED_SUFFIXES, parse
 DEFAULT_SOURCE_DIR = Path(__file__).resolve().parent.parent / "source"
 DB_PATH = store.DB_PATH
 
+# アップロード由来の資料キーに付ける接頭辞。source/ 直下に同名の資料があっても
+# 上書きしないためと、画面の一覧・削除がキーの前方一致だけで済むようにするため。
+UPLOAD_PREFIX = "uploads/"
+
 
 @dataclass
 class IngestReport:
@@ -113,6 +117,66 @@ def _dropped_positions(dropped: list[ParsedUnit]) -> str:
     return "、".join(f"{label}{','.join(items)}" for label, items in groups.items())
 
 
+def _ingest_one(
+    path: Path,
+    source: str,
+    current_hash: str,
+    collection,
+    session,
+    today: str,
+    caption_image,
+    notify,
+    report: IngestReport,
+) -> None:
+    """1ファイルを解析して取り込み、結果を report へ記録する。
+
+    source/ の走査（ingest_directory）と画面からのアップロード（ingest_uploads）で
+    違うのは、対象ファイルの集め方・差分判定・孤児削除の有無だけである。解析から
+    保存までの手順は同じものを使う。2箇所に写すと、ナビゲーション除外のような
+    判断が片方にしか入らない状態が生まれる。
+    """
+    notify(f"処理中: {source}")
+    try:
+        units = parse(path, caption_image=caption_image)
+        kept, dropped = navigation.drop_navigation(units)
+        kept_all_navigation = bool(dropped) and not kept
+        if kept_all_navigation:
+            # 規則が誤爆したときに資料が丸ごと消えるのを防ぐ。空のチャンク列を
+            # store.replace_source() に渡すと、その資料はDBから消える。
+            # 中身のある資料からノイズを取り除くのがこの機能の目的であり、
+            # 「中身が1つも無い資料」は規則の誤りである可能性のほうが高い。
+            notify(f"警告: {source} は全ユニットがナビゲーション判定。除外しません")
+            dropped = []
+        else:
+            units = kept
+        chunks = chunk_units(units, source, current_hash, today)
+        vectors = embedder.embed_texts(
+            [chunk.text for chunk in chunks], session=session
+        )
+        store.replace_source(collection, source, chunks, vectors)
+    except Exception as error:  # 1ファイルの失敗で全体を止めない
+        report.failed[source] = str(error)
+        notify(f"失敗: {source} — {error}")
+        return
+
+    report.indexed[source] = len(chunks)
+    # 報告に載せるのは取り込みが成功した資料だけである。埋め込みで失敗した
+    # 資料をここに載せると、要約に「失敗」と「全ユニットがナビゲーション
+    # 判定のため除外しませんでした」が並び、後者が「丸ごと取り込んだ」と
+    # 読めてしまう（実際はDBに1件も入っていない）。
+    if kept_all_navigation:
+        report.kept_all_navigation.append(source)
+    if dropped:
+        report.dropped[source] = len(dropped)
+        notify(
+            f"完了: {source}（{len(chunks)}チャンク、"
+            f"ナビゲーション{len(dropped)}件を除外: "
+            f"{_dropped_positions(dropped)}）"
+        )
+    else:
+        notify(f"完了: {source}（{len(chunks)}チャンク）")
+
+
 def ingest_directory(
     source_dir: Path,
     collection,
@@ -123,6 +187,15 @@ def ingest_directory(
     caption_image=None,
 ) -> IngestReport:
     """source_dir を走査し、変更のあった資料だけを取り込む。"""
+    # source/uploads/ の資料はキーが uploads/… になり、画面からアップロードした
+    # 資料と区別が付かなくなる。混ざると孤児削除の除外（下）がsource/の資料まで
+    # 守ってしまい、消えるべき資料が消えない。名前を直してもらう。
+    if (source_dir / UPLOAD_PREFIX.rstrip("/")).is_dir():
+        raise ValueError(
+            f"{source_dir} に uploads/ があります。この名前は画面からアップロード"
+            "した資料の予約語です。別の名前に変更してください。"
+        )
+
     report = IngestReport()
     notify = on_progress or (lambda _message: None)
     own_session = session is None
@@ -140,56 +213,82 @@ def ingest_directory(
                 notify(f"スキップ（変更なし）: {source}")
                 continue
 
-            notify(f"処理中: {source}")
-            try:
-                units = parse(path, caption_image=caption_image)
-                kept, dropped = navigation.drop_navigation(units)
-                kept_all_navigation = bool(dropped) and not kept
-                if kept_all_navigation:
-                    # 規則が誤爆したときに資料が丸ごと消えるのを防ぐ。空のチャンク列を
-                    # store.replace_source() に渡すと、その資料はDBから消える。
-                    # 中身のある資料からノイズを取り除くのがこの機能の目的であり、
-                    # 「中身が1つも無い資料」は規則の誤りである可能性のほうが高い。
-                    notify(f"警告: {source} は全ユニットがナビゲーション判定。除外しません")
-                    dropped = []
-                else:
-                    units = kept
-                chunks = chunk_units(units, source, current_hash, today)
-                vectors = embedder.embed_texts(
-                    [chunk.text for chunk in chunks], session=session
-                )
-                store.replace_source(collection, source, chunks, vectors)
-            except Exception as error:  # 1ファイルの失敗で全体を止めない
-                report.failed[source] = str(error)
-                notify(f"失敗: {source} — {error}")
-                continue
-
-            report.indexed[source] = len(chunks)
-            # 報告に載せるのは取り込みが成功した資料だけである。埋め込みで失敗した
-            # 資料をここに載せると、要約に「失敗」と「全ユニットがナビゲーション
-            # 判定のため除外しませんでした」が並び、後者が「丸ごと取り込んだ」と
-            # 読めてしまう（実際はDBに1件も入っていない）。
-            if kept_all_navigation:
-                report.kept_all_navigation.append(source)
-            if dropped:
-                report.dropped[source] = len(dropped)
-                notify(
-                    f"完了: {source}（{len(chunks)}チャンク、"
-                    f"ナビゲーション{len(dropped)}件を除外: "
-                    f"{_dropped_positions(dropped)}）"
-                )
-            else:
-                notify(f"完了: {source}（{len(chunks)}チャンク）")
+            _ingest_one(
+                path,
+                source,
+                current_hash,
+                collection,
+                session,
+                today,
+                caption_image,
+                notify,
+                report,
+            )
 
         # source/ を唯一の入力とするため、消えた資料はDBからも消す。
         # ただし部分取り込みのときは行わない。対象外の拡張子のファイルが
         # すべて孤児と判定され、他形式のチャンクが丸ごと消えるため。
         if only_suffix is None:
-            report.removed = store.delete_orphans(
-                collection, {_source_key(path, source_dir) for path in files}
-            )
+            # アップロード由来の資料は原本が source/ に無い。既知の集合へ加えないと、
+            # 誰かが「差分を取り込む」を押した瞬間に画面から取り込んだ資料が消える。
+            # 消す時期は利用者がダイアログの削除ボタンで決める。
+            known = {_source_key(path, source_dir) for path in files}
+            known |= {
+                source
+                for source in store.indexed_sources(collection)
+                if source.startswith(UPLOAD_PREFIX)
+            }
+            report.removed = store.delete_orphans(collection, known)
             for source in report.removed:
                 notify(f"削除（source/にありません）: {source}")
+    finally:
+        if own_session:
+            session.close()
+
+    return report
+
+
+
+def upload_key(filename: str) -> str:
+    """アップロードされたファイル名から資料キーを組み立てる。"""
+    return f"{UPLOAD_PREFIX}{filename}"
+
+
+def ingest_uploads(
+    paths,
+    collection,
+    session=None,
+    on_progress=None,
+    caption_image=None,
+) -> IngestReport:
+    """画面からアップロードされた一時ファイルを取り込む。
+
+    孤児削除を行わない。渡されるのはその場でアップロードされた数ファイルだけで、
+    それを唯一の入力とみなすと source/ 由来の資料がすべて孤児として消える。
+
+    差分判定もしない。原本は一時ファイルであり、同じ内容を上げ直したかどうかは
+    利用者にとって意味を持たない。押したら取り込まれるほうが画面の挙動として
+    素直である。
+    """
+    report = IngestReport()
+    notify = on_progress or (lambda _message: None)
+    own_session = session is None
+    session = session or embedder.new_session()
+    today = date.today().isoformat()
+
+    try:
+        for path in paths:
+            _ingest_one(
+                path,
+                upload_key(path.name),
+                file_hash(path),
+                collection,
+                session,
+                today,
+                caption_image,
+                notify,
+                report,
+            )
     finally:
         if own_session:
             session.close()
