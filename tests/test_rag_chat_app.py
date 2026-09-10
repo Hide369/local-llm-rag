@@ -293,21 +293,22 @@ def test_products_that_fail_the_condition_are_shown_but_not_sent_to_the_model(ap
     assert "条件を満たさないので選べない" in shown
 
 
-def test_the_vlm_choice_is_not_left_to_the_reader(app):
-    """VLMのチェックボックスは置かない。図表があれば自動で説明文化する。
+def test_no_quality_switches_are_left_to_the_reader(app):
+    """VLMもRerankerもチェックボックスにしない。どちらも常に効かせる。
 
-    チェックボックスは「画像を含む資料かどうか」を利用者に判断させていた。
-    資料を開かずには分からないうえ、外し忘れれば図表の説明が黙って欠ける。
-    パーサーは画像を見つけたときだけ caption_image を呼ぶので、図の無い資料に
-    自動で渡しても取り込みは遅くならない。
+    「画像を含む資料か」も「並べ替えを使うか」も、利用者が判断する材料を
+    画面から得られない。外し忘れれば図表の説明や並べ替えが黙って落ちるだけで、
+    落ちたことは結果からは分からない。
+
+    どちらも常時ONにできる根拠がある。パーサーは画像を見つけたときだけ
+    caption_image を呼ぶので図の無い資料の取り込みは遅くならず、リランカーは
+    1問あたり約1.3秒（実測。8候補の中央値）で常用に耐える。
     """
     with patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})):
         app.run()
 
     assert not app.exception
-    assert [checkbox.label for checkbox in app.checkbox] == [
-        "Rerankerで並べ替える（+約1.3秒）"
-    ]
+    assert app.checkbox.values == []
 
 
 def test_ingesting_passes_the_captioner_without_being_asked(app):
@@ -424,28 +425,12 @@ def test_input_is_re_enabled_and_history_has_exactly_one_exchange_after_answerin
     assert [m["role"] for m in app.session_state.messages] == ["user", "assistant"]
 
 
-def test_the_reranker_checkbox_defaults_to_on():
-    """VLMは重いため既定OFFだが、リランカーは1.3秒なので常用に耐える。
+def test_a_reranker_model_failure_says_what_happens_instead():
+    """570MBの取得に失敗したとき、生のトレースバックを画面に出さない。
 
-    ensure_reranker() は @st.cache_resource でプロセス全体に1回だけキャッシュ
-    される。前のテストが残したキャッシュを引き継ぐと、ここでpatch.objectした
-    check_reranker が実際には呼ばれず「何を検証しているのか」が崩れるため、
-    _reranker_check_stubbed_by_default フィクスチャと同じ理由で毎回クリアする。
+    理由だけでは足りない。切る手段を利用者から取り上げた以上、そのまま検索が
+    続くのか止まるのかを画面に書く（VLMが使えないときの見せ方に揃える）。
     """
-    st.cache_resource.clear()
-    with patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})), patch.object(
-        reranker_module, "check_reranker", lambda: None
-    ):
-        app = AppTest.from_file(str(APP_PATH)).run()
-    assert not app.exception
-    checkbox = next(
-        box for box in app.sidebar.checkbox if "Reranker" in box.label
-    )
-    assert checkbox.value is True
-
-
-def test_a_reranker_model_failure_is_shown_in_the_sidebar():
-    """570MBの取得に失敗したとき、生のトレースバックを画面に出さない。"""
     st.cache_resource.clear()
     message = "リランカーのモデルを取得できません（テスト）"
     with patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})), patch.object(
@@ -453,11 +438,14 @@ def test_a_reranker_model_failure_is_shown_in_the_sidebar():
     ):
         app = AppTest.from_file(str(APP_PATH)).run()
     assert not app.exception
-    assert any(message in error.value for error in app.sidebar.error)
+    assert any(
+        message in warning.value and "並べ替え" in warning.value
+        for warning in app.sidebar.warning
+    )
 
 
-def test_the_reranker_is_wired_into_search_when_the_checkbox_is_on(app):
-    """チェックボックスがONなら、search()にreranker.rerankが渡る。
+def test_the_reranker_is_always_wired_into_search(app):
+    """search()には常にreranker.rerankが渡る。
 
     ここを確認しないと、常にrerank=Noneを渡す退行（機能が画面上は何も変わらず
     静かに無効化される）でも他のアサーションを全て通り抜けてしまう。
@@ -488,12 +476,12 @@ def test_the_reranker_is_wired_into_search_when_the_checkbox_is_on(app):
     assert calls == [reranker_module.rerank]
 
 
-def test_the_reranker_is_not_wired_into_search_when_the_checkbox_is_off(app):
-    """チェックボックスをOFFにしたら、search()にはrerank=Noneが渡る。
+def test_a_missing_reranker_model_does_not_stop_the_search(app):
+    """モデルが用意できなければ、並べ替えずに検索する。
 
-    ON側だけを確認すると、常にreranker.rerankを渡す実装（OFFにしても検索結果が
-    変わらない）でもON側のテストは通ってしまう。ON/OFF両方の対で初めて
-    チェックボックスの値が実際に配線されていることが分かる。
+    常に渡す側だけを確認すると、モデルの取得に失敗した環境で検索ごと落ちる実装
+    でも通ってしまう。並べ替えは検索結果の順序を良くするものであって、検索が
+    成立する条件ではない（VLMが無くても取り込みを止めないのと同じ考え方）。
     """
     calls = []
 
@@ -505,14 +493,15 @@ def test_the_reranker_is_not_wired_into_search_when_the_checkbox_is_off(app):
 
     with (
         patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
+        patch.object(
+            reranker_module,
+            "check_reranker",
+            lambda: (_ for _ in ()).throw(reranker_module.RerankError("モデルがありません")),
+        ),
         patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
         patch.object(retrieval, "search", fake_search),
     ):
         app.run()
-        checkbox = next(
-            box for box in app.sidebar.checkbox if "Reranker" in box.label
-        )
-        checkbox.set_value(False).run()
         app.chat_input[0].set_value("運転音は？").run()
 
     assert not app.exception

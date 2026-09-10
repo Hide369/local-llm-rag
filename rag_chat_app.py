@@ -275,25 +275,24 @@ if st.sidebar.button("資料をアップロード", key="open_upload_dialog"):
 if st.session_state.get("upload_dialog_open"):
     upload_dialog(collection)
 
-# 既定ON。VLMが既定OFFなのは画像1枚ごとに同期のAPI呼び出しが挟まり取り込みが
-# 大幅に遅くなるためだが、リランカーは1問あたり約1.3秒（実測。8候補の中央値）
-# であり常用に耐える。
-use_reranker = st.sidebar.checkbox(
-    "Rerankerで並べ替える（+約1.3秒）",
-    value=True,
-    help="検索結果の上位8件をbge-reranker-v2-m3で測り直して並べ替えます。",
-)
+# 検索結果は常に並べ替える。1問あたり約1.3秒（実測。8候補の中央値）であり常用に
+# 耐える。切る手段を画面に置いていたが、使うかどうかを判断する材料は画面に無く、
+# 外したままにすれば並べ替えが黙って落ちるだけだった。落ちたことは結果からは
+# 分からない（図表の説明文化を自動にしたのと同じ理由）。
+#
 # 初回はモデルの取得に570MB・約1分かかる。質問の途中で無言で止まらないよう、
 # ここで先に確認する（embedder.check_ollama / vlm.check_vlm と同じ役割）。
 rerank_callable = None
-if use_reranker:
-    try:
-        with st.spinner("リランカーのモデルを確認中…（初回は570MBの取得に約1分）"):
-            ensure_reranker()
-    except reranker.RerankError as error:
-        st.sidebar.error(str(error))
-    else:
-        rerank_callable = reranker.rerank
+try:
+    with st.spinner("リランカーのモデルを確認中…（初回は570MBの取得に約1分）"):
+        ensure_reranker()
+except reranker.RerankError as error:
+    # 並べ替えは検索が成立する条件ではない。順序が良くなるだけである。理由と、
+    # そのまま検索することの両方を書く。切る手段を取り上げた以上、利用者が
+    # 次に何が起きるかを画面から読み取れないと手の打ちようがない。
+    st.sidebar.warning(f"Rerankerで並べ替えません: {error}")
+else:
+    rerank_callable = reranker.rerank
 
 if st.sidebar.button("会話履歴をリセット"):
     st.session_state.messages = []
