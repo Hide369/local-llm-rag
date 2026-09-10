@@ -26,6 +26,7 @@ import ingest.retrieval as retrieval
 from ingest import chat
 from ingest import embedder as embedder_module
 from ingest import reranker as reranker_module
+from ingest import store as store_module
 from ingest import vlm as vlm_module
 from ingest.embedder import EmbeddingError
 from ingest.vector_store import open_store as open_real_store
@@ -514,3 +515,151 @@ def test_the_caches_are_keyed_on_the_revision_not_the_chunk_count(app):
     # VectorStore.search() も内部で revision() を読むため >= では将来ゆるくなる。
     # 初期描画では検索が走らないので、鍵として読まれる2回ちょうどが期待値。
     assert len(seen) == 2, "get_index と get_schema の両方が revision を鍵にすること"
+
+
+# --- 取り込みダイアログ ---------------------------------------------------
+#
+# 利用者のブラウザーから資料を取り込む経路。source/ はサーバー側にあり、
+# クライアントからは触れない。ダイアログは session_state のフラグで開閉する。
+# ボタンのクリックで再実行が起きるため、フラグを持たないと最初の操作で閉じる
+# （AppTestでも実機と同じように閉じることを確認済み）。
+
+
+def _open_upload_dialog(app):
+    app.button(key="open_upload_dialog").click().run()
+    return app
+
+
+def test_the_upload_dialog_writes_the_file_and_ingests_it(app):
+    """アップロードされた中身を一時ファイルに書き出してから取り込みへ渡す。"""
+    received = []
+
+    def fake_ingest_uploads(paths, collection, **kwargs):
+        received.extend((path.name, path.read_bytes()) for path in paths)
+        return ingest_source.IngestReport(indexed={"uploads/持ち込み.md": 1})
+
+    with (
+        patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
+        patch.object(embedder_module, "check_ollama", lambda *a, **k: None),
+        patch.object(ingest_source, "ingest_uploads", fake_ingest_uploads),
+    ):
+        app.run()
+        _open_upload_dialog(app)
+        app.file_uploader[0].set_value(("持ち込み.md", b"# \xe8\xad\xb0\xe4\xba\x8b\xe9\x8c\xb2", "text/markdown"))
+        app.run()
+        app.button(key="run_upload").click().run()
+
+    assert not app.exception
+    assert received == [("持ち込み.md", b"# \xe8\xad\xb0\xe4\xba\x8b\xe9\x8c\xb2")]
+
+
+def test_the_upload_dialog_does_not_ingest_when_nothing_is_selected(app):
+    """ファイルを選ばずに押しても、埋め込みAPIを呼びに行かせない。"""
+    calls = []
+
+    with (
+        patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
+        patch.object(embedder_module, "check_ollama", lambda *a, **k: None),
+        patch.object(
+            ingest_source,
+            "ingest_uploads",
+            lambda *a, **k: calls.append(a) or ingest_source.IngestReport(),
+        ),
+    ):
+        app.run()
+        _open_upload_dialog(app)
+        app.button(key="run_upload").click().run()
+
+    assert not app.exception
+    assert calls == []
+    assert any("選んで" in warning.value for warning in app.warning)
+
+
+def test_the_upload_dialog_lists_only_the_uploaded_documents(app):
+    """source/ 由来の資料は一覧に出さない。削除できるのはアップロード分だけである。"""
+    with patch("ingest.store.open_store", _stub_open_store({"source": "議事録.docx"})):
+        app.run()
+        _open_upload_dialog(app)
+
+    assert not app.exception
+    keys = [button.key for button in app.button if button.key]
+    assert [key for key in keys if key.startswith("delete_")] == []
+
+
+def test_the_upload_dialog_deletes_an_uploaded_document(app):
+    """一覧の削除ボタンでDBから消える。消える時期を利用者が握るための操作である。"""
+    # 画面が開くストアをテスト側で握る。session_state に置いてもらう手も
+    # あるが、確認のためだけの経路を画面のコードへ足すことになる。
+    collection = open_real_store(":memory:")
+    collection.add(
+        ids=["chunk-1"],
+        documents=["持ち込んだ資料の本文です。"],
+        embeddings=[[0.1, 0.2]],
+        metadatas=[{"source": "uploads/持ち込み.md"}],
+    )
+    with patch("ingest.store.open_store", lambda *a, **k: collection):
+        app.run()
+        _open_upload_dialog(app)
+        assert store_module.indexed_sources(collection) == {"uploads/持ち込み.md"}
+        app.button(key="delete_uploads/持ち込み.md").click().run()
+
+    assert not app.exception
+    assert store_module.indexed_sources(collection) == set()
+
+
+def test_the_upload_dialog_reports_an_offline_ollama_without_ingesting(app):
+    """取り込みを始めてから落ちるのではなく、先に疎通確認して短く伝える。"""
+    calls = []
+
+    def offline(*args, **kwargs):
+        raise EmbeddingError(OFFLINE_MESSAGE)
+
+    with (
+        patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
+        patch.object(embedder_module, "check_ollama", offline),
+        patch.object(
+            ingest_source,
+            "ingest_uploads",
+            lambda *a, **k: calls.append(a) or ingest_source.IngestReport(),
+        ),
+    ):
+        app.run()
+        _open_upload_dialog(app)
+        app.file_uploader[0].set_value(("持ち込み.md", b"# a", "text/markdown"))
+        app.run()
+        app.button(key="run_upload").click().run()
+
+    assert not app.exception
+    assert calls == []
+    assert any(OFFLINE_MESSAGE in error.value for error in app.error)
+
+
+def test_an_uploaded_document_really_reaches_the_store(app):
+    """ダイアログから実際の取り込み処理を通し、DBに入って一覧に出るまでを見る。
+
+    他のダイアログのテストは ingest_uploads() を差し替えており、画面側の配線しか
+    見ていない。解析・チャンク・格納まで本物を通すのはここだけである。埋め込みの
+    HTTP呼び出しだけは固定ベクトルに差し替える（Ollamaに依存させない）。
+    """
+    collection = open_real_store(":memory:")
+
+    with (
+        patch("ingest.store.open_store", lambda *a, **k: collection),
+        patch.object(embedder_module, "check_ollama", lambda *a, **k: None),
+        patch.object(
+            embedder_module,
+            "embed_texts",
+            lambda texts, session=None: [[0.1, 0.2] for _ in texts],
+        ),
+    ):
+        app.run()
+        _open_upload_dialog(app)
+        app.file_uploader[0].set_value(
+            ("持ち込み.md", "# 議題\n\n取り込みUIの設計を決めた。\n".encode(), "text/markdown")
+        )
+        app.run()
+        app.button(key="run_upload").click().run()
+
+    assert not app.exception
+    assert store_module.indexed_sources(collection) == {"uploads/持ち込み.md"}
+    assert app.button(key="delete_uploads/持ち込み.md") is not None

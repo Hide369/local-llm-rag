@@ -3,8 +3,13 @@
 取り込み処理は ingest/ 側にあり、このファイルは表示と入出力だけを担当する。
 初回の取り込みは13分かかるため、CLI (python -m scripts.ingest_source) で行う。
 このUIのボタンは差分取り込み（通常は数秒）を想定している。
+
+source/ はサーバー側にあり、ブラウザーから使う利用者は資料を置けない。サイドバーの
+「資料をアップロード」ダイアログがクライアントから資料を入れる唯一の経路である。
 """
+import tempfile
 from datetime import datetime
+from pathlib import Path
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -15,6 +20,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from ingest import answer_text, catalog, chat, conditions, embedder, reranker, store, vlm
+from ingest.parsers import SUPPORTED_SUFFIXES
 from ingest.prompting import (
     build_catalog_prompt,
     build_prompt,
@@ -22,7 +28,12 @@ from ingest.prompting import (
     format_report,
 )
 from ingest.retrieval import build_index, contextual_query, search
-from scripts.ingest_source import DEFAULT_SOURCE_DIR, ingest_directory
+from scripts.ingest_source import (
+    DEFAULT_SOURCE_DIR,
+    UPLOAD_PREFIX,
+    ingest_directory,
+    ingest_uploads,
+)
 
 DB_PATH = str(store.DB_PATH)
 
@@ -89,6 +100,88 @@ def render_hits(hits):
             st.write(hit.text)
 
 
+def uploaded_sources(collection):
+    """アップロード経由で入った資料のキー。
+
+    source/ 由来の資料は出さない。原本がサーバー側にあり、画面から消しても
+    次の差分取り込みで戻ってくるため、消せるように見せるのは嘘になる。
+    """
+    return sorted(
+        source
+        for source in store.indexed_sources(collection)
+        if source.startswith(UPLOAD_PREFIX)
+    )
+
+
+@st.dialog("資料をアップロードして取り込む")
+def upload_dialog(collection, use_vlm):
+    """クライアントの手元にある資料を取り込む。
+
+    source/ はサーバー側にあり、利用者のブラウザーからは置けない。ここが
+    クライアントから資料を入れる唯一の経路である。
+
+    取り込んだあと st.rerun() は呼ばない。呼ぶとダイアログごと閉じて結果表示が
+    消える。BM25索引と属性一覧は collection.revision() を鍵にしており、次に
+    画面が動いたときに勝手に組み直される（サイドバーの取り込みボタンと違い、
+    ここでは利用者がダイアログを閉じる操作が必ず入る）。
+    """
+    st.caption(
+        "アップロードした資料は source/ には残りません。DBには残り、"
+        "全利用者の検索対象になります。不要になったら下の一覧から削除してください。"
+    )
+    uploaded = st.file_uploader(
+        "取り込む資料",
+        type=sorted(suffix.lstrip(".") for suffix in SUPPORTED_SUFFIXES),
+        accept_multiple_files=True,
+        key="upload_files",
+    )
+
+    if st.button("取り込む", key="run_upload"):
+        if not uploaded:
+            st.warning("先にファイルを選んでください。")
+        else:
+            try:
+                # 取り込みを始めてから落ちるのを防ぐ。サイドバーの取り込み
+                # ボタンおよびCLIと同じ配線にする。
+                embedder.check_ollama()
+                if use_vlm:
+                    vlm.check_vlm()
+            except (embedder.EmbeddingError, vlm.VlmError) as error:
+                st.error(str(error))
+            else:
+                with st.spinner("取り込み中…"):
+                    # 一時ディレクトリは取り込みが終われば消える。原本を残さない
+                    # のは設計上の選択であり、DBのチャンクだけが残る。
+                    with tempfile.TemporaryDirectory() as workspace:
+                        paths = []
+                        for file in uploaded:
+                            path = Path(workspace) / file.name
+                            path.write_bytes(file.getvalue())
+                            paths.append(path)
+                        report = ingest_uploads(
+                            paths,
+                            collection,
+                            caption_image=vlm.caption_image if use_vlm else None,
+                        )
+                st.success(format_report(report))
+
+    sources = uploaded_sources(collection)
+    if sources:
+        st.divider()
+        st.caption("アップロード済みの資料")
+        for source in sources:
+            name, remove = st.columns([4, 1])
+            name.write(source[len(UPLOAD_PREFIX):])
+            if remove.button("削除", key=f"delete_{source}"):
+                # 空のチャンク列を渡すとその資料はDBから消える（ingest/store.py）。
+                store.replace_source(collection, source, [], [])
+                st.rerun()
+
+    if st.button("閉じる", key="close_upload_dialog"):
+        st.session_state.upload_dialog_open = False
+        st.rerun()
+
+
 def render_evidence(message):
     """根拠の表示。絞り込み経路は表を、検索経路はチャンクを見せる。"""
     if message.get("table"):
@@ -150,6 +243,16 @@ if st.sidebar.button("差分を取り込む"):
         # 明示的な clear() は要らない。再実行時に読み直す revision が
         # 書き込みで進んでおり、BM25索引も属性一覧も鍵ごと入れ替わる。
         st.rerun()
+
+# クライアントの画面から取り込むための入口。source/ に置けるのはサーバーを
+# 触れる管理者だけなので、上の「差分を取り込む」だけでは利用者は資料を足せない。
+if st.sidebar.button("資料をアップロード", key="open_upload_dialog"):
+    st.session_state.upload_dialog_open = True
+
+# フラグで開閉する。ボタン押下は次の再実行では False に戻るため、押した瞬間に
+# 呼ぶだけではダイアログ内の操作1回目で閉じてしまう。
+if st.session_state.get("upload_dialog_open"):
+    upload_dialog(collection, use_vlm)
 
 # 既定ON。VLMが既定OFFなのは画像1枚ごとに同期のAPI呼び出しが挟まり取り込みが
 # 大幅に遅くなるためだが、リランカーは1問あたり約1.3秒（実測。8候補の中央値）
