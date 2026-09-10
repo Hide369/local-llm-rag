@@ -680,3 +680,67 @@ def test_dropped_positions_uses_the_heading_when_the_number_means_nothing():
         ),
     ]
     assert ingest_source._dropped_positions(dropped) == "1,おわりに"
+
+
+# --- アップロード取り込み（画面のダイアログ経由） -------------------------
+#
+# 画面から一時ファイルとして取り込む経路。source/ には原本を残さないため、
+# 通常の取り込みとは次の2点で振る舞いが違う。
+#   1. 孤児削除をしない（一時ディレクトリを唯一の入力とみなすと source/ 由来の
+#      資料が全滅する）
+#   2. 資料キーに uploads/ を前置する（source/ 直下の同名資料と衝突させない）
+
+
+def test_uploaded_file_is_indexed_under_the_uploads_prefix(tmp_path, collection):
+    upload = _write_docx(tmp_path, "持ち込み資料.docx", "本日の議題は取り込みUIです。")
+    report = ingest_source.ingest_uploads(
+        [upload], collection, session=_FakeSession()
+    )
+    assert report.indexed == {"uploads/持ち込み資料.docx": 1}
+
+
+def test_uploading_does_not_prune_the_existing_sources(
+    source_dir, tmp_path, collection
+):
+    """一時ディレクトリを唯一の入力とみなすと source/ 由来の資料が全部消える。"""
+    _write_docx(source_dir, "議事録.docx", "決定事項：RAGを導入するという結論です。")
+    ingest_directory(source_dir, collection, session=_FakeSession())
+    upload = _write_docx(tmp_path, "持ち込み資料.docx", "本日の議題は取り込みUIです。")
+    report = ingest_source.ingest_uploads(
+        [upload], collection, session=_FakeSession()
+    )
+    assert report.removed == []
+    assert stored_file_hash(collection, "議事録.docx") is not None
+
+
+def test_uploading_does_not_overwrite_a_source_file_with_the_same_name(
+    source_dir, tmp_path, collection
+):
+    """同名でも別の資料として扱う。接頭辞を外すとここで source/ の中身が消える。"""
+    _write_docx(source_dir, "議事録.docx", "決定事項：RAGを導入するという結論です。")
+    ingest_directory(source_dir, collection, session=_FakeSession())
+    upload_dir = tmp_path / "upload"
+    upload_dir.mkdir()
+    _write_docx(upload_dir, "議事録.docx", "こちらは持ち込みの別資料です。")
+    ingest_source.ingest_uploads(
+        [upload_dir / "議事録.docx"], collection, session=_FakeSession()
+    )
+    assert store.indexed_sources(collection) == {"議事録.docx", "uploads/議事録.docx"}
+
+
+def test_a_source_run_keeps_the_uploaded_documents(source_dir, tmp_path, collection):
+    """孤児削除の対象から外さないと、誰かが「差分を取り込む」を押した瞬間に消える。"""
+    _write_docx(source_dir, "議事録.docx", "決定事項：RAGを導入するという結論です。")
+    upload = _write_docx(tmp_path, "持ち込み資料.docx", "本日の議題は取り込みUIです。")
+    ingest_source.ingest_uploads([upload], collection, session=_FakeSession())
+    report = ingest_directory(source_dir, collection, session=_FakeSession())
+    assert report.removed == []
+    assert stored_file_hash(collection, "uploads/持ち込み資料.docx") is not None
+
+
+def test_a_source_subdirectory_named_uploads_is_refused(source_dir, collection):
+    """キーが衝突する。黙って混ざるより、取り込みを止めて名前を直させる。"""
+    (source_dir / "uploads").mkdir()
+    _write_docx(source_dir / "uploads", "議事録.docx", "決定事項：RAGを導入します。")
+    with pytest.raises(ValueError, match="uploads"):
+        ingest_directory(source_dir, collection, session=_FakeSession())
