@@ -100,6 +100,27 @@ def render_hits(hits):
             st.write(hit.text)
 
 
+# 図表があるとVLMが画像1枚ごとに同期のAPI呼び出しを行うため、資料によっては
+# 取り込みが大きく伸びる。待たされる理由を画面に残す。
+SPINNER_MESSAGE = "取り込み中…（図表があるとVLMの説明文化に時間がかかります）"
+
+
+def caption_image_or_reason():
+    """図表の説明文化に使う関数と、使えないときの理由。
+
+    VLMが無いことは取り込みを止める理由にしない。図表の説明が付かないだけで、
+    本文は取り込めるためである。かといって caption_image を渡したまま失敗させる
+    のも取らない。画像1枚ごとに4回のリトライ（1+2+4秒）が走り、モデル未pullの
+    環境では取り込みが極端に遅くなる（ingest/vlm.py の _MAX_ATTEMPTS）。
+    先に1回だけ確かめて、駄目なら渡さない。
+    """
+    try:
+        vlm.check_vlm()
+    except vlm.VlmError as error:
+        return None, f"図表の説明文化は行いません: {error}"
+    return vlm.caption_image, None
+
+
 def uploaded_sources(collection):
     """アップロード経由で入った資料のキー。
 
@@ -114,7 +135,7 @@ def uploaded_sources(collection):
 
 
 @st.dialog("資料をアップロードして取り込む")
-def upload_dialog(collection, use_vlm):
+def upload_dialog(collection):
     """クライアントの手元にある資料を取り込む。
 
     source/ はサーバー側にあり、利用者のブラウザーからは置けない。ここが
@@ -144,12 +165,13 @@ def upload_dialog(collection, use_vlm):
                 # 取り込みを始めてから落ちるのを防ぐ。サイドバーの取り込み
                 # ボタンおよびCLIと同じ配線にする。
                 embedder.check_ollama()
-                if use_vlm:
-                    vlm.check_vlm()
-            except (embedder.EmbeddingError, vlm.VlmError) as error:
+            except embedder.EmbeddingError as error:
                 st.error(str(error))
             else:
-                with st.spinner("取り込み中…"):
+                caption_image, reason = caption_image_or_reason()
+                if reason:
+                    st.warning(reason)
+                with st.spinner(SPINNER_MESSAGE):
                     # 一時ディレクトリは取り込みが終われば消える。原本を残さない
                     # のは設計上の選択であり、DBのチャンクだけが残る。
                     with tempfile.TemporaryDirectory() as workspace:
@@ -159,9 +181,7 @@ def upload_dialog(collection, use_vlm):
                             path.write_bytes(file.getvalue())
                             paths.append(path)
                         report = ingest_uploads(
-                            paths,
-                            collection,
-                            caption_image=vlm.caption_image if use_vlm else None,
+                            paths, collection, caption_image=caption_image
                         )
                 st.success(format_report(report))
 
@@ -218,31 +238,32 @@ st.sidebar.metric("インデックス済みチャンク", collection.count())
 
 st.sidebar.divider()
 st.sidebar.caption(f"取り込み元: {DEFAULT_SOURCE_DIR.name}/")
-# 既定はOFF。VLMは画像1枚ごとに同期の/api/chat呼び出しが挟まり、画像点数の多い
-# 資料では取り込み時間が大きく伸びるため（scripts/ingest_source.pyの--with-vlmと
-# 同じ配線をチェックボックスで明示させる）。
-use_vlm = st.sidebar.checkbox(
-    "画像も説明文化する（VLM・時間がかかります）",
-    help="PDF/PPTX内の図表・写真をOllamaのVLMで説明文にして取り込みます。",
-)
 if st.sidebar.button("差分を取り込む"):
     try:
         embedder.check_ollama()
-        if use_vlm:
-            vlm.check_vlm()
-    except (embedder.EmbeddingError, vlm.VlmError) as error:
+    except embedder.EmbeddingError as error:
         st.sidebar.error(str(error))
     else:
-        with st.spinner("取り込み中…"):
+        caption_image, reason = caption_image_or_reason()
+        with st.spinner(SPINNER_MESSAGE):
             report = ingest_directory(
-                DEFAULT_SOURCE_DIR,
-                collection,
-                caption_image=vlm.caption_image if use_vlm else None,
+                DEFAULT_SOURCE_DIR, collection, caption_image=caption_image
             )
-        st.sidebar.success(format_report(report))
+        # ここで st.sidebar.success() を呼んでも画面には出ない。直後の st.rerun()
+        # がこの実行の描画をまとめて捨てるため（実測）。次の実行で描くために預ける。
+        st.session_state.ingest_report = format_report(report)
+        st.session_state.ingest_notice = reason
         # 明示的な clear() は要らない。再実行時に読み直す revision が
         # 書き込みで進んでおり、BM25索引も属性一覧も鍵ごと入れ替わる。
         st.rerun()
+
+# 直前の取り込みの結果。取り出したら消す。次に画面が動くまで表示は残る。
+ingest_notice = st.session_state.pop("ingest_notice", None)
+if ingest_notice:
+    st.sidebar.warning(ingest_notice)
+ingest_report = st.session_state.pop("ingest_report", None)
+if ingest_report:
+    st.sidebar.success(ingest_report)
 
 # クライアントの画面から取り込むための入口。source/ に置けるのはサーバーを
 # 触れる管理者だけなので、上の「差分を取り込む」だけでは利用者は資料を足せない。
@@ -252,7 +273,7 @@ if st.sidebar.button("資料をアップロード", key="open_upload_dialog"):
 # フラグで開閉する。ボタン押下は次の再実行では False に戻るため、押した瞬間に
 # 呼ぶだけではダイアログ内の操作1回目で閉じてしまう。
 if st.session_state.get("upload_dialog_open"):
-    upload_dialog(collection, use_vlm)
+    upload_dialog(collection)
 
 # 既定ON。VLMが既定OFFなのは画像1枚ごとに同期のAPI呼び出しが挟まり取り込みが
 # 大幅に遅くなるためだが、リランカーは1問あたり約1.3秒（実測。8候補の中央値）
