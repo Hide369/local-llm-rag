@@ -106,6 +106,22 @@ def _reranker_check_and_rerank_stubbed_by_default():
         yield
 
 
+@pytest.fixture(autouse=True)
+def _vlm_check_stubbed_by_default():
+    """VLMの疎通確認は自動で走るようになったので、既定でスタブする。
+
+    チェックボックスがあった頃は、外したままの取り込みでVLMに触れなかった。
+    自動判定になった今は取り込みのたびに check_vlm() が呼ばれ、素のままでは
+    テストが OLLAMA_HOST へHTTPを出す（.env のngrok URLに10秒待たされる）。
+    ネットワークにも実モデルにも触れさせない。
+
+    既定は「VLMが使える」側にする。VLMが無い場合の振る舞いを見るテストは、
+    リランカーの既定と同じくネストした patch.object で上書きする。
+    """
+    with patch.object(vlm_module, "check_vlm", lambda *a, **k: None):
+        yield
+
+
 def test_search_failure_is_reported_instead_of_crashing(app):
     """埋め込みAPIが落ちていても、画面に出るのはメッセージであってトレースバックではない。
 
@@ -277,32 +293,25 @@ def test_products_that_fail_the_condition_are_shown_but_not_sent_to_the_model(ap
     assert "条件を満たさないので選べない" in shown
 
 
-def test_vlm_checkbox_off_by_default_does_not_pass_caption_image(app):
-    """既定はOFF。scripts/ingest_source.pyのCLI既定（VLM無効）と揃える。"""
-    calls = []
+def test_the_vlm_choice_is_not_left_to_the_reader(app):
+    """VLMのチェックボックスは置かない。図表があれば自動で説明文化する。
 
-    def fake_ingest_directory(*args, **kwargs):
-        calls.append(kwargs)
-        return ingest_source.IngestReport()
-
-    with (
-        patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
-        patch.object(embedder_module, "check_ollama", lambda *a, **k: None),
-        patch.object(ingest_source, "ingest_directory", fake_ingest_directory),
-    ):
+    チェックボックスは「画像を含む資料かどうか」を利用者に判断させていた。
+    資料を開かずには分からないうえ、外し忘れれば図表の説明が黙って欠ける。
+    パーサーは画像を見つけたときだけ caption_image を呼ぶので、図の無い資料に
+    自動で渡しても取り込みは遅くならない。
+    """
+    with patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})):
         app.run()
-        app.button[0].click().run()
 
     assert not app.exception
-    assert calls == [{"caption_image": None}]
+    assert [checkbox.label for checkbox in app.checkbox] == [
+        "Rerankerで並べ替える（+約1.3秒）"
+    ]
 
 
-def test_vlm_checkbox_on_checks_vlm_and_passes_caption_image(app):
-    """ONならvlm.check_vlm()で疎通確認してからcaption_imageを渡す。
-
-    scripts/ingest_source.pyの--with-vlmと同じ配線（先に疎通確認、成功したら
-    vlm.caption_imageを渡す）をStreamlit側でも踏襲する。
-    """
+def test_ingesting_passes_the_captioner_without_being_asked(app):
+    """疎通確認が通れば caption_image を渡す。CLIの --with-vlm と同じ配線である。"""
     calls = []
     checked = []
 
@@ -317,7 +326,6 @@ def test_vlm_checkbox_on_checks_vlm_and_passes_caption_image(app):
         patch.object(ingest_source, "ingest_directory", fake_ingest_directory),
     ):
         app.run()
-        app.checkbox[0].set_value(True).run()
         app.button[0].click().run()
 
     assert not app.exception
@@ -325,11 +333,12 @@ def test_vlm_checkbox_on_checks_vlm_and_passes_caption_image(app):
     assert calls == [{"caption_image": vlm_module.caption_image}]
 
 
-def test_vlm_checkbox_on_but_unreachable_reports_error_without_ingesting(app):
-    """VLMの疎通確認が失敗したら、取り込みを実行せずエラーだけ表示する。
+def test_ingesting_without_a_vlm_still_ingests_and_says_why(app):
+    """VLMが無いことは取り込みを止める理由にしない。図表の説明が付かないだけである。
 
-    460チャンクの処理が始まってから落ちるのを防ぐ、CLI版と同じ考え方
-    （ingest/vlm.py の check_vlm のdocstring）。
+    caption_image を渡したまま失敗させる選択は取らない。画像1枚ごとに4回の
+    リトライ（1+2+4秒）が走り、モデル未pullの環境で取り込みが極端に遅くなる
+    （ingest/vlm.py の _MAX_ATTEMPTS）。
     """
     calls = []
 
@@ -347,12 +356,35 @@ def test_vlm_checkbox_on_but_unreachable_reports_error_without_ingesting(app):
         patch.object(ingest_source, "ingest_directory", fake_ingest_directory),
     ):
         app.run()
-        app.checkbox[0].set_value(True).run()
         app.button[0].click().run()
 
     assert not app.exception
-    assert calls == []
-    assert any("qwen2.5vl:7b" in element.value for element in app.error)
+    assert calls == [{"caption_image": None}]
+    assert any("qwen2.5vl:7b" in warning.value for warning in app.warning)
+
+
+def test_the_ingest_result_survives_the_rerun(app):
+    """取り込みの要約を画面に残す。
+
+    st.rerun() の前に出したメッセージは破棄される（実測）。直後に再実行する
+    このボタンでは、その場で st.sidebar.success() を呼ぶだけでは要約が一度も
+    画面に出ない。次の実行で描くために session_state へ預ける。
+    """
+
+    def fake_ingest_directory(*args, **kwargs):
+        return ingest_source.IngestReport(indexed={"議事録.docx": 3})
+
+    with (
+        patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
+        patch.object(embedder_module, "check_ollama", lambda *a, **k: None),
+        patch.object(vlm_module, "check_vlm", lambda *a, **k: None),
+        patch.object(ingest_source, "ingest_directory", fake_ingest_directory),
+    ):
+        app.run()
+        app.button[0].click().run()
+
+    assert not app.exception
+    assert any("1ファイル" in success.value for success in app.success)
 
 
 def test_answer_is_shown_without_the_repeated_label(app):
