@@ -6,6 +6,8 @@
 """
 import pytest
 from openpyxl import Workbook
+from openpyxl.drawing.image import Image as XlsxImage
+from PIL import Image
 
 from ingest.models import SHEET
 from ingest.parsers import SUPPORTED_SUFFIXES, parse
@@ -22,6 +24,26 @@ def book_path(tmp_path):
     second = book.create_sheet("備考")
     second.append(["納期は三営業日"])
     path = tmp_path / "一覧.xlsx"
+    book.save(path)
+    return path
+
+
+@pytest.fixture
+def book_with_image_path(tmp_path):
+    """シートに画像を1枚貼り付けたブック。
+
+    caption_imageが実際に呼ばれる経路を用意するため book_path とは別に持つ。
+    book_path を流用すると「画像が無いので呼ばれない」だけの、恒真になりかねない
+    アサーションになってしまう。
+    """
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "写真"
+    sheet["A1"] = "現地写真"
+    image_path = tmp_path / "photo.png"
+    Image.new("RGB", (200, 100), "white").save(image_path)
+    sheet.add_image(XlsxImage(str(image_path)), "B2")
+    path = tmp_path / "写真台帳.xlsx"
     book.save(path)
     return path
 
@@ -105,12 +127,16 @@ def test_xlsx_is_routed_by_the_registry(book_path):
     assert parse(book_path)[0].heading == "商品一覧"
 
 
-def test_caption_image_is_not_yet_wired_up(book_path):
+def test_caption_image_is_not_yet_wired_up(book_with_image_path):
     """現時点ではcaption_imageを引数として受け取るだけで、本文には反映しない。
 
     実装はTask 6で入る予定。そのときはこのテストを「反映される」側のアサーション
     へ書き換えること（今のふるまいを固定するためのテストであり、恒久仕様ではない）。
+    book_with_image_path は実際に画像を1枚含むため、もし将来この引数が本文へ
+    反映されるようになれば "説明" が現れ、このアサーションは正しく落ちる。
     """
-    text = "\n".join(unit.text for unit in parse_xlsx(book_path, caption_image=lambda _bytes: "説明"))
+    text = "\n".join(
+        unit.text for unit in parse_xlsx(book_with_image_path, caption_image=lambda _bytes: "説明")
+    )
 
     assert "説明" not in text

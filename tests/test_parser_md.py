@@ -1,4 +1,5 @@
 import pytest
+from PIL import Image
 
 from ingest.parsers import parse
 from ingest.parsers.md_parser import parse_md
@@ -33,6 +34,24 @@ def _write(tmp_path, text, name="spec.md", newline="\n"):
 @pytest.fixture
 def sample(tmp_path):
     return _write(tmp_path, SAMPLE)
+
+
+@pytest.fixture
+def sample_with_image(tmp_path):
+    """本文が画像参照を1つ持つMarkdown。参照先には実在するPNGを置く。
+
+    caption_imageが実際に呼ばれる経路を用意するため sample とは別に持つ。
+    sample を流用すると「画像参照が無いので呼ばれない」だけの、恒真になりかねない
+    アサーションになってしまう。
+    """
+    Image.new("RGB", (200, 100), "white").save(tmp_path / "photo.png")
+    text = (
+        "# タイトル\n\n"
+        "## 現地写真\n\n"
+        "設置後の状態はこちら。\n\n"
+        "![現地写真](photo.png)\n"
+    )
+    return _write(tmp_path, text, name="report_with_image.md")
 
 
 def test_each_heading_becomes_one_unit(sample):
@@ -239,12 +258,14 @@ def test_unclosed_frontmatter_yields_no_attributes(tmp_path):
     assert parse_md(path)[0].attributes == {}
 
 
-def test_caption_image_is_not_yet_wired_up(sample):
+def test_caption_image_is_not_yet_wired_up(sample_with_image):
     """現時点ではcaption_imageを引数として受け取るだけで、本文には反映しない。
 
     実装はTask 7で入る予定。そのときはこのテストを「反映される」側のアサーション
     へ書き換えること（今のふるまいを固定するためのテストであり、恒久仕様ではない）。
+    sample_with_image は実際に画像参照を1つ含むため、もし将来この引数が本文へ
+    反映されるようになれば "説明" が現れ、このアサーションは正しく落ちる。
     """
-    text = "\n".join(u.text for u in parse_md(sample, caption_image=lambda _bytes: "説明"))
+    text = "\n".join(u.text for u in parse_md(sample_with_image, caption_image=lambda _bytes: "説明"))
 
     assert "説明" not in text

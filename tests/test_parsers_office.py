@@ -2,6 +2,7 @@ import io
 
 import pytest
 from docx import Document
+from docx.shared import Inches as DocxInches
 from PIL import Image
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
@@ -20,6 +21,24 @@ def docx_path(tmp_path):
     doc.add_paragraph("")  # 空段落は無視されること
     doc.add_paragraph("決定事項：RAGを導入する")
     path = tmp_path / "議事録.docx"
+    doc.save(path)
+    return path
+
+
+@pytest.fixture
+def docx_with_image_path(tmp_path):
+    """本文に画像を1枚埋め込んだdocx。
+
+    caption_imageが実際に呼ばれる経路を用意するため docx_path とは別に持つ。
+    docx_path を流用すると「画像が無いので呼ばれない」だけの、恒真になりかねない
+    アサーションになってしまう。
+    """
+    doc = Document()
+    doc.add_paragraph("障害報告")
+    image_path = tmp_path / "screenshot.png"
+    Image.new("RGB", (200, 100), "white").save(image_path)
+    doc.add_picture(str(image_path), width=DocxInches(2))
+    path = tmp_path / "報告書.docx"
     doc.save(path)
     return path
 
@@ -244,7 +263,7 @@ def test_dispatch_routes_by_suffix(docx_path, pptx_path):
     assert parse(pptx_path)[0].location_type == "slide"
 
 
-def test_dispatch_passes_caption_image_to_pptx_only(docx_path, pptx_with_large_picture):
+def test_dispatch_passes_caption_image_to_pptx_only(docx_with_image_path, pptx_with_large_picture):
     seen = []
     parse(pptx_with_large_picture, caption_image=lambda b: seen.append(b) or "説明")
     assert seen, "pptxにはcaption_imageが渡っているはず"
@@ -252,7 +271,9 @@ def test_dispatch_passes_caption_image_to_pptx_only(docx_path, pptx_with_large_p
     # docxは現時点ではcaption_imageを引数として受け取るだけで、本文には反映しない
     # (Task 5で実装予定。実装されたらこのアサーションは反転させ、テスト名も
     # 変えること。「反映されない」という今のふるまいを固定するためのテストである)。
-    text = parse(docx_path, caption_image=lambda b: "説明")[0].text
+    # docx_with_image_path は実際に画像を1枚含むため、もし将来この引数が本文へ
+    # 反映されるようになれば "説明" が現れ、このアサーションは正しく落ちる。
+    text = parse(docx_with_image_path, caption_image=lambda b: "説明")[0].text
     assert "説明" not in text
 
 
