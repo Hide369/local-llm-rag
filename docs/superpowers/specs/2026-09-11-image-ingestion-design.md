@@ -1,7 +1,7 @@
 # 画像資料の取り込みとアップロードUIの改善 設計書
 
 日付: 2026-09-11
-対象: `ingest/image_text.py`（新規）, `ingest/ocr.py`, `ingest/parsers/`（image・drawio 新規、md・xlsx・pdf・pptx 変更）,
+対象: `ingest/image_text.py`（新規）, `ingest/ocr.py`, `ingest/parsers/`（image・drawio 新規、md・xlsx・docx・pdf・pptx 変更）,
 `ingest/models.py`, `ingest/retrieval.py`, `scripts/ingest_source.py`, `rag_chat_app.py`
 
 ## 1. 目的
@@ -19,6 +19,10 @@
 当初は別の要望として「回答にプログラム例を出すときの『参考：〜』を消す」があったが、
 依頼者が取り下げた。本設計書は扱わない。
 
+設計のレビューを受けて **docx の埋め込み画像**を範囲に加えた（10節）。要望6と同じ
+「貼り付けた画像の中身が索引に入らない」問題であり、`source/` にある議事録5件がすべて
+docx である以上、Excel だけを直しても同じ質問に答えられない。
+
 ## 2. 中心にある問題
 
 画像からテキストを作る手立ては2つあり、どちらも既にこのリポジトリにある。
@@ -33,7 +37,7 @@
 - VLM は bytes を受け取るが、呼んでいるのは `pdf_parser` と `pptx_parser` だけである。
 - 「装飾画像なら捨てる」判定と `[図の説明] ` という接頭辞が、その2つのパーサーに写して書かれている。
 
-新しい形式を4つ足すたびにこの判断を写すのは持たない。**バイト列を受け取ってテキストを返す
+新しい形式を4つ足し、既存の3形式にも広げるたびにこの判断を写すのは持たない。**バイト列を受け取ってテキストを返す
 1つのモジュール**を作り、全パーサーがそこを通る形にする。
 
 ## 3. アーキテクチャ
@@ -46,12 +50,15 @@
                         │     └ ocr  → [画像内の文字] …  │
                         └───────────────┬──────────────┘
                                         │ str | None
-   ┌────────────┬────────────┬──────────┼──────────┬────────────┐
-   │            │            │          │          │            │
-image_parser  drawio_p.   md_parser  xlsx_parser pdf_parser  pptx_parser
-(.png/.jpg)  (ラベルは    (![](…))   (_images)   (埋め込み)   (PICTURE)
-              XMLから)
+   ┌──────────┬──────────┬────────┼────────┬──────────┬──────────┐
+   │          │          │        │        │          │          │
+image_parser drawio_p. md_parser xlsx_p. docx_parser pdf_parser pptx_parser
+(.png/.jpg) (ラベルは  (![](…))  (_images) (a:blip)   (埋め込み)  (PICTURE)
+             XMLから)
 ```
+
+`drawio_parser` だけが `describe_image` を通らない。XML にラベル文字が構造化された
+まま入っており、画像化して読み直す理由が無いためである（7.1）。
 
 `describe_image` は `caption_image` を引数で受ける。`vlm.caption_image` を直接 import
 しない理由は既存のパーサーと同じで、テストが Ollama を必要としないようにするためである。
@@ -143,7 +150,7 @@ def parse_image(path, caption_image=None) -> list[ParsedUnit]
 - `ParsedUnit.ocr` は OCR 由来の行があるとき、`.vlm` は VLM 由来の行があるときに立てる。
   出典の `（OCR）` 表示と、後からどの経路で入ったかを追えるようにするため。
 - `.drawio.png`（XML を埋め込んだ PNG）はこの経路に入り、画像として読まれる。
-  埋め込み XML の取り出しは今回やらない（14節）。
+  埋め込み XML の取り出しは今回やらない（15節）。
 
 ## 7. `ingest/parsers/drawio_parser.py`（新規）
 
@@ -281,7 +288,61 @@ Image になりうるため、`getvalue()` を持つかで分岐して両方を�
 画像しか無いシート（本文が1行も無い）はユニットを作る。現状は空シートを飛ばしているが、
 それは「中身が無い」ためであって、画像だけのシートには中身がある。
 
-## 10. `pdf_parser.py` / `pptx_parser.py` の変更
+## 10. `ingest/parsers/docx_parser.py` の変更
+
+### 10.1 現状
+
+```python
+text = "\n".join(p.text for p in Document(path).paragraphs if p.text.strip())
+```
+
+段落のテキストだけを読み、文書全体を1ユニットにしている。画像は一切見ていない。
+議事録の docx が5件あり、そこに貼られた画面写真は索引に入っていない。
+
+### 10.2 読み順の取り方
+
+1ユニットにまとめる形式なので、画像を本文のどの位置へ入れるかがそのまま読みやすさに
+なる。段落を走査し、その段落に画像があればその場に差し込む。
+
+実測（python-docx 1.2.0）で、段落の要素に対する XPath が読み順どおりの関係IDを返し、
+関係IDから画像のバイト列が取れることを確認した。
+
+```python
+for paragraph in document.paragraphs:
+    for rid in paragraph._p.xpath(".//a:blip/@r:embed"):
+        blob = document.part.related_parts[rid].blob
+```
+
+`._p` は python-docx の私的属性である。公開 API に段落中の画像を辿る口が無い。
+`xlsx_parser` の `ws._images` と同じ扱いで、バージョンを固定していること、および
+テストが画像1枚を検出することで壊れたら気づけることをもって受け入れる。
+
+### 10.3 段落に現れない画像
+
+**同じ実測で、表のセルに入れた画像は `document.paragraphs` に現れなかった**
+（関係IDは存在するが、どの段落の XPath にも出てこない）。ヘッダー・フッターや
+浮動配置の画像も同様に取りこぼす。
+
+段落の走査を終えたあと、`document.part.related_parts` の中で **まだ見ていない画像**を
+本文の末尾へ付ける。表の中まで辿る実装を書くより短く、取りこぼしを構造的に無くせる。
+位置は失うが、位置を失うのは「本文のどこにも紐づかない画像」だけである。
+
+```
+障害報告
+発生日: 2026-09-03
+[図の説明] エラーダイアログのスクリーンショット。…      ← 段落の位置に差し込み
+[画像内の文字] エラー コード 0x80070005
+上記のダイアログが表示された。
+[図の説明] 組織図。…                                    ← 表の中の画像は末尾へ
+```
+
+### 10.4 本文が空の docx
+
+画像だけの docx はユニットを作る。現状は `if not text.strip(): return []` で
+空リストを返しているが、その判断は「中身が無い」ことを根拠にしており、
+画像があるなら中身はある（`xlsx_parser` の画像だけのシートと同じ判断）。
+
+## 11. `pdf_parser.py` / `pptx_parser.py` の変更
 
 埋め込み画像を `describe_image` に通す。**VLM だけだった経路に OCR が加わる**。
 
@@ -302,7 +363,7 @@ PDF の画像ページ（OCR フォールバック）の判断は変えない。
 ページは今までどおり説明文で置き換える。そのうえで、埋め込み画像ごとの OCR が
 `describe_image` の中で走るため、結果として文字も残る。
 
-## 11. `ingest/parsers/__init__.py` の変更
+## 12. `ingest/parsers/__init__.py` の変更
 
 ```python
 _PARSERS = {
@@ -320,14 +381,14 @@ def parse(path, caption_image=None):
 ```
 
 現行の `if path.suffix.lower() in (".pdf", ".pptx")` という分岐を消す。全パーサーが
-`caption_image=None` を受ける署名に揃える。`docx` と `txt` は受け取って使わない。
+`caption_image=None` を受ける署名に揃える。受け取って使わないのは `txt` だけになる。
 拡張子ごとの例外をディスパッチャに残すと、形式を足すたびにこの `if` が伸びる。
 
 `SUPPORTED_SUFFIXES` が増えることで、`scripts/ingest_source._target_files()` の走査対象と
 `rag_chat_app` の `st.file_uploader(type=…)` は自動的に追従する。どちらも
 `SUPPORTED_SUFFIXES` から組んでいるためで、変更は要らない。
 
-## 12. `rag_chat_app.py` の変更（要望4・5）
+## 13. `rag_chat_app.py` の変更（要望4・5）
 
 `upload_dialog` の並びを変える。
 
@@ -353,7 +414,7 @@ def parse(path, caption_image=None):
 
 ダイアログ本体のロジック（削除・`st.rerun()`・`upload_dialog_open` フラグ）は変えない。
 
-## 13. データフローとエラー処理
+## 14. データフローとエラー処理
 
 ```
 scripts/ingest_source._ingest_one
@@ -371,7 +432,7 @@ scripts/ingest_source._ingest_one
 - 片方が失敗しても、もう片方の結果は使う。両方失敗した画像だけが `None` になる。
 - 1ファイルの失敗が全体を止めないのは既存どおり（`_ingest_one` の `except Exception`）。
 
-## 14. 今回やらないこと
+## 15. 今回やらないこと
 
 - **`.drawio.png` / `.drawio.svg` に埋め込まれた XML の取り出し。** 画像として読む。
   必要になったら PNG の `tEXt` チャンクから取り出す実装を足せる。
@@ -381,10 +442,11 @@ scripts/ingest_source._ingest_one
 - **md と画像をまとめた zip のアップロード。** 依頼者が「警告を出して本文だけ」を選んだ。
 - **画像の重複検出。** 同じロゴが全ページに入っている資料では同じ説明文が繰り返される。
   既存のチャンク畳み込み（`ingest/store.py`）が本文単位で吸収する範囲に任せる。
-- **docx の埋め込み画像。** 要望に無い。必要になれば `python-docx` の
-  `document.part.related_parts` から同じ `describe_image` に繋げられる。
+- **docx の表のセルに書かれた「文字」。** 現行の `docx_parser` は段落しか読んでおらず、
+  表の本文は元から索引に入っていない。今回入るのは表の中の「画像」だけである（10.3）。
+  文字のほうは今回の要望と別の欠落であり、直すなら単独の変更として扱う。
 
-## 15. テスト方針
+## 16. テスト方針
 
 ネットワークもモデルも使わない。`caption_image` と `ocr_bytes` は差し替え可能な
 引数なので、既存の `test_parser_pdf.py` / `test_parsers_office.py` と同じくフェイクを渡す。
@@ -397,13 +459,14 @@ scripts/ingest_source._ingest_one
 | `tests/test_parser_drawio.py`（新規） | 圧縮・非圧縮の両方。複数ページ。`object/@label`。HTMLタグ除去。y→x の並び |
 | `tests/test_parser_md.py` | 画像参照の差し替え位置。フェンス内は対象外。http は対象外。不明画像の警告。`..` での脱出拒否 |
 | `tests/test_parser_xlsx.py` | 画像がシート末尾に付く。画像だけのシートがユニットになる。`caption_image=None` なら2回目のロードをしない |
+| `tests/test_parsers_office.py` | docx: 段落の位置に画像が差し込まれる。表の中の画像が末尾に付く。画像だけの docx がユニットになる |
 | `tests/test_parser_pdf.py` / `test_parsers_office.py` | OCR が加わっても既存の期待が壊れないこと |
 | `tests/test_ocr.py` | `ocr_page` が `ocr_bytes` に委譲すること |
 | `tests/test_retrieval.py` | `diagram` 種別の出典文字列 |
 | `tests/test_rag_chat_app.py` | ダイアログの要素順（閉じるが一覧より前） |
 | `tests/test_ingest_source.py` | `missing_images` が報告に載ること |
 
-## 16. ドキュメントの更新
+## 17. ドキュメントの更新
 
 - `README.md` — 対応形式の一覧、`--force` での再取り込みが要ること、
   drawio がラベル抽出であること（＝矢印や入れ子は取れないこと）を「既知の制約」に。
@@ -411,10 +474,11 @@ scripts/ingest_source._ingest_one
 - `docs/依存関係一覧.md` — 新しい依存は無い。`pillow` の用途欄に
   「テストの画像生成」に加えて「xlsx 埋め込み画像の読み出し（openpyxl 経由）」を足す。
 
-## 17. 残るリスク
+## 18. 残るリスク
 
-- **`ws._images` は私的 API である。** openpyxl を上げたときに黙って空リストになりうる。
-  バージョンは固定してあり、テストが画像1枚を検出することで検知できる（9.2）。
+- **`ws._images`（openpyxl）と `paragraph._p`（python-docx）は私的 API である。**
+  上げたときに黙って空リストになりうる。どちらもバージョンは固定してあり、
+  テストが画像1枚を検出することで検知できる（9.2 / 10.2）。
 - **OCR を全埋め込み画像に広げると取り込みが遅くなる。** 実測してから README の
   所要時間を書き直す。極端に遅ければ画像の最小サイズの閾値（`MIN_IMAGE_WIDTH` 等）で
   絞る余地がある。
