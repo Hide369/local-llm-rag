@@ -33,10 +33,25 @@ def reset_engine() -> None:
     _engine = None
 
 
-def ocr_page(page) -> str:
-    """PyMuPDFのページを画像化してOCRし、認識文字列を連結して返す。"""
+def ocr_bytes(data: bytes) -> str:
+    """画像のバイト列をOCRし、認識文字列を連結して返す。
+
+    RapidOCRはPNG/JPEGのバイト列をそのまま受け取れる。ocr_page が以前から
+    page.get_pixmap().tobytes("png") を渡しており、エンジンへの入力は元から
+    バイト列だった。PDF以外の形式（xlsx・docx・md参照先・画像単体）から
+    呼べるよう、その入口を切り出しただけである。
+    """
     global _engine
     if _engine is None:
         _engine = _build_engine()
-    result = _engine(page.get_pixmap(dpi=OCR_DPI).tobytes("png"))
+    result = _engine(data)
     return " ".join(result.txts) if result.txts else ""
+
+
+def ocr_page(page) -> str:
+    """PyMuPDFのページを画像化してOCRする。
+
+    ラスタライズのDPIはPDF固有の判断なのでここに残す。認識そのものは
+    ocr_bytes に任せ、2箇所に写さない。
+    """
+    return ocr_bytes(page.get_pixmap(dpi=OCR_DPI).tobytes("png"))

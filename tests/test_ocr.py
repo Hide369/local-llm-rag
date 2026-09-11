@@ -6,7 +6,7 @@ import pymupdf
 import pytest
 
 import ingest.ocr as ocr_module
-from ingest.ocr import OCR_DPI, ocr_page, reset_engine
+from ingest.ocr import OCR_DPI, ocr_bytes, ocr_page, reset_engine
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -88,6 +88,35 @@ def test_no_recognized_text_returns_empty_string(blank_page, monkeypatch):
 def test_dpi_is_200():
     """150/200/300dpiで精度も速度も変わらなかったため、上げる意味がない。"""
     assert OCR_DPI == 200
+
+
+def test_ocr_bytes_recognizes_from_raw_bytes(monkeypatch):
+    """PDF以外の形式は page オブジェクトを持たない。バイト列で呼べる口が要る。"""
+    monkeypatch.setattr(
+        ocr_module, "_build_engine", lambda: (lambda _img: _FakeResult(["エラー", "コード"]))
+    )
+    assert ocr_bytes(b"fake-png-bytes") == "エラー コード"
+
+
+def test_ocr_bytes_returns_empty_string_when_nothing_is_recognized(monkeypatch):
+    monkeypatch.setattr(
+        ocr_module, "_build_engine", lambda: (lambda _img: _FakeResult(None))
+    )
+    assert ocr_bytes(b"fake-png-bytes") == ""
+
+
+def test_ocr_page_delegates_to_ocr_bytes(blank_page, monkeypatch):
+    """ラスタライズ(DPI指定)はPDF側の責務、認識は ocr_bytes の責務に分ける。
+
+    委譲していることを見ておかないと、両方に認識ロジックが写された状態が
+    テストを通ってしまう。
+    """
+    received = []
+    monkeypatch.setattr(ocr_module, "ocr_bytes", lambda data: received.append(data) or "文字")
+
+    assert ocr_page(blank_page) == "文字"
+    assert len(received) == 1
+    assert received[0].startswith(b"\x89PNG")
 
 
 @pytest.mark.integration
