@@ -9,6 +9,7 @@ from pathlib import Path
 
 from ingest.models import ParsedUnit
 from ingest.parsers.docx_parser import parse_docx
+from ingest.parsers.drawio_parser import parse_drawio
 from ingest.parsers.image_parser import parse_image
 from ingest.parsers.md_parser import parse_md
 from ingest.parsers.pdf_parser import parse_pdf
@@ -31,6 +32,7 @@ _PARSERS = {
     ".png": parse_image,
     ".jpg": parse_image,
     ".jpeg": parse_image,
+    ".drawio": parse_drawio,
 }
 
 SUPPORTED_SUFFIXES = set(_PARSERS)

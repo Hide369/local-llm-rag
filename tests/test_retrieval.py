@@ -126,6 +126,36 @@ def test_section_without_a_heading_shows_only_the_file():
     assert hit.citation == "a.pdf"
 
 
+def test_a_diagram_citation_names_the_page():
+    """drawio は1ファイルに複数ページが入る。どのページの話か示せないと照合できない。"""
+    hit = Hit(
+        text="業務フロー\n受注 登録",
+        distance=0.1,
+        occurrences=[
+            {
+                "source": "構成図.drawio",
+                "location_type": "diagram",
+                "location": 1,
+                "heading": "業務フロー",
+            }
+        ],
+    )
+
+    assert hit.citation == "構成図.drawio 図「業務フロー」"
+
+
+def test_a_diagram_without_a_page_name_falls_back_to_the_file_name():
+    hit = Hit(
+        text="受注 登録",
+        distance=0.1,
+        occurrences=[
+            {"source": "構成図.drawio", "location_type": "diagram", "location": 1, "heading": ""}
+        ],
+    )
+
+    assert hit.citation == "構成図.drawio"
+
+
 def test_ocr_hits_are_marked():
     """OCR由来は小書き仮名が崩れることがあるため、根拠として示すときに明示する。"""
     hit = Hit(text="本文", distance=0.1, occurrences=[_meta(ocr=True)])

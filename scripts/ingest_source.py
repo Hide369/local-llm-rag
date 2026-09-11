@@ -95,6 +95,8 @@ def _source_key(path: Path, source_dir: Path) -> str:
 
 # 位置の呼び方は ingest/retrieval.py の Hit._one_citation() に揃える。
 # 利用者が画面で見る出典と同じ言い方でないと、どのスライドの話か照合できない。
+# diagram（drawio）と section（Markdown）と sheet（Excel）はここに載せない。
+# 通し番号が利用者にとって意味を持たず、_dropped_positions が heading を出すため。
 _POSITION_LABELS = {PAGE: "p.", SLIDE: "スライド"}
 
 

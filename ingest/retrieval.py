@@ -97,6 +97,11 @@ class Hit:
             heading = metadata.get("heading")
             if heading:
                 source = f"{source} シート「{heading}」"
+        elif location_type == "diagram":
+            # ページ名で示す。通し番号（location）は利用者にとって意味がない。
+            heading = metadata.get("heading")
+            if heading:
+                source = f"{source} 図「{heading}」"
         elif location_type == "section":
             # 見出し文字列で示す。通し番号（location）は利用者にとって意味がない。
             heading = metadata.get("heading")
