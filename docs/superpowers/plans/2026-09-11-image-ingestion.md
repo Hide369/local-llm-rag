@@ -2285,11 +2285,17 @@ git commit -m "feat: scroll the uploaded file list and move the close button abo
 
 README に書く数字を推測で埋めない。`source/` を `--force` で流し、所要時間を測る。
 
+**全件取り込みは Colab で行う**（依頼者の運用）。ローカルのCPUではなく Colab の GPU で測った数字であることを README に明記すること。条件を書かずに数字だけ載せると、ローカル環境の利用者が桁違いの待ち時間に面食らう。接続の手順は `colab/` と `docs/vscode-colab-agent.md` にある。
+
 ```
-myvenv313/Scripts/python.exe -m scripts.ingest_source --force --with-vlm
+python -m scripts.ingest_source --force --with-vlm
 ```
 
-VLM に繋がらない環境なら `--with-vlm` を外し、「OCR のみの場合」として測る。どちらの条件で測ったかを README に明記すること。
+測ったら、次の3つを README に残す。
+
+- 実行環境（Colab のGPU種別）と実行日
+- 総所要時間と、OCR/VLM を通した画像の枚数
+- `--with-vlm` の有無（VLM を外した場合は「OCR のみ」と明記）
 
 - [ ] **Step 2: README を直す**
 
@@ -2336,8 +2342,16 @@ Streamlit 1.61 は mermaid を同梱しており（`streamlit/static/static/js/a
 
 **Files:**
 - Create: `ingest/display_mode.py`
-- Modify: `rag_chat_app.py:306-311`（履歴の再描画）, `rag_chat_app.py:388-433`（生成と履歴への保存）
-- Test: `tests/test_display_mode.py`（新規）, `tests/test_rag_chat_app.py`
+- Modify: `ingest/answer_text.py`（`mermaid_definitions` を追加）, `rag_chat_app.py`（`render_diagrams` / `render_answer` と生成部）
+- Test: `tests/test_display_mode.py`（新規）, `tests/test_answer_text.py`, `tests/test_rag_chat_app.py`
+
+**マーメイドは記法と図の両方を出す。** 記法は他所へ持ち出すため、図はその場で読むために要る（依頼者の追加要望）。マークダウンでは図を出さない。マークダウンのレンダリング結果は「何も頼まなければ出てくる見え方」そのもので、並べても新しく分かることがない。
+
+図は `st.mermaid_chart(定義)` で描く。実測で、この関数は本文をバッククォート4本以上のフェンスで包んで markdown 要素として出す（本文中のバッククォートでフェンスが早閉じしないようにするため）。自分でフェンスを組み立てるとその問題を自前で抱えることになる。
+
+渡すのは `answer_text.mermaid_definitions()` が取り出したフェンスの中身だけである。回答全体を渡すと地の文が mermaid の構文エラーになり、代わりに `st.write(回答)` で描くと地の文が上のコードブロックと二重に出る。フェンスが1つも無ければ回答全体を1つの定義とみなす（モデルが素の定義だけを返すことがあるため）。
+
+ストリーミング中はコードブロックだけを更新し、**図は生成が終わってから描く**。途中の定義は必ず構文エラーになり、描き直すたびにエラーの枠が出る。
 
 **Interfaces:**
 - Consumes: なし

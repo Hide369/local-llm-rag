@@ -212,6 +212,23 @@ def upload_dialog(collection):
         st.rerun()
 
 
+def render_diagrams(text):
+    """マーメイドの定義を図として描く。
+
+    記法だけでも図だけでも足りない。記法は他所へ持ち出すため、図はその場で
+    読むために要る（要望）。
+
+    回答全体ではなくフェンスの中身だけを渡す。全体を渡すと地の文が
+    mermaid の構文エラーになり、代わりに st.write(回答) で描くと地の文が
+    上のコードブロックと二重に出る。
+    """
+    for definition in answer_text.mermaid_definitions(text):
+        # st.mermaid_chart は本文をフェンスで包んで markdown として出す。
+        # 自分でフェンスを組み立てると、本文中のバッククォートでフェンスが
+        # 早閉じする問題を自前で抱えることになる。
+        st.mermaid_chart(definition)
+
+
 def render_answer(text, mode):
     """回答の本文を描く。記法で頼まれたときはコードブロックで出す。
 
@@ -220,12 +237,18 @@ def render_answer(text, mode):
     記法を見たい・他所へ持ち出したい利用者はそれを取り出せない。st.code は
     右上にコピーボタンを付けるので、持ち出したいという狙いにそのまま応える。
 
+    マーメイドのときだけ、記法の下に図も描く。マークダウンでは描かない。
+    マークダウンのレンダリング結果は「何も頼まなければ出てくる見え方」そのもので、
+    並べても新しく分かることがないためである。
+
     生表示では strip_html_tags を通さない。<br> を落としているのは Streamlit が
     HTMLを描画せず文字として残るからであって、全部が文字になる生表示では、
     落とすとモデルが実際に書いた記法ではなくなる。
     """
     if mode:
         st.code(text, language=mode)
+        if mode == "mermaid":
+            render_diagrams(text)
     else:
         st.write(answer_text.strip_html_tags(text))
 
@@ -459,6 +482,10 @@ if st.session_state.generating:
                         received.append(chunk)
                         placeholder.code("".join(received), language=display)
                     answer = "".join(received)
+                    if display == "mermaid":
+                        # 図は生成が終わってから描く。途中の定義は必ず
+                        # 構文エラーになり、描き直すたびにエラーの枠が出る。
+                        render_diagrams(answer)
                 else:
                     # 表のセル内の <br>・<ul>・<li> は、描画する場合にだけ落とす。
                     answer = st.write_stream(answer_text.strip_html_tags_stream(stream))

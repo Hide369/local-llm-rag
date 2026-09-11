@@ -710,10 +710,7 @@ def test_a_markdown_request_shows_the_notation_instead_of_rendering_it(app):
     assert any(answer in element.value for element in app.code)
 
 
-def test_a_mermaid_request_shows_the_notation_instead_of_the_diagram(app):
-    """```mermaid フェンスをそのまま出すと図になる。記法のまま出す。"""
-    answer = "```mermaid\ngraph TD;\n  A-->B;\n```"
-
+def _asked_for_mermaid(app, answer):
     with (
         patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
         patch.object(chat, "stream_chat", _fake_stream_chat(answer)),
@@ -721,9 +718,64 @@ def test_a_mermaid_request_shows_the_notation_instead_of_the_diagram(app):
     ):
         app.run()
         app.chat_input[0].set_value("流れをマーメイドで表示して").run()
+    return app
+
+
+def test_a_mermaid_request_shows_both_the_notation_and_the_diagram(app):
+    """記法だけでも図だけでも足りない。記法は持ち出すため、図は読むために要る。
+
+    st.mermaid_chart は本文をフェンスで包んで markdown 要素として出す（実測）。
+    """
+    answer = "処理の流れです。\n\n```mermaid\ngraph TD;\n  A-->B;\n```"
+    _asked_for_mermaid(app, answer)
 
     assert not app.exception
     assert any(answer in element.value for element in app.code)
+    assert any(
+        "mermaid" in element.value and "graph TD;" in element.value
+        for element in app.markdown
+    )
+
+
+def test_the_diagram_is_drawn_from_the_fence_only(app):
+    """回答全体を mermaid_chart へ渡すと地の文が構文エラーになる。
+    st.write(回答) で描くと地の文がコードブロックと二重に出る。
+    """
+    answer = "処理の流れです。\n\n```mermaid\ngraph TD;\n  A-->B;\n```"
+    _asked_for_mermaid(app, answer)
+
+    rendered = [
+        element.value for element in app.markdown if "graph TD;" in element.value
+    ]
+    assert rendered, "図が描かれていない"
+    assert all("処理の流れです。" not in value for value in rendered)
+
+
+def test_a_bare_definition_is_still_drawn(app):
+    """モデルがフェンス無しで素の定義だけを返すことがある。"""
+    _asked_for_mermaid(app, "graph TD;\n  A-->B;")
+
+    assert not app.exception
+    assert any(
+        "mermaid" in element.value and "graph TD;" in element.value
+        for element in app.markdown
+    )
+
+
+def test_a_markdown_request_draws_no_diagram(app):
+    """図を出すのはマーメイドのときだけである。"""
+    answer = "| 型番 | 容量 |\n|---|---|\n| UD-0900i | 9.0kg |"
+
+    with (
+        patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
+        patch.object(chat, "stream_chat", _fake_stream_chat(answer)),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+    ):
+        app.run()
+        app.chat_input[0].set_value("一覧をマークダウンで表示して").run()
+
+    assert not app.exception
+    assert all("mermaid" not in element.value for element in app.markdown)
 
 
 def test_an_ordinary_question_still_renders_markdown(app):
