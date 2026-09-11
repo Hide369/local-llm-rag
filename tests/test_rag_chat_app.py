@@ -684,3 +684,113 @@ def test_an_uploaded_document_really_reaches_the_store(app):
     assert not app.exception
     assert store_module.indexed_sources(collection) == {"uploads/持ち込み.md"}
     assert app.button(key="delete_uploads/持ち込み.md") is not None
+
+
+# --- 記法そのものの表示 ---------------------------------------------------
+#
+# Streamlit 1.61 は mermaid を同梱しており、```mermaid フェンスは図として
+# 描画される。マークダウンも st.write が描画する。記法を見たい・他所へ
+# 持ち出したい利用者は、今の画面からはそれを取り出せない。
+# 判定は ingest/display_mode.py が質問文に対して行う。
+
+
+def test_a_markdown_request_shows_the_notation_instead_of_rendering_it(app):
+    """st.write は記法を描画してしまい、記法が欲しい利用者には渡らない。"""
+    answer = "| 型番 | 容量 |\n|---|---|\n| UD-0900i | 9.0kg |"
+
+    with (
+        patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
+        patch.object(chat, "stream_chat", _fake_stream_chat(answer)),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+    ):
+        app.run()
+        app.chat_input[0].set_value("一覧をマークダウンで表示して").run()
+
+    assert not app.exception
+    assert any(answer in element.value for element in app.code)
+
+
+def test_a_mermaid_request_shows_the_notation_instead_of_the_diagram(app):
+    """```mermaid フェンスをそのまま出すと図になる。記法のまま出す。"""
+    answer = "```mermaid\ngraph TD;\n  A-->B;\n```"
+
+    with (
+        patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
+        patch.object(chat, "stream_chat", _fake_stream_chat(answer)),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+    ):
+        app.run()
+        app.chat_input[0].set_value("流れをマーメイドで表示して").run()
+
+    assert not app.exception
+    assert any(answer in element.value for element in app.code)
+
+
+def test_an_ordinary_question_still_renders_markdown(app):
+    """既定の見え方は変えない。記法で頼まれたときだけ切り替える。"""
+    answer = "運転音は26dBです。"
+
+    with (
+        patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
+        patch.object(chat, "stream_chat", _fake_stream_chat(answer)),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+    ):
+        app.run()
+        app.chat_input[0].set_value("運転音は").run()
+
+    assert not app.exception
+    assert any(answer in element.value for element in app.markdown)
+    assert all(answer not in element.value for element in app.code)
+
+
+def test_the_notation_survives_a_rerun(app):
+    """履歴の再描画でレンダリングに戻ると、画面を触るたび見え方が変わる。
+
+    生成時の分岐だけを直しても足りない。履歴側は message の display を読む。
+    """
+    answer = "```mermaid\ngraph TD;\n  A-->B;\n```"
+
+    with (
+        patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
+        patch.object(chat, "stream_chat", _fake_stream_chat(answer)),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+    ):
+        app.run()
+        app.chat_input[0].set_value("流れをマーメイドで表示して").run()
+        # 生成が終わった状態でもう一度描かせ、履歴側の描画経路を通す。
+        app.run()
+
+    assert not app.exception
+    assert any(answer in element.value for element in app.code)
+
+
+def test_the_display_mode_does_not_carry_over_to_the_next_question(app):
+    """判定は質問1つごとに閉じる。持ち越すと、利用者が何も言っていないのに
+    コードブロックで返り続ける。
+    """
+    with (
+        patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
+        patch.object(chat, "stream_chat", _fake_stream_chat("普通の回答です。")),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+    ):
+        app.run()
+        app.chat_input[0].set_value("一覧をマークダウンで表示して").run()
+        app.chat_input[0].set_value("運転音は").run()
+
+    assert not app.exception
+    # 2問目の回答は描画される。1問目の分はコードブロックのまま残る。
+    assert any("普通の回答です。" in element.value for element in app.markdown)
+
+
+def test_a_search_failure_is_not_shown_as_notation(app):
+    """エラー文は記法ではない。書式を頼まれていても普通に読める形で出す。"""
+    with (
+        patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
+        patch.object(retrieval, "embed_query", _offline_embed_query),
+    ):
+        app.run()
+        app.chat_input[0].set_value("一覧をマークダウンで表示して").run()
+        app.run()
+
+    assert not app.exception
+    assert all(OFFLINE_MESSAGE not in element.value for element in app.code)

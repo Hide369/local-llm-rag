@@ -2328,6 +2328,326 @@ git commit -m "docs: describe image ingestion across all document formats"
 
 ---
 
+### Task 11: 「マークダウンで表示して」に記法そのもので答える
+
+Streamlit 1.61 は mermaid を同梱しており（`streamlit/static/static/js/architectureDiagram-*.js` 等）、```mermaid フェンスを図として描画する。マークダウンも `st.write` が描画する。記法そのものを見たい・持ち出したいという要望に、今は応えられない。
+
+**このタスクは Task 1〜10 と何も共有しない。** 先に実装してよい。
+
+**Files:**
+- Create: `ingest/display_mode.py`
+- Modify: `rag_chat_app.py:306-311`（履歴の再描画）, `rag_chat_app.py:388-433`（生成と履歴への保存）
+- Test: `tests/test_display_mode.py`（新規）, `tests/test_rag_chat_app.py`
+
+**Interfaces:**
+- Consumes: なし
+- Produces: `ingest.display_mode.detect(question: str) -> str | None` — `"markdown"` / `"mermaid"` / `None`
+
+- [x] **Step 1: 失敗するテストを書く**
+
+`tests/test_display_mode.py` を新規作成する。
+
+```python
+"""質問文から、回答を記法そのもので出すかどうかを決める。
+
+Streamlit 1.61 は mermaid を同梱しており、```mermaid フェンスは図として
+描画される。マークダウンも st.write が描画する。記法を見たい・コピーしたい
+利用者は、今の画面からはそれを取り出せない。
+
+書式の語があるだけでは判定しない。「マークダウンとは何ですか」のような
+記法自体を尋ねる質問で、回答が丸ごとコードブロックになってしまうためである。
+"""
+import pytest
+
+from ingest.display_mode import detect
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "マークダウンで表示して",
+        "マークダウン記法そのものを表示してください",
+        "結果をマークダウンで出力して",
+        "マークダウンのソースを見せて",
+        "Markdownで書いてください",
+        "markdown形式で出して",
+    ],
+)
+def test_a_markdown_request_is_detected(question):
+    assert detect(question) == "markdown"
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "マーメイドで表示して",
+        "マーメイド記法で書いてください",
+        "処理の流れをmermaidで図示して",
+        "Mermaidのコードを見せて",
+    ],
+)
+def test_a_mermaid_request_is_detected(question):
+    assert detect(question) == "mermaid"
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "マークダウンとは何ですか",
+        "手順書.md の内容を教えて",
+        "就業規則について教えてください",
+        "マーメイドという言葉の意味は",
+        "",
+    ],
+)
+def test_an_ordinary_question_is_not_a_format_request(question):
+    """書式の語があるだけでは成立させない。誤作動すると回答が読めなくなる。"""
+    assert detect(question) is None
+
+
+def test_mermaid_wins_when_both_words_appear():
+    """両方出たときはより具体的な指定を採る。
+
+    「マークダウンの中にマーメイドで」のような頼み方で、図の記法のほうが
+    利用者の狙いである可能性が高い。
+    """
+    assert detect("マークダウンの中にマーメイドで図を書いて") == "mermaid"
+
+
+def test_bare_md_is_not_a_format_word():
+    """.md がファイル名として質問に現れるため、素の md は語として採らない。"""
+    assert detect("md で表示して") is None
+```
+
+`tests/test_rag_chat_app.py` に足す。既存の `app` フィクスチャと `_fake_stream_chat` を使う。
+
+```python
+def test_a_markdown_request_shows_the_notation_instead_of_rendering_it(app):
+    """st.write は記法を描画してしまう。記法を欲しい利用者には渡らない。"""
+    answer = "| 型番 | 容量 |\n|---|---|\n| UD-0900i | 9.0kg |"
+    stream, _calls = _fake_stream_chat(answer)
+
+    with (
+        patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
+        patch.object(chat, "stream_chat", stream),
+    ):
+        app.run()
+        app.chat_input[0].set_value("一覧をマークダウンで表示して").run()
+
+    assert not app.exception
+    assert any(answer in element.value for element in app.code)
+
+
+def test_an_ordinary_question_still_renders_markdown(app):
+    """既定の見え方は変えない。記法で頼まれたときだけ切り替える。"""
+    answer = "運転音は26dBです。"
+    stream, _calls = _fake_stream_chat(answer)
+
+    with (
+        patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
+        patch.object(chat, "stream_chat", stream),
+    ):
+        app.run()
+        app.chat_input[0].set_value("運転音は").run()
+
+    assert not app.exception
+    assert any(answer in element.value for element in app.markdown)
+
+
+def test_the_notation_survives_a_rerun(app):
+    """履歴の再描画でレンダリングに戻ると、画面を触るたび見え方が変わる。"""
+    answer = "```mermaid\ngraph TD;\n  A-->B;\n```"
+    stream, _calls = _fake_stream_chat(answer)
+
+    with (
+        patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
+        patch.object(chat, "stream_chat", stream),
+    ):
+        app.run()
+        app.chat_input[0].set_value("流れをマーメイドで表示して").run()
+        # 会話履歴のリセット以外の操作で再実行を起こし、履歴側の描画を通す
+        app.run()
+
+    assert not app.exception
+    assert any(answer in element.value for element in app.code)
+```
+
+`_fake_stream_chat` の戻り値の形（タプルか関数か）は既存の定義に合わせること。`tests/test_rag_chat_app.py:66` 付近を読んでから書く。
+
+- [x] **Step 2: テストを走らせて落ちることを確かめる**
+
+```
+myvenv313/Scripts/python.exe -m pytest tests/test_display_mode.py tests/test_rag_chat_app.py -v
+```
+
+Expected: FAIL — `ModuleNotFoundError: No module named 'ingest.display_mode'`
+
+- [x] **Step 3: 実装する**
+
+`ingest/display_mode.py` を新規作成する。
+
+```python
+"""質問文から、回答を記法そのもので出すかどうかを決める。
+
+design: docs/superpowers/specs/2026-09-11-image-ingestion-design.md
+
+Streamlit 1.61 は mermaid を同梱しており（streamlit/static/static/js/ に
+architectureDiagram 等が入っている）、```mermaid フェンスは図として描画される。
+マークダウンも st.write が描画する。記法を見たい・コピーしたい利用者は、
+今の画面からはそれを取り出せない。
+
+UIからしか呼ばれないが、UIには依存しない。ingest/prompting.py と同じ理由で
+ここに置く（Streamlitスクリプトに書くと、テストがインポートしただけで
+スクリプト全体が走り本番DBを開く）。
+"""
+import re
+
+# 書式の語があるだけでは判定しない。「マークダウンとは何ですか」のような
+# 記法自体を尋ねる質問で、回答が丸ごとコードブロックになってしまうため。
+# 書式の語のすぐ後ろに表示の意図語があることを求める。
+_INTENT = r"(?:表示|出力|見せ|示し|書い|出し)"
+
+# 語と意図語の間に入る「で」「記法で」「のソースを」などを吸収する幅。
+# 広げるほど「マークダウンとは何か教えて」を誤って拾う。
+_GAP = r".{0,8}?"
+
+# 素の md は語として採らない。「手順書.md の内容を教えて」のように
+# ファイル名として質問に現れるためである。
+_PATTERNS = (
+    # マーメイドを先に見る。両方の語が出たときは、より具体的な指定を採る。
+    ("mermaid", re.compile(rf"(?:マーメイド|mermaid)(?:記法)?{_GAP}{_INTENT}", re.IGNORECASE)),
+    ("markdown", re.compile(rf"(?:マークダウン|markdown)(?:記法)?{_GAP}{_INTENT}", re.IGNORECASE)),
+)
+
+
+def detect(question: str) -> str | None:
+    """記法そのものを求められているなら、その名前を返す。
+
+    返り値は st.code の language にそのまま渡せる文字列にしてある。
+    """
+    if not question:
+        return None
+    for name, pattern in _PATTERNS:
+        if pattern.search(question):
+            return name
+    return None
+```
+
+`rag_chat_app.py` の import に足す。
+
+```python
+from ingest import answer_text, catalog, chat, conditions, display_mode, embedder, reranker, store, vlm
+```
+
+`render_evidence` の上に描画のヘルパーを足す。
+
+```python
+def render_answer(text, mode):
+    """回答の本文を描く。記法で頼まれたときはコードブロックで出す。
+
+    st.code は右上にコピーボタンを付ける。記法そのものが欲しい利用者は
+    たいてい他所へ持ち出したいので、これがそのまま要件を満たす。
+
+    生表示では strip_html_tags を通さない。<br> を落としているのは
+    Streamlit が HTML を描画せず文字として残るからであって、全部が文字に
+    なる生表示では、落とすとモデルが実際に書いた記法ではなくなる。
+    """
+    if mode:
+        st.code(text, language=mode)
+    else:
+        st.write(answer_text.strip_html_tags(text))
+```
+
+履歴の再描画（`for message in st.session_state.messages:` の中）を差し替える。
+
+```python
+        st.write(answer_text.strip_html_tags(message["content"]))
+```
+↓
+```python
+        render_answer(message["content"], message.get("display"))
+```
+
+生成部を差し替える。`question` は `st.session_state.pending_question` に入っている。
+
+```python
+    # 「マークダウンで表示して」と頼まれたら、描画せず記法のまま出す。
+    # 判定は質問1つごとに閉じる。前のターンの指定を持ち越すと、利用者が
+    # 何も言っていないのにコードブロックで返り続けることになる。
+    display = display_mode.detect(question)
+```
+
+`st.write_stream(...)` の呼び出しを次にする。
+
+```python
+            try:
+                # 「答え：」の言い直しはラベルだけ落とす。表のセル内の
+                # <br>・<ul>・<li> は、描画する場合にだけ落とす
+                # （ingest/answer_text.py）。
+                stream = answer_text.without_label(
+                    chat.stream_chat(model, history, temperature)
+                )
+                if display:
+                    # st.write_stream は中身をMarkdownとして描画してしまう。
+                    # 自前で溜めながらコードブロックを書き換える。8トークン/秒
+                    # では1行ごとにまとめて出すと数秒待たされるため、
+                    # チャンクごとに更新する。
+                    placeholder = st.empty()
+                    received = []
+                    for chunk in stream:
+                        received.append(chunk)
+                        placeholder.code("".join(received), language=display)
+                    answer = "".join(received)
+                else:
+                    answer = st.write_stream(answer_text.strip_html_tags_stream(stream))
+                render_evidence({"hits": hits, "table": table})
+            except chat.ChatError as error:
+                answer = f"回答を生成できませんでした: {error}"
+                st.error(answer)
+```
+
+履歴へ保存する辞書に1つ足す。
+
+```python
+        st.session_state.messages.append(
+            {
+                "role": "assistant",
+                "content": answer,
+                "hits": hits,
+                "table": table,
+                "note": note,
+                "display": display,
+            }
+        )
+```
+
+**注意:** `display` は `search_error` の経路でも定義されている必要がある。`display = display_mode.detect(question)` は `question = st.session_state.pending_question` の直後、`try` ブロックより前に置くこと。エラー文はレンダリングしたいので、エラー時は `display` を使わない（`answer` にエラー文を入れる経路は `st.error()` が描くため影響しない）が、履歴の辞書には `display` が入る。エラー文が生表示になってしまうので、**エラー時は `display=None` を履歴に入れる**こと。
+
+- [x] **Step 4: テストが通ることを確かめる**
+
+```
+myvenv313/Scripts/python.exe -m pytest tests/test_display_mode.py tests/test_rag_chat_app.py -v
+```
+
+Expected: PASS（既存のチャット画面のテストを含め全件）
+
+- [x] **Step 5: 実際の画面で確かめる**
+
+```
+myvenv313/Scripts/python.exe -m streamlit run rag_chat_app.py
+```
+
+(a)「一覧をマークダウンで表示して」で記法がコードブロックに出てコピーボタンが効くこと、(b)「流れをマーメイドで表示して」で図ではなく記法が出ること、(c) 普通の質問では今までどおり描画されること、(d) 生成中も逐次表示されること。
+
+- [x] **Step 6: コミット**
+
+```bash
+git add ingest/display_mode.py rag_chat_app.py tests/test_display_mode.py tests/test_rag_chat_app.py
+git commit -m "feat: show markdown and mermaid notation when the question asks for it"
+```
+
+---
+
 ## 実装順の依存
 
 ```
@@ -2340,6 +2660,7 @@ Task 1 (ocr_bytes)
          ├─ Task 7 (md + 報告)
          └─ Task 8 (pdf/pptx 移行)
 Task 9 (UI)    ← 他と独立。いつでもよい
+Task 11 (記法表示) ← 他と何も共有しない。小さいので先に片付けてよい
 Task 10 (文書) ← 全部の後
 ```
 

@@ -19,7 +19,17 @@ from dotenv import load_dotenv
 # OLLAMA_HOST（ngrokのURL）と OLLAMA_API_KEY を上書きする。
 load_dotenv()
 
-from ingest import answer_text, catalog, chat, conditions, embedder, reranker, store, vlm
+from ingest import (
+    answer_text,
+    catalog,
+    chat,
+    conditions,
+    display_mode,
+    embedder,
+    reranker,
+    store,
+    vlm,
+)
 from ingest.parsers import SUPPORTED_SUFFIXES
 from ingest.prompting import (
     build_catalog_prompt,
@@ -202,6 +212,24 @@ def upload_dialog(collection):
         st.rerun()
 
 
+def render_answer(text, mode):
+    """回答の本文を描く。記法で頼まれたときはコードブロックで出す。
+
+    st.write はマークダウンを描画し、Streamlit 1.61 は mermaid も同梱していて
+    ```mermaid フェンスを図にする。どちらも「レンダリング後」しか画面に残らず、
+    記法を見たい・他所へ持ち出したい利用者はそれを取り出せない。st.code は
+    右上にコピーボタンを付けるので、持ち出したいという狙いにそのまま応える。
+
+    生表示では strip_html_tags を通さない。<br> を落としているのは Streamlit が
+    HTMLを描画せず文字として残るからであって、全部が文字になる生表示では、
+    落とすとモデルが実際に書いた記法ではなくなる。
+    """
+    if mode:
+        st.code(text, language=mode)
+    else:
+        st.write(answer_text.strip_html_tags(text))
+
+
 def render_evidence(message):
     """根拠の表示。絞り込み経路は表を、検索経路はチャンクを見せる。"""
     if message.get("table"):
@@ -307,7 +335,7 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         if message.get("note"):
             st.warning(message["note"])
-        st.write(answer_text.strip_html_tags(message["content"]))
+        render_answer(message["content"], message.get("display"))
         render_evidence(message)
 
 schema = get_schema(collection, collection.revision())
@@ -334,6 +362,11 @@ if question and not st.session_state.generating:
 
 if st.session_state.generating:
     question = st.session_state.pending_question
+
+    # 「マークダウンで表示して」と頼まれたら、描画せず記法のまま出す。
+    # 判定は質問1つごとに閉じる（ingest/display_mode.py）。前のターンの指定を
+    # 持ち越すと、利用者が何も言っていないのにコードブロックで返り続ける。
+    display = display_mode.detect(question)
 
     extraction = conditions.extract(question, schema, ask_json)
 
@@ -385,6 +418,9 @@ if st.session_state.generating:
         st.warning(note)
 
     answer = None
+    # 履歴へ残すときの表示形式。エラー文は記法ではないので、書式を頼まれていても
+    # 普通に読める形で出す。生成が最後まで通った経路だけが display を受け取る。
+    answer_display = None
     with st.chat_message("assistant"):
         # 疎通確認をしないため、Ollama未起動やモデル名の誤りは生成時に初めて
         # わかる。ingestボタンのエラー表示（st.sidebar.error）と同じ見せ方で、
@@ -406,16 +442,27 @@ if st.session_state.generating:
                 + [{"role": "user", "content": user_content}]
             )
             try:
-                # 「答え：」の言い直しはラベルだけ落とし、表のセル内の
-                # <br>・<ul>・<li> も描画されずに残らないよう落とす
-                # （ingest/answer_text.py）。
-                answer = st.write_stream(
-                    answer_text.strip_html_tags_stream(
-                        answer_text.without_label(
-                            chat.stream_chat(model, history, temperature)
-                        )
-                    )
+                # 「答え：」の言い直しはラベルだけ落とす（ingest/answer_text.py）。
+                # 口癖であって記法ではないので、生表示でも落とす。
+                stream = answer_text.without_label(
+                    chat.stream_chat(model, history, temperature)
                 )
+                if display:
+                    # st.write_stream は中身をMarkdownとして描画してしまうので
+                    # 使えない。自前で溜めながらコードブロックを書き換える。
+                    # 1行ずつまとめて出さないのは、8トークン毎秒では1行あたり
+                    # 数秒待たされるためで、without_label が行頭でだけ文字を
+                    # 溜めているのと同じ判断である。
+                    placeholder = st.empty()
+                    received = []
+                    for chunk in stream:
+                        received.append(chunk)
+                        placeholder.code("".join(received), language=display)
+                    answer = "".join(received)
+                else:
+                    # 表のセル内の <br>・<ul>・<li> は、描画する場合にだけ落とす。
+                    answer = st.write_stream(answer_text.strip_html_tags_stream(stream))
+                answer_display = display
                 render_evidence({"hits": hits, "table": table})
             except chat.ChatError as error:
                 answer = f"回答を生成できませんでした: {error}"
@@ -429,6 +476,7 @@ if st.session_state.generating:
                 "hits": hits,
                 "table": table,
                 "note": note,
+                "display": answer_display,
             }
         )
 
