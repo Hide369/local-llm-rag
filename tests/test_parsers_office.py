@@ -3,7 +3,6 @@ import io
 import pytest
 from docx import Document
 from docx.shared import Inches as DocxInches
-from docx.shared import Inches
 from PIL import Image
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
@@ -59,10 +58,10 @@ def docx_with_images_path(tmp_path):
 
     doc = Document()
     doc.add_paragraph("障害報告")
-    doc.add_picture(str(shot), width=Inches(3))
+    doc.add_picture(str(shot), width=DocxInches(3))
     doc.add_paragraph("上記のダイアログが表示された。")
     table = doc.add_table(rows=1, cols=1)
-    table.rows[0].cells[0].paragraphs[0].add_run().add_picture(str(logo), width=Inches(0.4))
+    table.rows[0].cells[0].paragraphs[0].add_run().add_picture(str(logo), width=DocxInches(0.4))
 
     path = tmp_path / "報告.docx"
     doc.save(path)
@@ -110,7 +109,7 @@ def test_docx_with_only_an_image_still_produces_a_unit(tmp_path):
     shot = tmp_path / "only.png"
     Image.new("RGB", (300, 180), "blue").save(shot)
     doc = Document()
-    doc.add_picture(str(shot), width=Inches(3))
+    doc.add_picture(str(shot), width=DocxInches(3))
     path = tmp_path / "画像だけ.docx"
     doc.save(path)
 
