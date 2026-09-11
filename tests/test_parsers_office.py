@@ -419,7 +419,11 @@ def test_caption_image_not_called_when_not_provided(pptx_with_large_picture):
 
 def test_large_picture_is_captioned(pptx_with_large_picture):
     units = parse_pptx(
-        pptx_with_large_picture, caption_image=lambda _bytes: "緑色の図表です。"
+        pptx_with_large_picture,
+        caption_image=lambda _bytes: "緑色の図表です。",
+        # describe_image は ocr_bytes 省略時に実OCRを遅延importする。VLMの
+        # 挙動だけを見るテストなので、実エンジンを起こさないよう空文字で止める。
+        ocr_bytes=lambda _bytes: "",
     )
     assert any("[図の説明] 緑色の図表です。" in u.text for u in units)
     assert any(u.vlm for u in units)
@@ -440,19 +444,31 @@ def test_picture_caption_failure_is_skipped_with_a_warning(pptx_with_large_pictu
     def _raise(_bytes):
         raise VlmError("boom")
 
-    units = parse_pptx(pptx_with_large_picture, caption_image=_raise)
+    units = parse_pptx(
+        pptx_with_large_picture,
+        caption_image=_raise,
+        ocr_bytes=lambda _bytes: "",  # 実OCRを起こさないための空スタブ
+    )
     assert all("[図の説明]" not in u.text for u in units)
     assert "boom" in capsys.readouterr().err
     assert any("タイトル" in u.text for u in units)
 
 
 def test_decorative_caption_is_not_appended(pptx_with_large_picture):
-    units = parse_pptx(pptx_with_large_picture, caption_image=lambda _bytes: "装飾画像")
+    units = parse_pptx(
+        pptx_with_large_picture,
+        caption_image=lambda _bytes: "装飾画像",
+        ocr_bytes=lambda _bytes: "",  # 実OCRを起こさないための空スタブ
+    )
     assert all("[図の説明]" not in u.text for u in units)
 
 
 def test_empty_caption_is_not_appended(pptx_with_large_picture):
-    units = parse_pptx(pptx_with_large_picture, caption_image=lambda _bytes: "   ")
+    units = parse_pptx(
+        pptx_with_large_picture,
+        caption_image=lambda _bytes: "   ",
+        ocr_bytes=lambda _bytes: "",  # 実OCRを起こさないための空スタブ
+    )
     assert all("[図の説明]" not in u.text for u in units)
 
 
@@ -468,9 +484,33 @@ def test_picture_above_title_does_not_become_the_title(tmp_path):
     path = tmp_path / "図が上.pptx"
     prs.save(path)
 
-    units = parse_pptx(path, caption_image=lambda _bytes: "上部の図の説明です。")
+    units = parse_pptx(
+        path,
+        caption_image=lambda _bytes: "上部の図の説明です。",
+        ocr_bytes=lambda _bytes: "",  # 実OCRを起こさないための空スタブ
+    )
     assert all(u.text.startswith("本当のタイトル") for u in units)
     assert any("[図の説明] 上部の図の説明です。" in u.text for u in units)
+
+
+def test_a_slide_whose_only_content_is_an_image_does_not_become_a_title(tmp_path):
+    """OCRだけが取れた画像は [画像内の文字] で始まる。is_image_block が
+    2つの接頭辞を見ないと、画像の文字がスライドのタイトルとして
+    全ユニットへ複写される。
+    """
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    picture = io.BytesIO(_png_bytes(400, 400))
+    slide.shapes.add_picture(picture, Inches(1), Inches(1), Inches(3), Inches(3))
+    box = slide.shapes.add_textbox(Inches(1), Inches(5), Inches(4), Inches(1))
+    box.text_frame.text = "本文のテキスト"
+    path = tmp_path / "図が上.pptx"
+    prs.save(path)
+
+    units = parse_pptx(path, caption_image=lambda _blob: "", ocr_bytes=lambda _blob: "画像の文字")
+
+    assert all(not unit.text.startswith(OCR_PREFIX) for unit in units)
+    assert any("本文のテキスト" in unit.text for unit in units)
 
 
 def test_every_parser_accepts_the_same_keyword_arguments(tmp_path, docx_path):

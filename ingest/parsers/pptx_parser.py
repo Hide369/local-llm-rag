@@ -15,6 +15,7 @@ from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.util import Emu
 
+from ingest.image_text import describe_image, has_caption, has_ocr, is_image_block
 from ingest.models import SLIDE, ParsedUnit
 
 # 同じ行に並ぶ図表の要素を左から右へ並べるための丸め幅。0.25インチをEMUで表した値。
@@ -28,8 +29,6 @@ GROUP_TARGET_CHARS = 200
 # PDFの画素サイズと違い、スライド上に配置された大きさで判定できる。実データでの
 # 実測は design docの6節を参照。未実測の仮値であり、後日調整する前提。
 MIN_PICTURE_INCHES = 1.0
-
-_CAPTION_PREFIX = "[図の説明] "
 
 
 def _walk(shapes):
@@ -63,18 +62,18 @@ def _is_captionable_picture(shape) -> bool:
     )
 
 
-def _picture_block(shape, slide_number: int, path_name: str, caption_image) -> str | None:
+def _picture_block(shape, slide_number: int, path_name: str, caption_image, ocr_bytes) -> str | None:
     try:
-        caption = caption_image(shape.image.blob)
+        blob = shape.image.blob
     except Exception as error:
         print(
-            f"警告: 画像の説明取得に失敗しました（{path_name} スライド{slide_number}）: {error}",
+            f"警告: 画像を取り出せませんでした（{path_name} スライド{slide_number}）: {error}",
             file=sys.stderr,
         )
         return None
-    if not caption.strip() or caption.strip() == "装飾画像":
-        return None
-    return f"{_CAPTION_PREFIX}{caption}"
+    return describe_image(
+        blob, caption_image, ocr_bytes=ocr_bytes, label=f"{path_name} スライド{slide_number}"
+    )
 
 
 def _split_title(blocks: list[str]) -> tuple[str, list[str]]:
@@ -84,7 +83,7 @@ def _split_title(blocks: list[str]) -> tuple[str, list[str]]:
     複写してしまわないようにする（上部に図を置くレイアウトとの相互作用）。
     """
     for index, block in enumerate(blocks):
-        if not block.startswith(_CAPTION_PREFIX):
+        if not is_image_block(block):
             title, _, remainder = block.partition("\n")
             body = blocks[:index] + ([remainder] if remainder else []) + blocks[index + 1 :]
             return title, body
@@ -109,13 +108,18 @@ def _clean(text: str, slide_number: int) -> str:
     return "\n".join(lines)
 
 
-def _blocks(slide, slide_number: int, path_name: str = "", caption_image=None) -> list[str]:
+def _blocks(
+    slide, slide_number: int, path_name: str = "", caption_image=None, ocr_bytes=None
+) -> list[str]:
     """読み順に並べた、内容のあるシェイプのテキスト。"""
     content_shapes = [
         shape
         for shape in _walk(slide.shapes)
         if shape.has_text_frame
-        or (caption_image is not None and _is_captionable_picture(shape))
+        or (
+            (caption_image is not None or ocr_bytes is not None)
+            and _is_captionable_picture(shape)
+        )
     ]
     content_shapes.sort(key=_position)
 
@@ -126,7 +130,7 @@ def _blocks(slide, slide_number: int, path_name: str = "", caption_image=None) -
             if cleaned:
                 blocks.append(cleaned)
         else:
-            block = _picture_block(shape, slide_number, path_name, caption_image)
+            block = _picture_block(shape, slide_number, path_name, caption_image, ocr_bytes)
             if block is not None:
                 blocks.append(block)
 
@@ -157,10 +161,14 @@ def _group(blocks: list[str]) -> list[str]:
     return groups
 
 
-def parse_pptx(path: Path, caption_image=None, on_missing_image=None) -> list[ParsedUnit]:
+def parse_pptx(
+    path: Path, caption_image=None, on_missing_image=None, ocr_bytes=None
+) -> list[ParsedUnit]:
     units: list[ParsedUnit] = []
     for number, slide in enumerate(Presentation(path).slides, start=1):
-        blocks = _blocks(slide, number, path_name=path.name, caption_image=caption_image)
+        blocks = _blocks(
+            slide, number, path_name=path.name, caption_image=caption_image, ocr_bytes=ocr_bytes
+        )
         if not blocks:
             continue
         # 先頭シェイプの1行目をタイトルとする。この資料では slide.shapes.title が
@@ -178,7 +186,8 @@ def parse_pptx(path: Path, caption_image=None, on_missing_image=None) -> list[Pa
                     text=text,
                     location_type=SLIDE,
                     location=number,
-                    vlm=_CAPTION_PREFIX in text,
+                    vlm=has_caption(text),
+                    ocr=has_ocr(text),
                 )
             )
     return units
