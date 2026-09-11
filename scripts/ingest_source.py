@@ -47,6 +47,9 @@ class IngestReport:
     # いない）。この情報を報告に載せておかないと、GUIから取り込んだときに
     # 全滅の警告が見えないところで消える。
     kept_all_navigation: list[str] = field(default_factory=list)
+    # 資料キー → 見つからなかった画像の参照先。件数だけでは、どの画像が
+    # 抜けたのか追えない。dropped を件数ではなく現物で持っているのと同じ理由。
+    missing_images: dict[str, list[str]] = field(default_factory=dict)
 
 
 def file_hash(path: Path) -> str:
@@ -138,8 +141,9 @@ def _ingest_one(
     判断が片方にしか入らない状態が生まれる。
     """
     notify(f"処理中: {source}")
+    missing: list[str] = []
     try:
-        units = parse(path, caption_image=caption_image)
+        units = parse(path, caption_image=caption_image, on_missing_image=missing.append)
         kept, dropped = navigation.drop_navigation(units)
         kept_all_navigation = bool(dropped) and not kept
         if kept_all_navigation:
@@ -162,6 +166,10 @@ def _ingest_one(
         return
 
     report.indexed[source] = len(chunks)
+    if missing:
+        # 取り込みは成功している。画像が付かなかったことだけを伝える。
+        report.missing_images[source] = missing
+        notify(f"画像が見つかりません: {source} — {'、'.join(missing)}")
     # 報告に載せるのは取り込みが成功した資料だけである。埋め込みで失敗した
     # 資料をここに載せると、要約に「失敗」と「全ユニットがナビゲーション
     # 判定のため除外しませんでした」が並び、後者が「丸ごと取り込んだ」と
@@ -354,6 +362,8 @@ def main() -> int:
             f"ナビゲーション除外: {sum(report.dropped.values())}件"
             f" / {len(report.dropped)}ファイル"
         )
+    for source, references in report.missing_images.items():
+        print(f"画像が見つかりません {source}: {'、'.join(references)}")
     if report.kept_all_navigation:
         print(
             "全ユニットがナビゲーション判定のため除外しませんでした: "

@@ -744,3 +744,33 @@ def test_a_source_subdirectory_named_uploads_is_refused(source_dir, collection):
     _write_docx(source_dir / "uploads", "議事録.docx", "決定事項：RAGを導入します。")
     with pytest.raises(ValueError, match="uploads"):
         ingest_directory(source_dir, collection, session=_FakeSession())
+
+
+def test_missing_images_are_collected_per_source(source_dir, collection):
+    """見つからない画像は、どの資料のどの参照先だったのかまで残す。
+
+    件数だけでは追えない。dropped を件数ではなく現物で持っているのと同じ理由。
+    画面からmdだけをアップロードした利用者が必ず通る経路でもある。
+    """
+    _write_md(source_dir, "手順書.md", "# 手順\n\n## 節\n本文は残る。\n![無い](images/none.png)\n")
+
+    report = ingest_directory(
+        source_dir,
+        collection,
+        session=_FakeSession(),
+        caption_image=lambda _blob: "図です。",
+    )
+
+    assert report.missing_images == {"手順書.md": ["images/none.png"]}
+    # 取り込み自体は成功している。画像が付かなかっただけである。
+    assert report.indexed["手順書.md"] >= 1
+    assert report.failed == {}
+
+
+def test_no_missing_images_key_when_every_reference_resolves(source_dir, collection):
+    """1件も無いときにキーを作ると、0件なのか機能が働いていないのか区別できない。"""
+    _write_md(source_dir, "製品.md", "# UD-0900i\n\n## 設置情報\n幅は600mmです。\n")
+
+    report = ingest_directory(source_dir, collection, session=_FakeSession())
+
+    assert report.missing_images == {}

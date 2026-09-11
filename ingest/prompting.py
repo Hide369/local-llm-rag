@@ -95,6 +95,10 @@ def format_report(report) -> str:
             f"ナビゲーション除外: {sum(report.dropped.values())}件"
             f" / {len(report.dropped)}ファイル"
         )
+    # 1件も無いときは行を出さない。常に出すと、0件なのか機能が働いていないのか
+    # 読み手が区別できない（dropped と同じ判断）。
+    for source, references in report.missing_images.items():
+        lines.append(f"画像が見つかりません {source}: {'、'.join(references)}")
     # 全滅した資料はreport.droppedに載らない（落としていないため）。ここに
     # 出しておかないと、on_progress を渡さない呼び出し元（Streamlitのサイドバー）
     # からは全滅の警告が見えないところで消える。

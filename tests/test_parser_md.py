@@ -1,6 +1,7 @@
 import pytest
 from PIL import Image
 
+from ingest.image_text import CAPTION_PREFIX, OCR_PREFIX
 from ingest.parsers import parse
 from ingest.parsers.md_parser import parse_md
 
@@ -258,14 +259,129 @@ def test_unclosed_frontmatter_yields_no_attributes(tmp_path):
     assert parse_md(path)[0].attributes == {}
 
 
-def test_caption_image_is_not_yet_wired_up(sample_with_image):
-    """現時点ではcaption_imageを引数として受け取るだけで、本文には反映しない。
+def test_caption_image_is_now_wired_up(sample_with_image):
+    """Task 7でcaption_imageが本文へ反映されるようになった。
 
-    実装はTask 7で入る予定。そのときはこのテストを「反映される」側のアサーション
-    へ書き換えること（今のふるまいを固定するためのテストであり、恒久仕様ではない）。
-    sample_with_image は実際に画像参照を1つ含むため、もし将来この引数が本文へ
-    反映されるようになれば "説明" が現れ、このアサーションは正しく落ちる。
+    Task 3が固定していた「反映されない」ふるまいはここで期限切れになる。
+    sample_with_image は実際に画像参照を1つ含むため、説明文がその位置に入る。
     """
-    text = "\n".join(u.text for u in parse_md(sample_with_image, caption_image=lambda _bytes: "説明"))
+    text = "\n".join(
+        u.text
+        for u in parse_md(
+            sample_with_image, caption_image=lambda _bytes: "説明", ocr_bytes=lambda _b: ""
+        )
+    )
 
-    assert "説明" not in text
+    assert "説明" in text
+    assert "![現地写真]" not in text
+
+
+def _write_png(path, color="red"):
+    Image.new("RGB", (300, 180), color).save(path)
+
+
+def test_an_image_reference_is_replaced_in_place(tmp_path):
+    """画像が前後の文と一緒に1つのセクション（=1チャンク）に入るようにする。"""
+    _write_png(tmp_path / "admin.png")
+    path = tmp_path / "手順書.md"
+    path.write_text(
+        "# 管理手順\n\n## 権限変更\n手順は以下の画面で行う。\n"
+        "![管理画面](admin.png)\n権限は管理者のみ。\n",
+        encoding="utf-8",
+    )
+
+    text = parse_md(
+        path, caption_image=lambda _blob: "ユーザー一覧の画面です。", ocr_bytes=lambda _b: "追加 削除"
+    )[0].text
+
+    assert text.index("手順は以下の画面で行う。") < text.index("ユーザー一覧の画面です。")
+    assert text.index("追加 削除") < text.index("権限は管理者のみ。")
+    assert "![管理画面]" not in text
+
+
+def test_an_image_inside_a_code_fence_is_left_alone(tmp_path):
+    """フェンス内はコード例であり、そこに書かれたリンクは資料そのものではない。"""
+    _write_png(tmp_path / "admin.png")
+    path = tmp_path / "書き方.md"
+    path.write_text(
+        "# 書き方\n\n## 記法\n" "```\n![管理画面](admin.png)\n```\n",
+        encoding="utf-8",
+    )
+
+    text = parse_md(path, caption_image=lambda _blob: "画面です。", ocr_bytes=lambda _b: "")[0].text
+
+    assert "![管理画面](admin.png)" in text
+    assert CAPTION_PREFIX not in text
+
+
+def test_a_remote_image_is_not_fetched(tmp_path):
+    """外部へ出る通信を増やさない（AGENTS.md の方針）。"""
+    path = tmp_path / "外部.md"
+    path.write_text("# 外部\n\n## 図\n![図](https://example.com/a.png)\n", encoding="utf-8")
+    calls = []
+
+    parse_md(path, caption_image=lambda blob: calls.append(blob) or "図です。", ocr_bytes=lambda _b: "")
+
+    assert calls == []
+
+
+def test_a_missing_image_is_reported_and_the_body_survives(tmp_path):
+    """画面からmdだけをアップロードした場合は必ずこの経路に入る。"""
+    path = tmp_path / "手順書.md"
+    path.write_text("# 手順\n\n## 節\n本文は残る。\n![無い](images/none.png)\n", encoding="utf-8")
+    missing = []
+
+    units = parse_md(
+        path,
+        caption_image=lambda _blob: "図です。",
+        on_missing_image=missing.append,
+        ocr_bytes=lambda _b: "",
+    )
+
+    assert "本文は残る。" in units[0].text
+    assert "![無い]" not in units[0].text
+    assert missing == ["images/none.png"]
+
+
+def test_an_image_reference_escaping_the_directory_is_refused(tmp_path):
+    """資料が指定した文字列をそのままファイルシステムへ渡す唯一の箇所である。"""
+    secret = tmp_path / "secret.png"
+    _write_png(secret)
+    folder = tmp_path / "docs"
+    folder.mkdir()
+    path = folder / "手順書.md"
+    path.write_text("# 手順\n\n## 節\n![外](../secret.png)\n", encoding="utf-8")
+    calls = []
+    missing = []
+
+    parse_md(
+        path,
+        caption_image=lambda blob: calls.append(blob) or "図です。",
+        on_missing_image=missing.append,
+        ocr_bytes=lambda _b: "",
+    )
+
+    assert calls == []
+    assert missing == ["../secret.png"]
+
+
+def test_an_unreadable_image_loses_its_link_notation(tmp_path):
+    """![](…) が残っても検索の役に立たず、回答へ引き写されると嘘になる。"""
+    _write_png(tmp_path / "logo.png")
+    path = tmp_path / "手順書.md"
+    path.write_text("# 手順\n\n## 節\n本文。\n![ロゴ](logo.png)\n", encoding="utf-8")
+
+    text = parse_md(path, caption_image=lambda _blob: "装飾画像", ocr_bytes=lambda _b: "")[0].text
+
+    assert "![ロゴ]" not in text
+    assert "本文。" in text
+
+
+def test_md_without_images_is_unchanged(tmp_path):
+    """既存の30件の取り込み結果が変わらないこと。"""
+    path = tmp_path / "製品.md"
+    path.write_text("# UD-0900i\n\n## 設置情報\n幅は600mmです。\n", encoding="utf-8")
+
+    text = parse_md(path, caption_image=lambda _blob: "図です。")[0].text
+
+    assert text == "UD-0900i\n設置情報\n幅は600mmです。"

@@ -9,11 +9,72 @@
 '## 設置情報' だけを検索で引いたときに、どの製品の設置情報なのか分からなく
 なるのを防ぐためで、これがこの形式を扱ううえでの要になる。
 """
+import re
+import sys
+import urllib.parse
 from pathlib import Path
 
+from ingest.image_text import describe_image, has_caption, has_ocr
 from ingest.models import SECTION, ParsedUnit
 
 _FENCE = "```"
+
+# ![alt](path) と ![alt](path "title")。altは空でもよい。パスに空白は許さない
+# （Markdownでは <> で囲む記法になるが、この資料群には現れない）。
+_IMAGE = re.compile(r'!\[[^\]]*\]\(\s*([^)\s]+)(?:\s+"[^"]*")?\s*\)')
+
+# 取りに行かない参照。http(s) は外部へ出る通信になり（AGENTS.md の方針）、
+# data: はこの資料群に現れない。
+_REMOTE_PREFIXES = ("http://", "https://", "data:")
+
+
+def _resolve(reference: str, base: Path) -> Path | None:
+    """参照先をmdのあるディレクトリからの相対で解決する。
+
+    資料が指定した文字列をそのままファイルシステムへ渡す唯一の箇所である。
+    .. を辿って外へ出る参照は拒む。取り込みは利用者がアップロードした資料にも
+    走るため、資料の中身が読める範囲を資料自身に決めさせてはいけない。
+    """
+    candidate = (base / urllib.parse.unquote(reference)).resolve()
+    try:
+        candidate.relative_to(base.resolve())
+    except ValueError:
+        return None
+    return candidate if candidate.is_file() else None
+
+
+def _replace_images(line: str, base: Path, path_name: str, caption_image, ocr_bytes, on_missing_image) -> str:
+    """1行の中の画像参照を説明文へ置き換える。
+
+    行ごと消して末尾へ集めるのではなくその場で置き換えるのは、画像が前後の文と
+    一緒に1つのセクション（=1チャンク）に入るようにするためである。
+
+    読めなかった画像はリンク記法ごと消す。![](…) を残しても検索の役に立たず、
+    回答へ引き写されると存在しない画像を指すことになる。
+    """
+
+    def _one(match):
+        reference = match.group(1)
+        if reference.startswith(_REMOTE_PREFIXES):
+            # 記法をそのまま残す。取りに行かないと決めた以上、説明文は作れない。
+            return match.group(0)
+        resolved = _resolve(reference, base)
+        if resolved is None:
+            print(
+                f"警告: 画像が見つかりません（{path_name}）: {reference}",
+                file=sys.stderr,
+            )
+            if on_missing_image is not None:
+                on_missing_image(reference)
+            return ""
+        return describe_image(
+            resolved.read_bytes(),
+            caption_image,
+            ocr_bytes=ocr_bytes,
+            label=f"{path_name} {reference}",
+        ) or ""
+
+    return _IMAGE.sub(_one, line)
 
 
 def _read_lines(path: Path) -> list[str]:
@@ -123,13 +184,16 @@ def _split_frontmatter(lines: list[str]) -> tuple[dict, str, list[str]]:
     return {}, "", lines  # 閉じられていないなら本文とみなす
 
 
-def parse_md(path: Path, caption_image=None, on_missing_image=None) -> list[ParsedUnit]:
+def parse_md(path: Path, caption_image=None, on_missing_image=None, ocr_bytes=None) -> list[ParsedUnit]:
     attributes, array_values, body_lines = _split_frontmatter(_read_lines(path))
     title = ""
     sections: list[tuple[str, list[str]]] = []
     heading: str = ""
     body: list[str] = []
     in_fence = False
+    # 画像を読む手立てが1つも無いなら走査もしない。従来の取り込み結果と
+    # 1バイトも変わらないことを保証するため。
+    read_images = caption_image is not None or ocr_bytes is not None
 
     for line in body_lines:
         if line.startswith(_FENCE):
@@ -142,6 +206,13 @@ def parse_md(path: Path, caption_image=None, on_missing_image=None) -> list[Pars
             if not title and line.startswith("# "):
                 title = line[2:].strip()
                 continue
+            if read_images and "![" in line:
+                line = _replace_images(
+                    line, path.parent, path.name, caption_image, ocr_bytes, on_missing_image
+                )
+                if not line.strip():
+                    # 画像だけの行が読めなかった場合、空行だけが残る。
+                    continue
         body.append(line)
     sections.append((heading, body))
 
@@ -150,19 +221,20 @@ def parse_md(path: Path, caption_image=None, on_missing_image=None) -> list[Pars
         text = "\n".join(section_body).strip()
         if not text:
             continue
+        unit_text = "\n".join(
+            part for part in (title, array_values, section_heading, text) if part
+        )
         units.append(
             ParsedUnit(
-                text="\n".join(
-                    part
-                    for part in (title, array_values, section_heading, text)
-                    if part
-                ),
+                text=unit_text,
                 location_type=SECTION,
                 # 見出し文字列ではなく通し番号を位置にする。同じ見出しが2つある文書で
                 # チャンクIDが衝突するのを防ぐため、IDの一意性を文書構造に依存させない。
                 location=len(units) + 1,
                 heading=section_heading,
                 attributes=attributes,
+                ocr=has_ocr(unit_text),
+                vlm=has_caption(unit_text),
             )
         )
     return units
