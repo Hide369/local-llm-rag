@@ -3,8 +3,6 @@
 画像1枚には見出しもページも無く、書き手が引いた境界が存在しない。txt を
 文書全体で1ユニットにしているのと同じ理由で、1ファイル=1ユニットにする。
 """
-import io
-
 import pytest
 from PIL import Image
 

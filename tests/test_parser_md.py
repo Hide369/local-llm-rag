@@ -237,3 +237,14 @@ def test_unclosed_frontmatter_yields_no_attributes(tmp_path):
     """閉じられていないなら本文とみなす既存の判断を、属性側でも守る。"""
     path = _write(tmp_path, "---\nmodel_id: X\n\n# タイトル\n\n本文がここにあります。\n")
     assert parse_md(path)[0].attributes == {}
+
+
+def test_caption_image_is_not_yet_wired_up(sample):
+    """現時点ではcaption_imageを引数として受け取るだけで、本文には反映しない。
+
+    実装はTask 7で入る予定。そのときはこのテストを「反映される」側のアサーション
+    へ書き換えること（今のふるまいを固定するためのテストであり、恒久仕様ではない）。
+    """
+    text = "\n".join(u.text for u in parse_md(sample, caption_image=lambda _bytes: "説明"))
+
+    assert "説明" not in text

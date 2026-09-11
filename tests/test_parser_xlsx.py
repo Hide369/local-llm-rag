@@ -103,3 +103,14 @@ def test_xlsx_is_routed_by_the_registry(book_path):
     """拡張子の登録を忘れると、source/ に置いても黙って無視される。"""
     assert ".xlsx" in SUPPORTED_SUFFIXES
     assert parse(book_path)[0].heading == "商品一覧"
+
+
+def test_caption_image_is_not_yet_wired_up(book_path):
+    """現時点ではcaption_imageを引数として受け取るだけで、本文には反映しない。
+
+    実装はTask 6で入る予定。そのときはこのテストを「反映される」側のアサーション
+    へ書き換えること（今のふるまいを固定するためのテストであり、恒久仕様ではない）。
+    """
+    text = "\n".join(unit.text for unit in parse_xlsx(book_path, caption_image=lambda _bytes: "説明"))
+
+    assert "説明" not in text

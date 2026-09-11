@@ -249,9 +249,11 @@ def test_dispatch_passes_caption_image_to_pptx_only(docx_path, pptx_with_large_p
     parse(pptx_with_large_picture, caption_image=lambda b: seen.append(b) or "説明")
     assert seen, "pptxにはcaption_imageが渡っているはず"
 
-    # docxもcaption_imageを引数には受けるが、本文で使わないシグネチャなので、
-    # 渡しても中身の説明文には反映されない
-    parse(docx_path, caption_image=lambda b: "説明")
+    # docxは現時点ではcaption_imageを引数として受け取るだけで、本文には反映しない
+    # (Task 5で実装予定。実装されたらこのアサーションは反転させ、テスト名も
+    # 変えること。「反映されない」という今のふるまいを固定するためのテストである)。
+    text = parse(docx_path, caption_image=lambda b: "説明")[0].text
+    assert "説明" not in text
 
 
 def test_dispatch_rejects_unsupported_suffix(tmp_path):
