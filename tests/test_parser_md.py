@@ -1,3 +1,5 @@
+import io
+
 import pytest
 from PIL import Image
 
@@ -325,6 +327,32 @@ def test_a_remote_image_is_not_fetched(tmp_path):
     assert calls == []
 
 
+def test_a_protocol_relative_reference_is_refused_before_touching_the_filesystem(tmp_path):
+    """`//host/share/a.png` はUNCパスであり、`base / reference` は base 側を
+    捨ててそのままアンカーを採用する。relative_to() での判定より前に
+    is_absolute() で弾かないと、.resolve()/.is_file() がSMB接続を試みる
+    （このマシンで実際に確認済み）。ネットワーク越しの接続はテストから
+    観測できないため、早期リターンの結果（ファイルシステムに触れない・
+    missingへ回る）を確認することで代わりに固定する。
+    """
+    path = tmp_path / "手順書.md"
+    path.write_text(
+        "# 手順\n\n## 節\n![外](//evil.example.com/share/a.png)\n", encoding="utf-8"
+    )
+    calls = []
+    missing = []
+
+    parse_md(
+        path,
+        caption_image=lambda blob: calls.append(blob) or "図です。",
+        on_missing_image=missing.append,
+        ocr_bytes=lambda _b: "",
+    )
+
+    assert calls == []
+    assert missing == ["//evil.example.com/share/a.png"]
+
+
 def test_a_missing_image_is_reported_and_the_body_survives(tmp_path):
     """画面からmdだけをアップロードした場合は必ずこの経路に入る。"""
     path = tmp_path / "手順書.md"
@@ -366,15 +394,27 @@ def test_an_image_reference_escaping_the_directory_is_refused(tmp_path):
 
 
 def test_an_unreadable_image_loses_its_link_notation(tmp_path):
-    """![](…) が残っても検索の役に立たず、回答へ引き写されると嘘になる。"""
-    _write_png(tmp_path / "logo.png")
+    """壊れた画像データは説明もOCRも得られず、それでもリンク記法だけが消える。
+
+    ファイル自体は存在する（=見つからない参照ではない）が、中身がPNGとして
+    デコードできない。実際のVLM/OCRは画像を開こうとして例外を出すため、
+    ここでもバイト列を実際に開こうとする関数で同じ失敗を再現する。
+    describe_image（Task 2）がその例外を握りつぶして None を返す経路を通る。
+    """
+    (tmp_path / "logo.png").write_bytes(b"not a real png")
     path = tmp_path / "手順書.md"
     path.write_text("# 手順\n\n## 節\n本文。\n![ロゴ](logo.png)\n", encoding="utf-8")
 
-    text = parse_md(path, caption_image=lambda _blob: "装飾画像", ocr_bytes=lambda _b: "")[0].text
+    def _open_and_describe(image_bytes):
+        Image.open(io.BytesIO(image_bytes)).load()
+        return "装飾画像"
+
+    text = parse_md(path, caption_image=_open_and_describe, ocr_bytes=_open_and_describe)[0].text
 
     assert "![ロゴ]" not in text
     assert "本文。" in text
+    assert CAPTION_PREFIX not in text
+    assert OCR_PREFIX not in text
 
 
 def test_md_without_images_is_unchanged(tmp_path):

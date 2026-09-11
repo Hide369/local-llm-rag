@@ -34,8 +34,19 @@ def _resolve(reference: str, base: Path) -> Path | None:
     資料が指定した文字列をそのままファイルシステムへ渡す唯一の箇所である。
     .. を辿って外へ出る参照は拒む。取り込みは利用者がアップロードした資料にも
     走るため、資料の中身が読める範囲を資料自身に決めさせてはいけない。
+
+    絶対パスは relative_to() より前に弾く。`//host/share/a.png` のような
+    UNC形式はプロトコル相対URLとしてごく普通に書かれ、_REMOTE_PREFIXES の
+    どれにも一致しない。それでいて `base / reference` は base 側を捨てて
+    そのアンカーをそのまま採用するため、後段の .resolve()/.is_file() が
+    Windows に対して先にSMB接続を試みてしまう（relative_to() は接続の後で
+    しか拒めない）。ドライブレター指定（C:/secret/x.png）も同じ理由で
+    ファイルシステムに触れる前に断つ。
     """
-    candidate = (base / urllib.parse.unquote(reference)).resolve()
+    unquoted = urllib.parse.unquote(reference)
+    if Path(unquoted).is_absolute():
+        return None
+    candidate = (base / unquoted).resolve()
     try:
         candidate.relative_to(base.resolve())
     except ValueError:
