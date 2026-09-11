@@ -141,7 +141,7 @@ RapidOCR には現状も PNG のバイト列を渡している（`page.get_pixma
 画像1枚には見出しもページも無く、書き手が引いた境界が存在しない（`txt_parser` と同じ判断）。
 
 ```python
-def parse_image(path, caption_image=None) -> list[ParsedUnit]
+def parse_image(path, caption_image=None, on_missing_image=None) -> list[ParsedUnit]
 ```
 
 - 本文は `describe_image(path.read_bytes(), caption_image, label=path.name)` の結果そのもの。
@@ -244,6 +244,28 @@ Excel のシートと同じ扱いにする。
 `IngestReport` に `missing_images: dict[str, list[str]]`（資料キー → 見つからなかった
 参照先）を足し、`prompting.format_report()` と CLI の結果表示に1行足す。件数だけでは
 どの画像が抜けたのか追えず、`dropped` を件数ではなく現物で持っているのと同じ理由である。
+
+```
+画像が見つかりません 手順書.md: images/admin.png、images/list.png
+```
+
+パーサーから報告までの経路は**コールバックで渡す**。`parse()` が
+`on_missing_image=None` を受け、`_ingest_one` が資料キーごとの収集関数を渡す。
+
+```python
+def parse(path, caption_image=None, on_missing_image=None) -> list[ParsedUnit]
+```
+
+戻り値へ相乗りさせない理由は、見つからない画像が**ユニットを1つも生まない
+セクションにも現れうる**ためである。`list[ParsedUnit]` に載せる場所がない。
+モジュール変数へ溜めるのも採らない。取り込みは1ファイルずつ進むが、状態が
+呼び出しの外に残ると、テストの実行順で結果が変わる。`ingest_directory` が
+`notify` を引数で受け取っているのと同じ形にする。
+
+`caption_image` と同じく、**全パーサーがこの引数を受ける署名に揃える**。
+使うのは `md_parser` だけで、他は受け取って捨てる。使う側だけに足すと、
+ディスパッチャが拡張子ごとに引数を出し分けることになり、11節で消したばかりの
+`if` が別の形で戻ってくる。
 
 パスの解決では `..` を辿って資料の置かれたディレクトリの外へ出る参照を拒む。資料が
 指定した文字列をそのままファイルシステムへ渡す唯一の箇所であり、外部入力の検証が要る。
@@ -373,16 +395,27 @@ _PARSERS = {
     ".drawio": parse_drawio,
 }
 
-def parse(path, caption_image=None):
+def parse(path, caption_image=None, on_missing_image=None):
     parser = _PARSERS.get(path.suffix.lower())
     if parser is None:
         raise UnsupportedFormatError(f"未対応の形式です: {path.name}")
-    return parser(path, caption_image=caption_image)
+    return parser(
+        path, caption_image=caption_image, on_missing_image=on_missing_image
+    )
 ```
 
 現行の `if path.suffix.lower() in (".pdf", ".pptx")` という分岐を消す。全パーサーが
-`caption_image=None` を受ける署名に揃える。受け取って使わないのは `txt` だけになる。
-拡張子ごとの例外をディスパッチャに残すと、形式を足すたびにこの `if` が伸びる。
+`(path, caption_image=None, on_missing_image=None)` の署名に揃う。拡張子ごとの
+例外をディスパッチャに残すと、形式を足すたびにこの `if` が伸びる。
+
+| パーサー | `caption_image` | `on_missing_image` |
+|---|---|---|
+| pdf / pptx / docx / xlsx / image | 使う | 捨てる |
+| md | 使う | 使う |
+| txt / drawio | 捨てる | 捨てる |
+
+受け取って捨てる引数があるのは承知のうえである。使う側だけに足すと、
+ディスパッチャが拡張子を見て引数を出し分けることになり、消したはずの分岐が戻る。
 
 `SUPPORTED_SUFFIXES` が増えることで、`scripts/ingest_source._target_files()` の走査対象と
 `rag_chat_app` の `st.file_uploader(type=…)` は自動的に追従する。どちらも
