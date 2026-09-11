@@ -49,7 +49,7 @@ def _describe_images(doc, page, page_number: int, source_name: str, caption_imag
     return captions
 
 
-def parse_pdf(path: Path, ocr_page=None, caption_image=None) -> list[ParsedUnit]:
+def parse_pdf(path: Path, caption_image=None, on_missing_image=None, ocr_page=None) -> list[ParsedUnit]:
     """PDFを1ページ1ユニットで読む。
 
     ocr_page/caption_image はテストで差し替えられるよう引数にしている。

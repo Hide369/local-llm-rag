@@ -36,7 +36,7 @@ def _read(path: Path) -> str:
     ) from last_error
 
 
-def parse_txt(path: Path) -> list[ParsedUnit]:
+def parse_txt(path: Path, caption_image=None, on_missing_image=None) -> list[ParsedUnit]:
     text = _read(path).replace("\r\n", "\n").replace("\r", "\n").strip()
     if not text:
         return []

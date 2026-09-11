@@ -31,7 +31,7 @@ def _row_text(row) -> str:
     return _CELL_SEPARATOR.join(cells)
 
 
-def parse_xlsx(path: Path) -> list[ParsedUnit]:
+def parse_xlsx(path: Path, caption_image=None, on_missing_image=None) -> list[ParsedUnit]:
     # data_only=True は数式ではなく計算結果を取る。'=SUM(A1:A2)' を索引しても
     # 利用者が読む値はどこにも残らず、検索でも回答でも使えない。
     # Excelが計算結果を保存していないブックでは値が None になるが、その場合に

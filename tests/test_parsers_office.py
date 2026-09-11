@@ -249,7 +249,8 @@ def test_dispatch_passes_caption_image_to_pptx_only(docx_path, pptx_with_large_p
     parse(pptx_with_large_picture, caption_image=lambda b: seen.append(b) or "説明")
     assert seen, "pptxにはcaption_imageが渡っているはず"
 
-    # docxはcaption_imageを受け取らないシグネチャなので、渡してもエラーにならず無視される
+    # docxもcaption_imageを引数には受けるが、本文で使わないシグネチャなので、
+    # 渡しても中身の説明文には反映されない
     parse(docx_path, caption_image=lambda b: "説明")
 
 
@@ -325,3 +326,18 @@ def test_picture_above_title_does_not_become_the_title(tmp_path):
     units = parse_pptx(path, caption_image=lambda _bytes: "上部の図の説明です。")
     assert all(u.text.startswith("本当のタイトル") for u in units)
     assert any("[図の説明] 上部の図の説明です。" in u.text for u in units)
+
+
+def test_every_parser_accepts_the_same_keyword_arguments(tmp_path, docx_path):
+    """ディスパッチャが拡張子ごとに引数を出し分けないための約束である。
+
+    署名がずれると parse() に if が戻り、形式を足すたびにそこが伸びる。
+    """
+    import inspect
+
+    from ingest.parsers import _PARSERS
+
+    for suffix, parser in _PARSERS.items():
+        parameters = inspect.signature(parser).parameters
+        assert "caption_image" in parameters, suffix
+        assert "on_missing_image" in parameters, suffix

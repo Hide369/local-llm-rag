@@ -157,7 +157,7 @@ def _group(blocks: list[str]) -> list[str]:
     return groups
 
 
-def parse_pptx(path: Path, caption_image=None) -> list[ParsedUnit]:
+def parse_pptx(path: Path, caption_image=None, on_missing_image=None) -> list[ParsedUnit]:
     units: list[ParsedUnit] = []
     for number, slide in enumerate(Presentation(path).slides, start=1):
         blocks = _blocks(slide, number, path_name=path.name, caption_image=caption_image)

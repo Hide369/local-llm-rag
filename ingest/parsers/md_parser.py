@@ -123,7 +123,7 @@ def _split_frontmatter(lines: list[str]) -> tuple[dict, str, list[str]]:
     return {}, "", lines  # 閉じられていないなら本文とみなす
 
 
-def parse_md(path: Path) -> list[ParsedUnit]:
+def parse_md(path: Path, caption_image=None, on_missing_image=None) -> list[ParsedUnit]:
     attributes, array_values, body_lines = _split_frontmatter(_read_lines(path))
     title = ""
     sections: list[tuple[str, list[str]]] = []

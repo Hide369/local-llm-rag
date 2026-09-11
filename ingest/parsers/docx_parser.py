@@ -10,7 +10,7 @@ from docx import Document
 from ingest.models import DOCUMENT, ParsedUnit
 
 
-def parse_docx(path: Path) -> list[ParsedUnit]:
+def parse_docx(path: Path, caption_image=None, on_missing_image=None) -> list[ParsedUnit]:
     text = "\n".join(p.text for p in Document(path).paragraphs if p.text.strip())
     if not text.strip():
         return []
