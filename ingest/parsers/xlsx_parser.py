@@ -12,6 +12,7 @@ from pathlib import Path
 
 from openpyxl import load_workbook
 
+from ingest.image_text import describe_image, has_caption, has_ocr
 from ingest.models import SHEET, ParsedUnit
 
 _CELL_SEPARATOR = " | "
@@ -31,31 +32,113 @@ def _row_text(row) -> str:
     return _CELL_SEPARATOR.join(cells)
 
 
-def parse_xlsx(path: Path, caption_image=None, on_missing_image=None) -> list[ParsedUnit]:
+def _image_bytes(image) -> bytes | None:
+    """openpyxl の画像オブジェクトからバイト列を取り出す。
+
+    実測（openpyxl 3.1.5）では、ファイルから読んだブックの image.ref は
+    BytesIO になる。一方、その場で組み立てたブックではパスや PIL の Image に
+    なりうるため、両方を受ける。
+
+    _images は openpyxl の私的APIである。公開APIに画像を取り出す口が無い。
+    退避先（zipfileで xl/media と xl/drawings のrelsを辿る）は設計書9.2に
+    記録してある。
+    """
+    ref = getattr(image, "ref", None)
+    if ref is None:
+        return None
+    if hasattr(ref, "getvalue"):
+        return ref.getvalue()
+    if hasattr(ref, "save"):
+        import io
+
+        buffer = io.BytesIO()
+        ref.save(buffer, format=getattr(ref, "format", None) or "PNG")
+        return buffer.getvalue()
+    try:
+        return Path(str(ref)).read_bytes()
+    except OSError:
+        return None
+
+
+def _anchor_key(image):
+    """セルの読み順（行→列）に揃えるための整列キー。"""
+    anchor = getattr(image, "anchor", None)
+    start = getattr(anchor, "_from", None)
+    if start is None:
+        return (0, 0)
+    return (getattr(start, "row", 0), getattr(start, "col", 0))
+
+
+def _sheet_images(path: Path, caption_image, ocr_bytes) -> dict[str, list[str]]:
+    """シート名 → 画像の説明ブロック。
+
+    本文の抽出は read_only=True のままにする（行を逐次読むためメモリを食わない）。
+    しかし read_only=True では Worksheet._images が空のままで、画像は一切
+    見えない。これが「Excelに貼ったスクリーンショットが読めない」原因だった。
+    画像を読むときだけ2回目のロードを行い、読まないときは1回で済ませる。
+    """
+    book = load_workbook(path)
+    try:
+        described: dict[str, list[str]] = {}
+        for sheet in book.worksheets:
+            blocks = []
+            for image in sorted(sheet._images, key=_anchor_key):
+                blob = _image_bytes(image)
+                if blob is None:
+                    continue
+                text = describe_image(
+                    blob,
+                    caption_image,
+                    ocr_bytes=ocr_bytes,
+                    label=f"{path.name} シート「{sheet.title}」",
+                )
+                if text:
+                    blocks.append(text)
+            if blocks:
+                described[sheet.title] = blocks
+        return described
+    finally:
+        book.close()
+
+
+def parse_xlsx(path: Path, caption_image=None, on_missing_image=None, ocr_bytes=None) -> list[ParsedUnit]:
     # data_only=True は数式ではなく計算結果を取る。'=SUM(A1:A2)' を索引しても
     # 利用者が読む値はどこにも残らず、検索でも回答でも使えない。
     # Excelが計算結果を保存していないブックでは値が None になるが、その場合に
     # 数式を代わりに入れることはしない。数式は本文ではないためである。
+    images = (
+        _sheet_images(path, caption_image, ocr_bytes)
+        if caption_image is not None or ocr_bytes is not None
+        else {}
+    )
     book = load_workbook(path, data_only=True, read_only=True)
     try:
         units: list[ParsedUnit] = []
         for sheet in book.worksheets:
             lines = [text for text in (_row_text(row) for row in sheet.iter_rows(values_only=True)) if text]
-            if not lines:
+            blocks = images.get(sheet.title, [])
+            if not lines and not blocks:
                 # 空シートはブックに残りがちである。ユニットを作ると空の
                 # チャンクがDBに入り、どの質問にも弱く一致する。
+                # 画像だけのシートは例外である。中身が無いのではなく、
+                # 中身が画像の側にある。
                 continue
+            # 画像は行の後ろに置く。途中へ差し込むと _row_text が作る
+            # 「セル | セル」の1行構造が壊れる。
+            text = "\n".join([sheet.title, *lines, *blocks])
             units.append(
                 ParsedUnit(
                     # シート名を本文の先頭に置く。シート単体で検索に引かれたとき
                     # 何の表なのか分からなくなるのを防ぐためで、md_parser が
                     # 各セクションにH1を付けているのと同じ判断である。
-                    text="\n".join([sheet.title, *lines]),
+                    text=text,
                     location_type=SHEET,
                     # 通し番号にするのはシート名の重複でチャンクIDが衝突しない
                     # ようにするため。表示にはheadingを使う。
                     location=len(units) + 1,
                     heading=sheet.title,
+                    ocr=has_ocr(text),
+                    vlm=has_caption(text),
                 )
             )
         return units
