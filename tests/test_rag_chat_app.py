@@ -686,6 +686,76 @@ def test_an_uploaded_document_really_reaches_the_store(app):
     assert app.button(key="delete_uploads/持ち込み.md") is not None
 
 
+def test_the_close_button_comes_before_the_uploaded_list(app):
+    """一覧の下にあると、資料が増えたときダイアログの外へ流れて押せなくなる。"""
+    collection = open_real_store(":memory:")
+    for index in range(8):
+        collection.add(
+            ids=[f"chunk-{index}"],
+            documents=[f"本文{index}"],
+            embeddings=[[0.1, 0.2]],
+            metadatas=[{"source": f"uploads/資料{index}.md"}],
+        )
+
+    with patch("ingest.store.open_store", lambda *a, **k: collection):
+        app.run()
+        _open_upload_dialog(app)
+
+    keys = [button.key for button in app.button if button.key]
+    assert "close_upload_dialog" in keys
+    assert keys.index("close_upload_dialog") < keys.index("delete_uploads/資料0.md")
+
+
+def _pixel_heights(node, found):
+    """要素ツリーを辿って、高さを固定したコンテナの高さを集める。
+
+    app.get("vertical_block") では取れない（実測で0件）。高さ付きコンテナは
+    Block として現れ、proto.height_config.pixel_height に値が入る。
+    ダイアログの中身もこの走査で届くことを実測で確認している
+    （FileUploader・Column・Divider が見つかる）。
+    葉の要素は children を持たないため、getattr で受けること。
+    """
+    children = getattr(node, "children", None)
+    if children is None:
+        return found
+    items = children.values() if isinstance(children, dict) else children
+    for child in items:
+        config = getattr(getattr(child, "proto", None), "height_config", None)
+        if config is not None and getattr(config, "pixel_height", 0):
+            found.append(config.pixel_height)
+        _pixel_heights(child, found)
+    return found
+
+
+def test_the_uploaded_list_is_inside_a_fixed_height_container(app):
+    """高さを固定するとStreamlitが縦スクロールを出す。固定しないと
+    件数の分だけダイアログが縦に伸び、下の要素が画面外へ出る。
+    """
+    collection = open_real_store(":memory:")
+    collection.add(
+        ids=["chunk-1"],
+        documents=["本文"],
+        embeddings=[[0.1, 0.2]],
+        metadatas=[{"source": "uploads/資料.md"}],
+    )
+
+    with patch("ingest.store.open_store", lambda *a, **k: collection):
+        app.run()
+        _open_upload_dialog(app)
+
+    assert not app.exception
+    assert 240 in _pixel_heights(app._tree, [])
+
+
+def test_no_container_is_drawn_when_nothing_was_uploaded(app):
+    """空の箱だけが残るのを避ける。"""
+    with patch("ingest.store.open_store", _stub_open_store({"source": "議事録.docx"})):
+        app.run()
+        _open_upload_dialog(app)
+
+    assert 240 not in _pixel_heights(app._tree, [])
+
+
 # --- 記法そのものの表示 ---------------------------------------------------
 #
 # Streamlit 1.61 は mermaid を同梱しており、```mermaid フェンスは図として

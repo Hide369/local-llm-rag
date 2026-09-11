@@ -195,21 +195,27 @@ def upload_dialog(collection):
                         )
                 st.success(format_report(report))
 
+    # 「閉じる」を一覧より先に置く。一覧の下にあると、資料が増えたときに
+    # ダイアログの外へ流れて押せなくなる。
+    if st.button("閉じる", key="close_upload_dialog"):
+        st.session_state.upload_dialog_open = False
+        st.rerun()
+
     sources = uploaded_sources(collection)
     if sources:
         st.divider()
         st.caption("アップロード済みの資料")
-        for source in sources:
-            name, remove = st.columns([4, 1])
-            name.write(source[len(UPLOAD_PREFIX):])
-            if remove.button("削除", key=f"delete_{source}"):
-                # 空のチャンク列を渡すとその資料はDBから消える（ingest/store.py）。
-                store.replace_source(collection, source, [], [])
-                st.rerun()
-
-    if st.button("閉じる", key="close_upload_dialog"):
-        st.session_state.upload_dialog_open = False
-        st.rerun()
+        # 高さを固定するとStreamlitが縦スクロールを出す。固定しないと件数の
+        # 分だけダイアログが縦に伸び、下の要素が画面外へ出る。
+        # 一覧が空のときはコンテナごと出さない。空の箱だけが残るのを避ける。
+        with st.container(height=240, border=True):
+            for source in sources:
+                name, remove = st.columns([4, 1])
+                name.write(source[len(UPLOAD_PREFIX):])
+                if remove.button("削除", key=f"delete_{source}"):
+                    # 空のチャンク列を渡すとその資料はDBから消える（ingest/store.py）。
+                    store.replace_source(collection, source, [], [])
+                    st.rerun()
 
 
 def render_diagrams(text):
