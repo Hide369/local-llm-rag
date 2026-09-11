@@ -3,11 +3,13 @@ import io
 import pytest
 from docx import Document
 from docx.shared import Inches as DocxInches
+from docx.shared import Inches
 from PIL import Image
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.util import Inches
 
+from ingest.image_text import CAPTION_PREFIX, OCR_PREFIX
 from ingest.parsers import UnsupportedFormatError, parse
 from ingest.parsers.docx_parser import parse_docx
 from ingest.parsers.pptx_parser import parse_pptx
@@ -41,6 +43,116 @@ def docx_with_image_path(tmp_path):
     path = tmp_path / "報告書.docx"
     doc.save(path)
     return path
+
+
+@pytest.fixture
+def docx_with_images_path(tmp_path):
+    """段落中の画像と、表のセルに入れた画像を持つdocx。
+
+    表のセルの画像を入れるのは、実測で document.paragraphs に現れないことが
+    分かっているためである（関係IDは存在するのに、どの段落のXPathにも出てこない）。
+    """
+    shot = tmp_path / "shot.png"
+    Image.new("RGB", (300, 180), "red").save(shot)
+    logo = tmp_path / "logo.png"
+    Image.new("RGB", (40, 40), "black").save(logo)
+
+    doc = Document()
+    doc.add_paragraph("障害報告")
+    doc.add_picture(str(shot), width=Inches(3))
+    doc.add_paragraph("上記のダイアログが表示された。")
+    table = doc.add_table(rows=1, cols=1)
+    table.rows[0].cells[0].paragraphs[0].add_run().add_picture(str(logo), width=Inches(0.4))
+
+    path = tmp_path / "報告.docx"
+    doc.save(path)
+    return path
+
+
+def test_docx_inserts_an_image_at_its_paragraph_position(docx_with_images_path):
+    """1ユニットにまとめる形式なので、本文のどこへ入るかがそのまま読みやすさになる。"""
+    text = parse_docx(
+        docx_with_images_path,
+        caption_image=lambda blob: "エラーダイアログです。" if len(blob) > 200 else "装飾画像",
+        ocr_bytes=lambda _blob: "",
+    )[0].text
+
+    assert text.index("障害報告") < text.index("エラーダイアログです。")
+    assert text.index("エラーダイアログです。") < text.index("上記のダイアログが表示された。")
+
+
+def test_docx_appends_images_that_no_paragraph_references(docx_with_images_path):
+    """表のセル・ヘッダー・浮動配置の画像は document.paragraphs に現れない。
+
+    段落を辿るだけでは黙って落ちる。位置は失うが、失うのは本文のどこにも
+    紐づかない画像だけである。
+    """
+    text = parse_docx(
+        docx_with_images_path,
+        caption_image=lambda blob: "スクリーンショット" if len(blob) > 200 else "組織図です。",
+        ocr_bytes=lambda _blob: "",
+    )[0].text
+
+    assert "組織図です。" in text
+    assert text.index("上記のダイアログが表示された。") < text.index("組織図です。")
+
+
+def test_docx_without_images_is_unchanged(docx_path):
+    """画像を持たない議事録の取り込み結果が変わらないこと。"""
+    text = parse_docx(docx_path, caption_image=lambda _blob: "図です。")[0].text
+
+    assert CAPTION_PREFIX not in text
+    assert text == "会議名：キックオフ\n決定事項：RAGを導入する"
+
+
+def test_docx_with_only_an_image_still_produces_a_unit(tmp_path):
+    """現行の空判定は「中身が無い」ことを根拠にしている。画像があるなら中身はある。"""
+    shot = tmp_path / "only.png"
+    Image.new("RGB", (300, 180), "blue").save(shot)
+    doc = Document()
+    doc.add_picture(str(shot), width=Inches(3))
+    path = tmp_path / "画像だけ.docx"
+    doc.save(path)
+
+    units = parse_docx(path, caption_image=lambda _blob: "青い画像です。", ocr_bytes=lambda _b: "")
+
+    assert len(units) == 1
+    assert "青い画像です。" in units[0].text
+
+
+def test_docx_flags_record_the_engines(docx_with_images_path):
+    unit = parse_docx(
+        docx_with_images_path,
+        caption_image=lambda _blob: "図です。",
+        ocr_bytes=lambda _blob: "読めた文字",
+    )[0]
+
+    assert unit.vlm is True
+    assert unit.ocr is True
+
+
+def test_docx_adds_nothing_when_neither_engine_finds_anything(docx_with_images_path):
+    """読めなかった画像でブロックを作らない。空の接頭辞行だけが残るのを避ける。"""
+    text = parse_docx(docx_with_images_path, ocr_bytes=lambda _blob: "")[0].text
+
+    assert CAPTION_PREFIX not in text
+    assert OCR_PREFIX not in text
+
+
+def test_docx_does_not_touch_images_when_no_engine_is_given(docx_with_images_path, monkeypatch):
+    """VLMもOCRも渡されなければ、画像の走査そのものを行わない。
+
+    渡されていないのに走査すると、describe_image が ingest.ocr を遅延import
+    して実機のOCRエンジン（実測4.8秒）を起こす。
+    """
+    import ingest.parsers.docx_parser as module
+
+    def _fail(*args, **kwargs):
+        raise AssertionError("エンジンが未指定なら画像を読んではいけない")
+
+    monkeypatch.setattr(module, "describe_image", _fail)
+
+    assert "障害報告" in parse_docx(docx_with_images_path)[0].text
 
 
 def _png_bytes(width, height, color="green"):
@@ -263,18 +375,29 @@ def test_dispatch_routes_by_suffix(docx_path, pptx_path):
     assert parse(pptx_path)[0].location_type == "slide"
 
 
-def test_dispatch_passes_caption_image_to_pptx_only(docx_with_image_path, pptx_with_large_picture):
+def test_dispatch_passes_caption_image_to_both_pptx_and_docx(
+    docx_with_image_path, pptx_with_large_picture, monkeypatch
+):
+    """Task 5以前は docx が caption_image を受け取るだけで無視していた。
+
+    このテストはその期限切れ版（test_dispatch_passes_caption_image_to_pptx_only）
+    を置き換える。ディスパッチャは形式ごとに引数を出し分けないので、docx へ
+    渡した caption_image も pptx と同様に本文へ反映されなければならない。
+
+    ディスパッチャは ocr_bytes を運ばない（parse() の署名に無い）ため、docx側は
+    describe_image が既定の実OCRへ遅延importで落ちる。実機のRapidOCR生成
+    （実測4.8秒）を起こさないよう、ここでは ingest.ocr.ocr_bytes を差し替える。
+    """
+    import ingest.ocr as ocr_module
+
+    monkeypatch.setattr(ocr_module, "ocr_bytes", lambda _blob: "")
+
     seen = []
     parse(pptx_with_large_picture, caption_image=lambda b: seen.append(b) or "説明")
     assert seen, "pptxにはcaption_imageが渡っているはず"
 
-    # docxは現時点ではcaption_imageを引数として受け取るだけで、本文には反映しない
-    # (Task 5で実装予定。実装されたらこのアサーションは反転させ、テスト名も
-    # 変えること。「反映されない」という今のふるまいを固定するためのテストである)。
-    # docx_with_image_path は実際に画像を1枚含むため、もし将来この引数が本文へ
-    # 反映されるようになれば "説明" が現れ、このアサーションは正しく落ちる。
     text = parse(docx_with_image_path, caption_image=lambda b: "説明")[0].text
-    assert "説明" not in text
+    assert "説明" in text
 
 
 def test_dispatch_rejects_unsupported_suffix(tmp_path):
