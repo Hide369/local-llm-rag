@@ -64,7 +64,10 @@ def describe_image(image_bytes, caption_image=None, ocr_bytes=None, label="") ->
     caption = _run(caption_image, image_bytes, label, "画像の説明取得")
     text = _run(ocr_bytes, image_bytes, label, "画像のOCR")
 
-    if caption == DECORATION:
+    # 「装飾画像。」「装飾画像です」のように句点や語尾が付いても判定を外さない。
+    # ただし startswith にはしない。それだと「装飾画像として使われている実際の
+    # 図」のような本物の説明文まで巻き込んで捨ててしまう。
+    if caption.rstrip("。.") == DECORATION:
         # 装飾と見られた画像は説明を捨てる。文字が十分にあるときだけ残す。
         caption = ""
         if len(text) < MIN_OCR_CHARS_FOR_DECORATION:

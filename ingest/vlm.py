@@ -9,12 +9,16 @@ import time
 import requests
 
 from ingest.embedder import OLLAMA_HOST, new_session
+# 装飾画像の合図語は ingest/image_text.py の DECORATION が正本。ここで文字列を
+# 書き写すと、片方だけ変えたときに判定が黙って外れる（image_text側はvlmを
+# importしないので循環にはならない）。
+from ingest.image_text import DECORATION
 
 VLM_MODEL = os.environ.get("OLLAMA_VLM_MODEL", "qwen2.5vl:7b")
 
 CAPTION_PROMPT = (
     "この画像に写っている図表・写真の内容を、日本語で2〜3文にまとめて説明してください。"
-    "ロゴやアイコンなど内容のない装飾画像であれば「装飾画像」とだけ答えてください。"
+    f"ロゴやアイコンなど内容のない装飾画像であれば「{DECORATION}」とだけ答えてください。"
 )
 
 _MAX_ATTEMPTS = 4  # embedder.pyと同じ: 初回 + 3回の再試行（1秒 → 2秒 → 4秒）

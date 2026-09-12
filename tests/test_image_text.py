@@ -63,6 +63,11 @@ def test_a_decoration_with_little_text_is_dropped_entirely():
     assert describe_image(IMAGE, _caption("装飾画像"), _ocr("株式会社")) is None
 
 
+def test_a_decoration_with_trailing_punctuation_is_still_recognised():
+    """VLMは律儀に句点を付けて返すことがある。「装飾画像。」も同じ判定にする。"""
+    assert describe_image(IMAGE, _caption("装飾画像。"), _ocr("株式会社")) is None
+
+
 def test_a_decoration_with_enough_text_keeps_the_text():
     """VLMが装飾と見た画像にも、読める文字が十分にあれば中身がある。"""
     text = describe_image(IMAGE, _caption("装飾画像"), _ocr("受付時間は平日9時から18時まで"))
