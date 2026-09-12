@@ -7,9 +7,11 @@
 クローラーにはしない。外部へ送るのはURLへのGETだけで、社内資料の内容も
 検索語も含まない（AGENTS.md「外部ドキュメントの参照」参照）。
 """
+import argparse
 import hashlib
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 
 import requests
@@ -107,3 +109,72 @@ def write_if_changed(
 
 def _digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+@dataclass
+class FetchReport:
+    updated: list[str] = field(default_factory=list)
+    unchanged: list[str] = field(default_factory=list)
+    failed: dict[str, str] = field(default_factory=dict)
+    # llms-full.txt が無く llms.txt に落ちたもの。取り込んでも目次しか入らない。
+    index_only: list[str] = field(default_factory=list)
+
+
+def run(sources, out_dir: Path, fetched_at: str, session=None, notify=None) -> FetchReport:
+    report = FetchReport()
+    say = notify or (lambda _message: None)
+    for source in sources:
+        say(f"取得中: {source.name} — {source.url}")
+        try:
+            body, fell_back = fetch(source, session=session)
+        except Exception as error:  # 1件の失敗で残りを止めない
+            report.failed[source.name] = str(error)
+            say(f"失敗: {source.name} — {error}")
+            continue
+        if fell_back:
+            report.index_only.append(source.name)
+            say(
+                f"警告: {source.name} は llms-full.txt が無く llms.txt に落ちました。"
+                "取り込めるのはリンクの目次だけで、記法の質問には答えられません"
+            )
+        if write_if_changed(source, body, out_dir, fetched_at):
+            report.updated.append(source.name)
+            say(f"更新: {source.name}（{len(body)}バイト）")
+        else:
+            report.unchanged.append(source.name)
+            say(f"変更なし: {source.name}")
+    return report
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="docs_sources.toml のドキュメントを docs_source/ へ取得する"
+    )
+    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
+    args = parser.parse_args()
+
+    if not args.config.is_file():
+        print(f"設定ファイルがありません: {args.config}")
+        return 1
+
+    sources = load_sources(args.config)
+    if not sources:
+        print(f"{args.config} に [[source]] が1件もありません")
+        return 1
+
+    report = run(sources, args.out_dir, date.today().isoformat(), notify=print)
+
+    print("\n--- 結果 ---")
+    print(f"更新: {len(report.updated)}件")
+    print(f"変更なし: {len(report.unchanged)}件")
+    if report.index_only:
+        print(f"目次のみ（本文が取れていません）: {'、'.join(report.index_only)}")
+    for name, message in report.failed.items():
+        print(f"失敗 {name}: {message}")
+    # 全滅は設定かネットワークの問題である。終了コードで分かるようにする。
+    return 1 if report.failed and not (report.updated or report.unchanged) else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

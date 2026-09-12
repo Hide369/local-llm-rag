@@ -149,3 +149,65 @@ def test_the_written_file_parses_as_markdown_with_the_attributes(tmp_path):
     assert units[0].attributes["version"] == "1.61.1"
     assert "---" not in units[0].text
     assert "fetched_at" not in units[0].text
+
+
+def test_run_reports_updated_unchanged_and_failed(tmp_path):
+    sources = [
+        fetch_docs.DocSource("a", "https://a.test/llms-full.txt", "1"),
+        fetch_docs.DocSource("b", "https://b.test/llms-full.txt", "2"),
+        fetch_docs.DocSource("c", "https://c.test/llms-full.txt", "3"),
+    ]
+    session = _FakeSession(
+        {
+            "https://a.test/llms-full.txt": _FakeResponse(200, "A\n"),
+            "https://b.test/llms-full.txt": _FakeResponse(200, "B\n"),
+        }
+    )
+    first = fetch_docs.run(sources, tmp_path, "2026-09-12", session=session)
+    assert first.updated == ["a", "b"]
+    assert first.unchanged == []
+    assert list(first.failed) == ["c"]
+
+    second = fetch_docs.run(sources, tmp_path, "2026-09-13", session=session)
+    assert second.updated == []
+    assert second.unchanged == ["a", "b"]
+
+
+def test_run_continues_after_a_failure(tmp_path):
+    """3件中1件が落ちても、後ろの2件は取りに行く。
+
+    1件の失敗で止めると、落ちたサイトが直るまで他のライブラリも
+    更新できなくなる。ingest_source.py の _ingest_one と同じ方針。
+    """
+    sources = [
+        fetch_docs.DocSource("a", "https://a.test/llms-full.txt", "1"),
+        fetch_docs.DocSource("b", "https://b.test/llms-full.txt", "2"),
+        fetch_docs.DocSource("c", "https://c.test/llms-full.txt", "3"),
+    ]
+    session = _FakeSession(
+        {
+            "https://a.test/llms-full.txt": _FakeResponse(200, "A\n"),
+            "https://c.test/llms-full.txt": _FakeResponse(200, "C\n"),
+        }
+    )
+    report = fetch_docs.run(sources, tmp_path, "2026-09-12", session=session)
+    assert report.updated == ["a", "c"]
+    assert list(report.failed) == ["b"]
+    assert (tmp_path / "c.md").is_file()
+
+
+def test_run_records_the_sources_that_only_yielded_an_index(tmp_path):
+    """目次しか取れなかったことは、報告に必ず残す（仕様書4.1節）。"""
+    sources = [fetch_docs.DocSource("a", "https://a.test/llms-full.txt", "1")]
+    session = _FakeSession({"https://a.test/llms.txt": _FakeResponse(200, "- [x](/x)\n")})
+    report = fetch_docs.run(sources, tmp_path, "2026-09-12", session=session)
+    assert report.index_only == ["a"]
+    assert report.updated == ["a"]
+
+
+def test_run_notifies_progress_per_source(tmp_path):
+    sources = [fetch_docs.DocSource("a", "https://a.test/llms-full.txt", "1")]
+    session = _FakeSession({"https://a.test/llms-full.txt": _FakeResponse(200, "A\n")})
+    messages = []
+    fetch_docs.run(sources, tmp_path, "2026-09-12", session=session, notify=messages.append)
+    assert any("a" in message for message in messages)
