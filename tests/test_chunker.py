@@ -1,10 +1,11 @@
 from ingest.chunker import (
     CHUNK_SIZE,
+    MAX_CODE_BLOCK_CHARS,
     MIN_CHUNK_CHARS,
     RESERVED_METADATA_KEYS,
     chunk_units,
 )
-from ingest.models import ParsedUnit
+from ingest.models import SECTION, ParsedUnit
 
 
 def _unit(text, location=1, location_type="page", ocr=False):
@@ -213,3 +214,83 @@ def test_each_location_numbers_its_chunks_from_zero():
         _unit("2ページ目の文章です。ここに本文が入ります。", location=2),
     ]
     assert [chunk.metadata["chunk_index"] for chunk in _chunk(units)] == [0, 0]
+
+
+def _long_prose(marker: str, length: int) -> str:
+    """分割器に確実に掛かる長さの地の文。句点があるので日本語の区切りで切れる。"""
+    sentence = f"{marker}はここに説明があります。"
+    return sentence * (length // len(sentence) + 1)
+
+
+def test_a_code_block_is_not_split_when_code_blocks_are_kept():
+    """コードブロックが割れると、モデルには不完全なコードが渡る。
+
+    実測（2026-09-12、Streamlit の llms-full.txt）では、既定の分割で
+    3,427チャンク中284件（8.3%）がフェンスの途中で割れていた。
+    """
+    code = "```python\n" + "x = 1\n" * 60 + "```"
+    text = _long_prose("前置き", 900) + "\n\n" + code + "\n\n" + _long_prose("後書き", 900)
+    unit = ParsedUnit(text=text, location_type=SECTION, location=1)
+
+    chunks = chunk_units([unit], "a.md", "hash", "2026-09-12", keep_code_blocks=True)
+
+    assert all(chunk.text.count("```") % 2 == 0 for chunk in chunks)
+    assert any(chunk.text.strip() == code for chunk in chunks)
+
+
+def test_a_code_block_longer_than_the_limit_is_split():
+    """入力窓を超える巨大なブロックは、丸ごと残すほうが害になる。
+
+    bge-m3 は入力窓を超えた分を切り捨てる。24,864字のブロックを1チャンクに
+    すると、後ろが黙って失われる（実測での最大値）。割れても分割するほうがよい。
+    """
+    huge = "```python\n" + "y = 2\n" * 1000 + "```"
+    assert len(huge) > MAX_CODE_BLOCK_CHARS
+    unit = ParsedUnit(text=huge, location_type=SECTION, location=1)
+
+    chunks = chunk_units([unit], "a.md", "hash", "2026-09-12", keep_code_blocks=True)
+
+    assert len(chunks) > 1
+    assert all(len(chunk.text) <= MAX_CODE_BLOCK_CHARS for chunk in chunks)
+
+
+def test_keeping_code_blocks_is_off_by_default():
+    """社内資料の取り込み結果を1バイトも変えないための既定。"""
+    code = "```python\n" + "x = 1\n" * 60 + "```"
+    text = _long_prose("前置き", 900) + "\n\n" + code
+    unit = ParsedUnit(text=text, location_type=SECTION, location=1)
+
+    default = chunk_units([unit], "a.md", "hash", "2026-09-12")
+    explicit = chunk_units([unit], "a.md", "hash", "2026-09-12", keep_code_blocks=False)
+
+    assert [chunk.text for chunk in default] == [chunk.text for chunk in explicit]
+
+
+def test_prose_without_any_code_block_is_chunked_the_same_either_way():
+    """コードが無ければ、どちらの経路でも結果は同じでなければならない。
+
+    切り分けの処理が地の文の分割まで変えてしまっていないかを見る。
+    """
+    unit = ParsedUnit(text=_long_prose("本文", 2000), location_type=SECTION, location=1)
+
+    off = chunk_units([unit], "a.md", "hash", "2026-09-12")
+    on = chunk_units([unit], "a.md", "hash", "2026-09-12", keep_code_blocks=True)
+
+    assert [chunk.text for chunk in off] == [chunk.text for chunk in on]
+
+
+def test_chunk_ids_stay_sequential_when_code_blocks_are_kept():
+    """IDが重複すると、ストアが例外を出さずに上書きしてチャンクを失う。
+
+    INSERT OR REPLACE のため、衝突は静かに起きる。
+    """
+    code = "```python\nx = 1\n```"
+    unit = ParsedUnit(
+        text=_long_prose("前", 900) + "\n\n" + code + "\n\n" + _long_prose("後", 900),
+        location_type=SECTION,
+        location=1,
+    )
+    chunks = chunk_units([unit], "a.md", "hash", "2026-09-12", keep_code_blocks=True)
+    ids = [chunk.id for chunk in chunks]
+    assert len(ids) == len(set(ids))
+    assert ids == [f"a.md::section1::{index}" for index in range(len(chunks))]
