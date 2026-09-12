@@ -74,7 +74,15 @@ def _position(element):
         geometry = cell.find("mxGeometry") if cell is not None else None
     if geometry is None:
         return (_NO_POSITION, _NO_POSITION)
-    return (float(geometry.get("y", 0)), float(geometry.get("x", 0)))
+    # 辺（矢印）は draw.io が必ず <mxGeometry relative="1" as="geometry"/> を
+    # 書き出すため、要素そのものは常に見つかる。x も y も持たず、
+    # geometry.get(..., 0) に頼ると (0, 0) — 座標を持つどの図形よりも前 —
+    # に化けてしまう。座標が両方とも無いときだけ番兵を返す。片方だけ無い
+    # 場合（droppable な相対配置ではない）は位置ありとして扱う。
+    y, x = geometry.get("y"), geometry.get("x")
+    if y is None and x is None:
+        return (_NO_POSITION, _NO_POSITION)
+    return (float(y or 0), float(x or 0))
 
 
 def _clean(label: str) -> str:
