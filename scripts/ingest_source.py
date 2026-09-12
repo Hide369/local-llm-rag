@@ -319,7 +319,10 @@ def main() -> int:
     parser.add_argument(
         "--with-vlm",
         action="store_true",
-        help="PDF/PPTX内の埋め込み画像をVLMで説明文化する（取り込みが大幅に遅くなる）",
+        help=(
+            "PDF/PPTX/DOCX/XLSX/Markdown内の埋め込み画像をVLMで説明文化しOCRにかける"
+            "（指定しないと画像は一切走査されない。取り込みが大幅に遅くなる）"
+        ),
     )
     args = parser.parse_args()
 
