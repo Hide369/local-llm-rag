@@ -684,3 +684,235 @@ def test_an_uploaded_document_really_reaches_the_store(app):
     assert not app.exception
     assert store_module.indexed_sources(collection) == {"uploads/持ち込み.md"}
     assert app.button(key="delete_uploads/持ち込み.md") is not None
+
+
+def test_the_close_button_comes_before_the_uploaded_list(app):
+    """一覧の下にあると、資料が増えたときダイアログの外へ流れて押せなくなる。"""
+    collection = open_real_store(":memory:")
+    for index in range(8):
+        collection.add(
+            ids=[f"chunk-{index}"],
+            documents=[f"本文{index}"],
+            embeddings=[[0.1, 0.2]],
+            metadatas=[{"source": f"uploads/資料{index}.md"}],
+        )
+
+    with patch("ingest.store.open_store", lambda *a, **k: collection):
+        app.run()
+        _open_upload_dialog(app)
+
+    keys = [button.key for button in app.button if button.key]
+    assert "close_upload_dialog" in keys
+    assert keys.index("close_upload_dialog") < keys.index("delete_uploads/資料0.md")
+
+
+def _pixel_heights(node, found):
+    """要素ツリーを辿って、高さを固定したコンテナの高さを集める。
+
+    app.get("vertical_block") では取れない（実測で0件）。高さ付きコンテナは
+    Block として現れ、proto.height_config.pixel_height に値が入る。
+    ダイアログの中身もこの走査で届くことを実測で確認している
+    （FileUploader・Column・Divider が見つかる）。
+    葉の要素は children を持たないため、getattr で受けること。
+    """
+    children = getattr(node, "children", None)
+    if children is None:
+        return found
+    items = children.values() if isinstance(children, dict) else children
+    for child in items:
+        config = getattr(getattr(child, "proto", None), "height_config", None)
+        if config is not None and getattr(config, "pixel_height", 0):
+            found.append(config.pixel_height)
+        _pixel_heights(child, found)
+    return found
+
+
+def test_the_uploaded_list_is_inside_a_fixed_height_container(app):
+    """高さを固定するとStreamlitが縦スクロールを出す。固定しないと
+    件数の分だけダイアログが縦に伸び、下の要素が画面外へ出る。
+    """
+    collection = open_real_store(":memory:")
+    collection.add(
+        ids=["chunk-1"],
+        documents=["本文"],
+        embeddings=[[0.1, 0.2]],
+        metadatas=[{"source": "uploads/資料.md"}],
+    )
+
+    with patch("ingest.store.open_store", lambda *a, **k: collection):
+        app.run()
+        _open_upload_dialog(app)
+
+    assert not app.exception
+    assert 240 in _pixel_heights(app._tree, [])
+
+
+def test_no_container_is_drawn_when_nothing_was_uploaded(app):
+    """空の箱だけが残るのを避ける。"""
+    with patch("ingest.store.open_store", _stub_open_store({"source": "議事録.docx"})):
+        app.run()
+        _open_upload_dialog(app)
+
+    assert 240 not in _pixel_heights(app._tree, [])
+
+
+# --- 記法そのものの表示 ---------------------------------------------------
+#
+# Streamlit 1.61 は mermaid を同梱しており、```mermaid フェンスは図として
+# 描画される。マークダウンも st.write が描画する。記法を見たい・他所へ
+# 持ち出したい利用者は、今の画面からはそれを取り出せない。
+# 判定は ingest/display_mode.py が質問文に対して行う。
+
+
+def test_a_markdown_request_shows_the_notation_instead_of_rendering_it(app):
+    """st.write は記法を描画してしまい、記法が欲しい利用者には渡らない。"""
+    answer = "| 型番 | 容量 |\n|---|---|\n| UD-0900i | 9.0kg |"
+
+    with (
+        patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
+        patch.object(chat, "stream_chat", _fake_stream_chat(answer)),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+    ):
+        app.run()
+        app.chat_input[0].set_value("一覧をマークダウンで表示して").run()
+
+    assert not app.exception
+    assert any(answer in element.value for element in app.code)
+
+
+def _asked_for_mermaid(app, answer):
+    with (
+        patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
+        patch.object(chat, "stream_chat", _fake_stream_chat(answer)),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+    ):
+        app.run()
+        app.chat_input[0].set_value("流れをマーメイドで表示して").run()
+    return app
+
+
+def test_a_mermaid_request_shows_both_the_notation_and_the_diagram(app):
+    """記法だけでも図だけでも足りない。記法は持ち出すため、図は読むために要る。
+
+    st.mermaid_chart は本文をフェンスで包んで markdown 要素として出す（実測）。
+    """
+    answer = "処理の流れです。\n\n```mermaid\ngraph TD;\n  A-->B;\n```"
+    _asked_for_mermaid(app, answer)
+
+    assert not app.exception
+    assert any(answer in element.value for element in app.code)
+    assert any(
+        "mermaid" in element.value and "graph TD;" in element.value
+        for element in app.markdown
+    )
+
+
+def test_the_diagram_is_drawn_from_the_fence_only(app):
+    """回答全体を mermaid_chart へ渡すと地の文が構文エラーになる。
+    st.write(回答) で描くと地の文がコードブロックと二重に出る。
+    """
+    answer = "処理の流れです。\n\n```mermaid\ngraph TD;\n  A-->B;\n```"
+    _asked_for_mermaid(app, answer)
+
+    rendered = [
+        element.value for element in app.markdown if "graph TD;" in element.value
+    ]
+    assert rendered, "図が描かれていない"
+    assert all("処理の流れです。" not in value for value in rendered)
+
+
+def test_a_bare_definition_is_still_drawn(app):
+    """モデルがフェンス無しで素の定義だけを返すことがある。"""
+    _asked_for_mermaid(app, "graph TD;\n  A-->B;")
+
+    assert not app.exception
+    assert any(
+        "mermaid" in element.value and "graph TD;" in element.value
+        for element in app.markdown
+    )
+
+
+def test_a_markdown_request_draws_no_diagram(app):
+    """図を出すのはマーメイドのときだけである。"""
+    answer = "| 型番 | 容量 |\n|---|---|\n| UD-0900i | 9.0kg |"
+
+    with (
+        patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
+        patch.object(chat, "stream_chat", _fake_stream_chat(answer)),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+    ):
+        app.run()
+        app.chat_input[0].set_value("一覧をマークダウンで表示して").run()
+
+    assert not app.exception
+    assert all("mermaid" not in element.value for element in app.markdown)
+
+
+def test_an_ordinary_question_still_renders_markdown(app):
+    """既定の見え方は変えない。記法で頼まれたときだけ切り替える。"""
+    answer = "運転音は26dBです。"
+
+    with (
+        patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
+        patch.object(chat, "stream_chat", _fake_stream_chat(answer)),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+    ):
+        app.run()
+        app.chat_input[0].set_value("運転音は").run()
+
+    assert not app.exception
+    assert any(answer in element.value for element in app.markdown)
+    assert all(answer not in element.value for element in app.code)
+
+
+def test_the_notation_survives_a_rerun(app):
+    """履歴の再描画でレンダリングに戻ると、画面を触るたび見え方が変わる。
+
+    生成時の分岐だけを直しても足りない。履歴側は message の display を読む。
+    """
+    answer = "```mermaid\ngraph TD;\n  A-->B;\n```"
+
+    with (
+        patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
+        patch.object(chat, "stream_chat", _fake_stream_chat(answer)),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+    ):
+        app.run()
+        app.chat_input[0].set_value("流れをマーメイドで表示して").run()
+        # 生成が終わった状態でもう一度描かせ、履歴側の描画経路を通す。
+        app.run()
+
+    assert not app.exception
+    assert any(answer in element.value for element in app.code)
+
+
+def test_the_display_mode_does_not_carry_over_to_the_next_question(app):
+    """判定は質問1つごとに閉じる。持ち越すと、利用者が何も言っていないのに
+    コードブロックで返り続ける。
+    """
+    with (
+        patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
+        patch.object(chat, "stream_chat", _fake_stream_chat("普通の回答です。")),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+    ):
+        app.run()
+        app.chat_input[0].set_value("一覧をマークダウンで表示して").run()
+        app.chat_input[0].set_value("運転音は").run()
+
+    assert not app.exception
+    # 2問目の回答は描画される。1問目の分はコードブロックのまま残る。
+    assert any("普通の回答です。" in element.value for element in app.markdown)
+
+
+def test_a_search_failure_is_not_shown_as_notation(app):
+    """エラー文は記法ではない。書式を頼まれていても普通に読める形で出す。"""
+    with (
+        patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
+        patch.object(retrieval, "embed_query", _offline_embed_query),
+    ):
+        app.run()
+        app.chat_input[0].set_value("一覧をマークダウンで表示して").run()
+        app.run()
+
+    assert not app.exception
+    assert all(OFFLINE_MESSAGE not in element.value for element in app.code)

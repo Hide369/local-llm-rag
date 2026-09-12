@@ -19,7 +19,17 @@ from dotenv import load_dotenv
 # OLLAMA_HOST（ngrokのURL）と OLLAMA_API_KEY を上書きする。
 load_dotenv()
 
-from ingest import answer_text, catalog, chat, conditions, embedder, reranker, store, vlm
+from ingest import (
+    answer_text,
+    catalog,
+    chat,
+    conditions,
+    display_mode,
+    embedder,
+    reranker,
+    store,
+    vlm,
+)
 from ingest.parsers import SUPPORTED_SUFFIXES
 from ingest.prompting import (
     build_catalog_prompt,
@@ -185,21 +195,68 @@ def upload_dialog(collection):
                         )
                 st.success(format_report(report))
 
+    # 「閉じる」を一覧より先に置く。一覧の下にあると、資料が増えたときに
+    # ダイアログの外へ流れて押せなくなる。
+    if st.button("閉じる", key="close_upload_dialog"):
+        st.session_state.upload_dialog_open = False
+        st.rerun()
+
     sources = uploaded_sources(collection)
     if sources:
         st.divider()
         st.caption("アップロード済みの資料")
-        for source in sources:
-            name, remove = st.columns([4, 1])
-            name.write(source[len(UPLOAD_PREFIX):])
-            if remove.button("削除", key=f"delete_{source}"):
-                # 空のチャンク列を渡すとその資料はDBから消える（ingest/store.py）。
-                store.replace_source(collection, source, [], [])
-                st.rerun()
+        # 高さを固定するとStreamlitが縦スクロールを出す。固定しないと件数の
+        # 分だけダイアログが縦に伸び、下の要素が画面外へ出る。
+        # 一覧が空のときはコンテナごと出さない。空の箱だけが残るのを避ける。
+        with st.container(height=240, border=True):
+            for source in sources:
+                name, remove = st.columns([4, 1])
+                name.write(source[len(UPLOAD_PREFIX):])
+                if remove.button("削除", key=f"delete_{source}"):
+                    # 空のチャンク列を渡すとその資料はDBから消える（ingest/store.py）。
+                    store.replace_source(collection, source, [], [])
+                    st.rerun()
 
-    if st.button("閉じる", key="close_upload_dialog"):
-        st.session_state.upload_dialog_open = False
-        st.rerun()
+
+def render_diagrams(text):
+    """マーメイドの定義を図として描く。
+
+    記法だけでも図だけでも足りない。記法は他所へ持ち出すため、図はその場で
+    読むために要る（要望）。
+
+    回答全体ではなくフェンスの中身だけを渡す。全体を渡すと地の文が
+    mermaid の構文エラーになり、代わりに st.write(回答) で描くと地の文が
+    上のコードブロックと二重に出る。
+    """
+    for definition in answer_text.mermaid_definitions(text):
+        # st.mermaid_chart は本文をフェンスで包んで markdown として出す。
+        # 自分でフェンスを組み立てると、本文中のバッククォートでフェンスが
+        # 早閉じする問題を自前で抱えることになる。
+        st.mermaid_chart(definition)
+
+
+def render_answer(text, mode):
+    """回答の本文を描く。記法で頼まれたときはコードブロックで出す。
+
+    st.write はマークダウンを描画し、Streamlit 1.61 は mermaid も同梱していて
+    ```mermaid フェンスを図にする。どちらも「レンダリング後」しか画面に残らず、
+    記法を見たい・他所へ持ち出したい利用者はそれを取り出せない。st.code は
+    右上にコピーボタンを付けるので、持ち出したいという狙いにそのまま応える。
+
+    マーメイドのときだけ、記法の下に図も描く。マークダウンでは描かない。
+    マークダウンのレンダリング結果は「何も頼まなければ出てくる見え方」そのもので、
+    並べても新しく分かることがないためである。
+
+    生表示では strip_html_tags を通さない。<br> を落としているのは Streamlit が
+    HTMLを描画せず文字として残るからであって、全部が文字になる生表示では、
+    落とすとモデルが実際に書いた記法ではなくなる。
+    """
+    if mode:
+        st.code(text, language=mode)
+        if mode == "mermaid":
+            render_diagrams(text)
+    else:
+        st.write(answer_text.strip_html_tags(text))
 
 
 def render_evidence(message):
@@ -307,7 +364,7 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         if message.get("note"):
             st.warning(message["note"])
-        st.write(answer_text.strip_html_tags(message["content"]))
+        render_answer(message["content"], message.get("display"))
         render_evidence(message)
 
 schema = get_schema(collection, collection.revision())
@@ -334,6 +391,11 @@ if question and not st.session_state.generating:
 
 if st.session_state.generating:
     question = st.session_state.pending_question
+
+    # 「マークダウンで表示して」と頼まれたら、描画せず記法のまま出す。
+    # 判定は質問1つごとに閉じる（ingest/display_mode.py）。前のターンの指定を
+    # 持ち越すと、利用者が何も言っていないのにコードブロックで返り続ける。
+    display = display_mode.detect(question)
 
     extraction = conditions.extract(question, schema, ask_json)
 
@@ -385,6 +447,9 @@ if st.session_state.generating:
         st.warning(note)
 
     answer = None
+    # 履歴へ残すときの表示形式。エラー文は記法ではないので、書式を頼まれていても
+    # 普通に読める形で出す。生成が最後まで通った経路だけが display を受け取る。
+    answer_display = None
     with st.chat_message("assistant"):
         # 疎通確認をしないため、Ollama未起動やモデル名の誤りは生成時に初めて
         # わかる。ingestボタンのエラー表示（st.sidebar.error）と同じ見せ方で、
@@ -406,16 +471,31 @@ if st.session_state.generating:
                 + [{"role": "user", "content": user_content}]
             )
             try:
-                # 「答え：」の言い直しはラベルだけ落とし、表のセル内の
-                # <br>・<ul>・<li> も描画されずに残らないよう落とす
-                # （ingest/answer_text.py）。
-                answer = st.write_stream(
-                    answer_text.strip_html_tags_stream(
-                        answer_text.without_label(
-                            chat.stream_chat(model, history, temperature)
-                        )
-                    )
+                # 「答え：」の言い直しはラベルだけ落とす（ingest/answer_text.py）。
+                # 口癖であって記法ではないので、生表示でも落とす。
+                stream = answer_text.without_label(
+                    chat.stream_chat(model, history, temperature)
                 )
+                if display:
+                    # st.write_stream は中身をMarkdownとして描画してしまうので
+                    # 使えない。自前で溜めながらコードブロックを書き換える。
+                    # 1行ずつまとめて出さないのは、8トークン毎秒では1行あたり
+                    # 数秒待たされるためで、without_label が行頭でだけ文字を
+                    # 溜めているのと同じ判断である。
+                    placeholder = st.empty()
+                    received = []
+                    for chunk in stream:
+                        received.append(chunk)
+                        placeholder.code("".join(received), language=display)
+                    answer = "".join(received)
+                    if display == "mermaid":
+                        # 図は生成が終わってから描く。途中の定義は必ず
+                        # 構文エラーになり、描き直すたびにエラーの枠が出る。
+                        render_diagrams(answer)
+                else:
+                    # 表のセル内の <br>・<ul>・<li> は、描画する場合にだけ落とす。
+                    answer = st.write_stream(answer_text.strip_html_tags_stream(stream))
+                answer_display = display
                 render_evidence({"hits": hits, "table": table})
             except chat.ChatError as error:
                 answer = f"回答を生成できませんでした: {error}"
@@ -429,6 +509,7 @@ if st.session_state.generating:
                 "hits": hits,
                 "table": table,
                 "note": note,
+                "display": answer_display,
             }
         )
 

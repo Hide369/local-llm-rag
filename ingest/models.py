@@ -12,6 +12,8 @@ SLIDE = "slide"
 DOCUMENT = "document"
 SECTION = "section"
 SHEET = "sheet"
+# draw.io のページ。1ファイルに複数入る。
+DIAGRAM = "diagram"
 
 
 @dataclass(frozen=True)

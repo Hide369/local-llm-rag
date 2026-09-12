@@ -158,3 +158,38 @@ def strip_html_tags_stream(chunks):
                 pending = ""
     if pending:
         yield pending
+
+
+# 「マーメイドで表示して」と頼まれたとき、記法と図の両方を出す（要望）。
+# 記法は回答を丸ごとコードブロックに入れれば足りるが、図はフェンスの中身だけを
+# st.mermaid_chart() へ渡す必要がある。回答全体を渡すと地の文が構文エラーになり、
+# 代わりに st.write(回答) で描くと地の文がコードブロックと二重に出る。
+#
+# バッククォートは3本とは限らない。st.mermaid_chart 自身が本文中のバッククォートで
+# フェンスが早閉じしないよう4本以上で包むため、同じ形を受けられるようにする。
+# 開きと同じ本数で閉じることを後方参照で担保する。
+_MERMAID_FENCE = re.compile(
+    r"^(`{3,})[ \t]*mermaid[ \t]*\n(.*?)^\1[ \t]*$",
+    re.MULTILINE | re.DOTALL | re.IGNORECASE,
+)
+
+
+def mermaid_definitions(text: str) -> list[str]:
+    """回答から、図として描く定義を取り出す。
+
+    フェンスが1つも無ければ回答全体を1つの定義とみなす。モデルが素の定義だけを
+    返すことがあり、「フェンスが無いから図を出さない」では要望に応えられないため。
+    地の文が混ざっていれば mermaid が構文エラーの枠を出すが、記法はすぐ上に
+    出ているので失うものはない。
+
+    中身が空の定義は落とす。渡しても構文エラーの枠が出るだけである。
+    """
+    if not text or not text.strip():
+        return []
+    blocks = [body.strip() for _fence, body in _MERMAID_FENCE.findall(text)]
+    found = [body for body in blocks if body]
+    if found:
+        return found
+    # フェンスはあったが中身が空だった場合、ここで回答全体へ落とさない。
+    # 空のフェンスを書いたモデルの出力を、地の文ごと図にしようとするのは筋が悪い。
+    return [] if blocks else [text.strip()]

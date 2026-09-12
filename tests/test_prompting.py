@@ -254,3 +254,20 @@ def test_caption_survives_an_extreme_negative_score():
 def test_caption_survives_an_extreme_positive_score():
     caption = format_hit_caption(_reranked_hit(1000.0))
     assert "Reranker 1.00" in caption
+
+
+def test_the_report_names_the_images_that_were_not_found():
+    """画面からmdだけを上げた利用者に、何が取り込まれなかったのかを伝える。"""
+    report = IngestReport(
+        indexed={"手順書.md": 2},
+        missing_images={"手順書.md": ["images/admin.png", "images/list.png"]},
+    )
+
+    line = format_report(report)
+
+    assert "画像が見つかりません 手順書.md: images/admin.png、images/list.png" in line
+
+
+def test_the_report_stays_quiet_when_no_image_is_missing():
+    """0件なのか機能が働いていないのか、読み手が区別できなくなるのを防ぐ。"""
+    assert "画像が見つかりません" not in format_report(IngestReport(indexed={"a.md": 1}))

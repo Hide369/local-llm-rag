@@ -1,5 +1,9 @@
-import pytest
+import io
 
+import pytest
+from PIL import Image
+
+from ingest.image_text import CAPTION_PREFIX, OCR_PREFIX
 from ingest.parsers import parse
 from ingest.parsers.md_parser import parse_md
 
@@ -33,6 +37,24 @@ def _write(tmp_path, text, name="spec.md", newline="\n"):
 @pytest.fixture
 def sample(tmp_path):
     return _write(tmp_path, SAMPLE)
+
+
+@pytest.fixture
+def sample_with_image(tmp_path):
+    """本文が画像参照を1つ持つMarkdown。参照先には実在するPNGを置く。
+
+    caption_imageが実際に呼ばれる経路を用意するため sample とは別に持つ。
+    sample を流用すると「画像参照が無いので呼ばれない」だけの、恒真になりかねない
+    アサーションになってしまう。
+    """
+    Image.new("RGB", (200, 100), "white").save(tmp_path / "photo.png")
+    text = (
+        "# タイトル\n\n"
+        "## 現地写真\n\n"
+        "設置後の状態はこちら。\n\n"
+        "![現地写真](photo.png)\n"
+    )
+    return _write(tmp_path, text, name="report_with_image.md")
 
 
 def test_each_heading_becomes_one_unit(sample):
@@ -237,3 +259,169 @@ def test_unclosed_frontmatter_yields_no_attributes(tmp_path):
     """閉じられていないなら本文とみなす既存の判断を、属性側でも守る。"""
     path = _write(tmp_path, "---\nmodel_id: X\n\n# タイトル\n\n本文がここにあります。\n")
     assert parse_md(path)[0].attributes == {}
+
+
+def test_caption_image_is_now_wired_up(sample_with_image):
+    """Task 7でcaption_imageが本文へ反映されるようになった。
+
+    Task 3が固定していた「反映されない」ふるまいはここで期限切れになる。
+    sample_with_image は実際に画像参照を1つ含むため、説明文がその位置に入る。
+    """
+    text = "\n".join(
+        u.text
+        for u in parse_md(
+            sample_with_image, caption_image=lambda _bytes: "説明", ocr_bytes=lambda _b: ""
+        )
+    )
+
+    assert "説明" in text
+    assert "![現地写真]" not in text
+
+
+def _write_png(path, color="red"):
+    Image.new("RGB", (300, 180), color).save(path)
+
+
+def test_an_image_reference_is_replaced_in_place(tmp_path):
+    """画像が前後の文と一緒に1つのセクション（=1チャンク）に入るようにする。"""
+    _write_png(tmp_path / "admin.png")
+    path = tmp_path / "手順書.md"
+    path.write_text(
+        "# 管理手順\n\n## 権限変更\n手順は以下の画面で行う。\n"
+        "![管理画面](admin.png)\n権限は管理者のみ。\n",
+        encoding="utf-8",
+    )
+
+    text = parse_md(
+        path, caption_image=lambda _blob: "ユーザー一覧の画面です。", ocr_bytes=lambda _b: "追加 削除"
+    )[0].text
+
+    assert text.index("手順は以下の画面で行う。") < text.index("ユーザー一覧の画面です。")
+    assert text.index("追加 削除") < text.index("権限は管理者のみ。")
+    assert "![管理画面]" not in text
+
+
+def test_an_image_inside_a_code_fence_is_left_alone(tmp_path):
+    """フェンス内はコード例であり、そこに書かれたリンクは資料そのものではない。"""
+    _write_png(tmp_path / "admin.png")
+    path = tmp_path / "書き方.md"
+    path.write_text(
+        "# 書き方\n\n## 記法\n" "```\n![管理画面](admin.png)\n```\n",
+        encoding="utf-8",
+    )
+
+    text = parse_md(path, caption_image=lambda _blob: "画面です。", ocr_bytes=lambda _b: "")[0].text
+
+    assert "![管理画面](admin.png)" in text
+    assert CAPTION_PREFIX not in text
+
+
+def test_a_remote_image_is_not_fetched(tmp_path):
+    """外部へ出る通信を増やさない（AGENTS.md の方針）。"""
+    path = tmp_path / "外部.md"
+    path.write_text("# 外部\n\n## 図\n![図](https://example.com/a.png)\n", encoding="utf-8")
+    calls = []
+
+    parse_md(path, caption_image=lambda blob: calls.append(blob) or "図です。", ocr_bytes=lambda _b: "")
+
+    assert calls == []
+
+
+def test_a_protocol_relative_reference_is_refused_before_touching_the_filesystem(tmp_path):
+    """`//host/share/a.png` はUNCパスであり、`base / reference` は base 側を
+    捨ててそのままアンカーを採用する。relative_to() での判定より前に
+    is_absolute() で弾かないと、.resolve()/.is_file() がSMB接続を試みる
+    （このマシンで実際に確認済み）。ネットワーク越しの接続はテストから
+    観測できないため、早期リターンの結果（ファイルシステムに触れない・
+    missingへ回る）を確認することで代わりに固定する。
+    """
+    path = tmp_path / "手順書.md"
+    path.write_text(
+        "# 手順\n\n## 節\n![外](//evil.example.com/share/a.png)\n", encoding="utf-8"
+    )
+    calls = []
+    missing = []
+
+    parse_md(
+        path,
+        caption_image=lambda blob: calls.append(blob) or "図です。",
+        on_missing_image=missing.append,
+        ocr_bytes=lambda _b: "",
+    )
+
+    assert calls == []
+    assert missing == ["//evil.example.com/share/a.png"]
+
+
+def test_a_missing_image_is_reported_and_the_body_survives(tmp_path):
+    """画面からmdだけをアップロードした場合は必ずこの経路に入る。"""
+    path = tmp_path / "手順書.md"
+    path.write_text("# 手順\n\n## 節\n本文は残る。\n![無い](images/none.png)\n", encoding="utf-8")
+    missing = []
+
+    units = parse_md(
+        path,
+        caption_image=lambda _blob: "図です。",
+        on_missing_image=missing.append,
+        ocr_bytes=lambda _b: "",
+    )
+
+    assert "本文は残る。" in units[0].text
+    assert "![無い]" not in units[0].text
+    assert missing == ["images/none.png"]
+
+
+def test_an_image_reference_escaping_the_directory_is_refused(tmp_path):
+    """資料が指定した文字列をそのままファイルシステムへ渡す唯一の箇所である。"""
+    secret = tmp_path / "secret.png"
+    _write_png(secret)
+    folder = tmp_path / "docs"
+    folder.mkdir()
+    path = folder / "手順書.md"
+    path.write_text("# 手順\n\n## 節\n![外](../secret.png)\n", encoding="utf-8")
+    calls = []
+    missing = []
+
+    parse_md(
+        path,
+        caption_image=lambda blob: calls.append(blob) or "図です。",
+        on_missing_image=missing.append,
+        ocr_bytes=lambda _b: "",
+    )
+
+    assert calls == []
+    assert missing == ["../secret.png"]
+
+
+def test_an_unreadable_image_loses_its_link_notation(tmp_path):
+    """壊れた画像データは説明もOCRも得られず、それでもリンク記法だけが消える。
+
+    ファイル自体は存在する（=見つからない参照ではない）が、中身がPNGとして
+    デコードできない。実際のVLM/OCRは画像を開こうとして例外を出すため、
+    ここでもバイト列を実際に開こうとする関数で同じ失敗を再現する。
+    describe_image（Task 2）がその例外を握りつぶして None を返す経路を通る。
+    """
+    (tmp_path / "logo.png").write_bytes(b"not a real png")
+    path = tmp_path / "手順書.md"
+    path.write_text("# 手順\n\n## 節\n本文。\n![ロゴ](logo.png)\n", encoding="utf-8")
+
+    def _open_and_describe(image_bytes):
+        Image.open(io.BytesIO(image_bytes)).load()
+        return "装飾画像"
+
+    text = parse_md(path, caption_image=_open_and_describe, ocr_bytes=_open_and_describe)[0].text
+
+    assert "![ロゴ]" not in text
+    assert "本文。" in text
+    assert CAPTION_PREFIX not in text
+    assert OCR_PREFIX not in text
+
+
+def test_md_without_images_is_unchanged(tmp_path):
+    """既存の30件の取り込み結果が変わらないこと。"""
+    path = tmp_path / "製品.md"
+    path.write_text("# UD-0900i\n\n## 設置情報\n幅は600mmです。\n", encoding="utf-8")
+
+    text = parse_md(path, caption_image=lambda _blob: "図です。")[0].text
+
+    assert text == "UD-0900i\n設置情報\n幅は600mmです。"

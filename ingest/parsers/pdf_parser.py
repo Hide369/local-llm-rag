@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pymupdf
 
+from ingest.image_text import describe_image, has_caption, has_ocr
 from ingest.models import PAGE, ParsedUnit
 
 OCR_MIN_CHARS = 30
@@ -23,37 +24,41 @@ MIN_IMAGE_WIDTH = 150
 MIN_IMAGE_HEIGHT = 150
 
 
-def _describe_images(doc, page, page_number: int, source_name: str, caption_image) -> list[str]:
-    """ページに埋め込まれた図・写真をVLMで説明文にする。1枚失敗しても残りは続ける。
+def _describe_images(doc, page, page_number: int, source_name: str, caption_image, ocr_bytes) -> list[str]:
+    """ページに埋め込まれた図・写真を説明文と文字にする。1枚失敗しても残りは続ける。
 
-    画像の取り出し自体が失敗することもある（壊れたxref等）ため、取り出しと
-    caption_image呼び出しの両方を同じtryに含める。scripts/ingest_source.pyが
-    1ファイルの失敗で全体を止めないのと同じ理由で、1枚の画像の失敗が他の画像・
-    本文を道連れにしないようにする。
+    画像の取り出し自体が失敗することもある（壊れたxref等）ため、取り出しは
+    ここで握る。caption_image / ocr_bytes 側の失敗は describe_image が
+    別々に握っており、片方が落ちてももう片方の結果は残る。
     """
-    captions = []
+    blocks = []
     for xref, _smask, width, height, *_rest in page.get_images(full=True):
         if width < MIN_IMAGE_WIDTH or height < MIN_IMAGE_HEIGHT:
             continue
         try:
             image_bytes = doc.extract_image(xref)["image"]
-            caption = caption_image(image_bytes)
         except Exception as error:
             print(
-                f"警告: 画像の説明取得に失敗しました（{source_name} p.{page_number}）: {error}",
+                f"警告: 画像を取り出せませんでした（{source_name} p.{page_number}）: {error}",
                 file=sys.stderr,
             )
             continue
-        if caption.strip() and caption.strip() != "装飾画像":
-            captions.append(caption)
-    return captions
+        text = describe_image(
+            image_bytes, caption_image, ocr_bytes=ocr_bytes, label=f"{source_name} p.{page_number}"
+        )
+        if text:
+            blocks.append(text)
+    return blocks
 
 
-def parse_pdf(path: Path, ocr_page=None, caption_image=None) -> list[ParsedUnit]:
+def parse_pdf(
+    path: Path, caption_image=None, on_missing_image=None, ocr_page=None, ocr_bytes=None
+) -> list[ParsedUnit]:
     """PDFを1ページ1ユニットで読む。
 
     ocr_page/caption_image はテストで差し替えられるよう引数にしている。
-    caption_image を省略した場合（既定）は画像の説明文化を一切行わない。
+    caption_image・ocr_bytes をどちらも省略した場合（既定）は画像の
+    説明文化を一切行わない。
     """
     if ocr_page is None:
         from ingest.ocr import ocr_page as ocr_page_impl
@@ -70,26 +75,28 @@ def parse_pdf(path: Path, ocr_page=None, caption_image=None) -> list[ParsedUnit]
             used_vlm = False
 
             captions = (
-                _describe_images(doc, page, number, path.name, caption_image)
-                if caption_image is not None
+                _describe_images(doc, page, number, path.name, caption_image, ocr_bytes)
+                if caption_image is not None or ocr_bytes is not None
                 else []
             )
 
             if needs_ocr:
                 if captions:
-                    # スキャンページはVLMの説明文で置き換える。OCRは誤認識が
+                    # スキャンページは埋め込み画像の説明で置き換える。OCRは誤認識が
                     # 残るため（README「既知の制約」参照）、VLMが使える場合は
                     # そちらを優先する。1枚も説明文が得られなかった場合のみ
                     # OCRへフォールバックし、ページの中身が消えるのを避ける。
-                    text = "\n\n".join(f"[図の説明] {caption}" for caption in captions)
-                    used_vlm = True
+                    text = "\n\n".join(captions)
+                    used_vlm = has_caption(text)
+                    used_ocr = has_ocr(text)
                 else:
                     text = ocr_page(page).strip()
                     used_ocr = True
             elif captions:
-                for caption in captions:
-                    text = f"{text}\n\n[図の説明] {caption}".strip()
-                used_vlm = True
+                for block in captions:
+                    text = f"{text}\n\n{block}".strip()
+                used_vlm = has_caption(text)
+                used_ocr = has_ocr(text)
 
             if text:
                 units.append(

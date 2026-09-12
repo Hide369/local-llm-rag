@@ -1,6 +1,7 @@
 import pytest
 
 from ingest.answer_text import (
+    mermaid_definitions,
     strip_html_tags,
     strip_html_tags_stream,
     strip_label,
@@ -108,3 +109,61 @@ def test_strip_html_tags_stream_does_not_depend_on_where_the_chunk_boundaries_fa
 def test_strip_html_tags_stream_leaves_an_unrelated_angle_bracket_alone():
     """既知のタグになりえないとわかれば、溜めていた "<" ごとそのまま流す。"""
     assert _tag_joined(["a<b>c"]) == "a<b>c"
+
+
+# --- マーメイドの定義の取り出し -------------------------------------------
+#
+# 「マーメイドで表示して」と頼まれたとき、記法と図の両方を出す。記法は回答を
+# 丸ごとコードブロックに入れれば足りるが、図はフェンスの中身だけを
+# st.mermaid_chart() へ渡す必要がある。回答全体を渡すと地の文が構文エラーになり、
+# st.write() で描くと地の文がコードブロックと二重に出る。
+
+
+def test_a_fenced_definition_is_extracted():
+    text = "以下のとおりです。\n\n```mermaid\ngraph TD;\n  A-->B;\n```\n"
+
+    assert mermaid_definitions(text) == ["graph TD;\n  A-->B;"]
+
+
+def test_every_fence_is_extracted():
+    """図を2つ描いた回答で、片方だけが消えるのを防ぐ。"""
+    text = "```mermaid\ngraph TD;\n  A-->B;\n```\n次に\n```mermaid\ngraph LR;\n  C-->D;\n```"
+
+    assert mermaid_definitions(text) == ["graph TD;\n  A-->B;", "graph LR;\n  C-->D;"]
+
+
+def test_text_without_a_fence_is_taken_as_one_definition():
+    """モデルが素の定義だけを返すことがある。フェンスが無いから図を出さない、
+    では要望に応えられない。
+    """
+    assert mermaid_definitions("graph TD;\n  A-->B;") == ["graph TD;\n  A-->B;"]
+
+
+def test_a_longer_fence_is_handled():
+    """st.mermaid_chart 自身が4本以上のバッククォートで包む（本文中の
+    バッククォートでフェンスが早閉じしないようにするため）。同じ形を受ける。
+    """
+    text = "````mermaid\ngraph TD;\n  A-->B;\n````"
+
+    assert mermaid_definitions(text) == ["graph TD;\n  A-->B;"]
+
+
+def test_the_language_tag_is_matched_case_insensitively():
+    assert mermaid_definitions("```Mermaid\ngraph TD;\n```") == ["graph TD;"]
+
+
+def test_a_non_mermaid_fence_is_not_extracted():
+    """python のコード例を図として描こうとすると構文エラーの枠が出る。"""
+    text = "```python\nprint(1)\n```"
+
+    assert mermaid_definitions(text) == [text]
+
+
+def test_empty_text_yields_nothing():
+    assert mermaid_definitions("") == []
+    assert mermaid_definitions("   \n  ") == []
+
+
+def test_an_empty_fence_is_dropped():
+    """中身の無いフェンスを渡すと mermaid が構文エラーの枠を出す。"""
+    assert mermaid_definitions("```mermaid\n\n```") == []

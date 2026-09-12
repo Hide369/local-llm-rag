@@ -63,3 +63,18 @@ def test_txt_is_routed_by_the_registry(tmp_path):
 
     assert ".txt" in SUPPORTED_SUFFIXES
     assert parse(path)[0].text == "本文"
+
+
+def test_caption_image_is_permanently_ignored(tmp_path):
+    """txtには埋め込み画像という概念が無い。
+
+    docx/xlsx/mdと違って将来ワイヤリングする計画は無く、caption_imageは
+    署名を他パーサーと揃えるためだけに受け取る恒久的な無視である
+    （ingest/parsers/__init__.py の設計書12節を参照）。
+    """
+    path = tmp_path / "議事録.txt"
+    path.write_text("会議名：キックオフ\n", encoding="utf-8")
+
+    text = parse_txt(path, caption_image=lambda _bytes: "説明")[0].text
+
+    assert "説明" not in text

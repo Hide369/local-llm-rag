@@ -4,6 +4,7 @@ import pymupdf
 import pytest
 from PIL import Image
 
+from ingest.image_text import CAPTION_PREFIX, OCR_PREFIX
 from ingest.parsers import parse
 from ingest.parsers.pdf_parser import OCR_MIN_CHARS, parse_pdf
 
@@ -163,6 +164,9 @@ def test_large_embedded_image_is_captioned(pdf_with_large_image):
         pdf_with_large_image,
         ocr_page=_ocr_not_called,
         caption_image=lambda _bytes: "赤い正方形の図です。",
+        # describe_image は ocr_bytes 省略時に実OCRを遅延importする。VLMの
+        # 挙動だけを見るテストなので、実エンジンを起こさないよう空文字で止める。
+        ocr_bytes=lambda _bytes: "",
     )
     assert "Chapter one" in units[0].text
     assert "[図の説明] 赤い正方形の図です。" in units[0].text
@@ -190,7 +194,12 @@ def test_caption_failure_is_skipped_with_a_warning(pdf_with_large_image, capsys)
     def _raise(_bytes):
         raise VlmError("boom")
 
-    units = parse_pdf(pdf_with_large_image, ocr_page=_ocr_not_called, caption_image=_raise)
+    units = parse_pdf(
+        pdf_with_large_image,
+        ocr_page=_ocr_not_called,
+        caption_image=_raise,
+        ocr_bytes=lambda _bytes: "",  # 実OCRを起こさないための空スタブ
+    )
     assert "Chapter one" in units[0].text
     assert "[図の説明]" not in units[0].text
     assert units[0].vlm is False
@@ -205,6 +214,7 @@ def test_decorative_caption_is_not_appended(pdf_with_large_image):
         pdf_with_large_image,
         ocr_page=_ocr_not_called,
         caption_image=lambda _bytes: "装飾画像",
+        ocr_bytes=lambda _bytes: "",  # 実OCRを起こさないための空スタブ
     )
     assert "[図の説明]" not in units[0].text
     assert units[0].vlm is False
@@ -218,6 +228,7 @@ def test_empty_caption_is_not_appended(pdf_with_large_image):
         pdf_with_large_image,
         ocr_page=_ocr_not_called,
         caption_image=lambda _bytes: "   ",
+        ocr_bytes=lambda _bytes: "",  # 実OCRを起こさないための空スタブ
     )
     assert "[図の説明]" not in units[0].text
     assert units[0].vlm is False
@@ -245,6 +256,10 @@ def test_scanned_page_uses_vlm_caption_instead_of_ocr(tmp_path):
         path,
         ocr_page=_ocr_not_called,
         caption_image=lambda _bytes: "会議室のホワイトボードを撮影した写真です。",
+        # ここで確かめたいのは「VLMが使えるならページ全体のOCRへフォール
+        # バックしない」ことだけ。埋め込み画像個別のOCRは別の関心事なので、
+        # 実エンジンを起こさないよう空文字で止める。
+        ocr_bytes=lambda _bytes: "",
     )
     assert len(units) == 1
     assert units[0].text == "[図の説明] 会議室のホワイトボードを撮影した写真です。"
@@ -263,6 +278,7 @@ def test_scanned_page_falls_back_to_ocr_when_vlm_yields_no_caption(tmp_path):
         path,
         ocr_page=lambda _page: "OCRで読んだ文字",
         caption_image=lambda _bytes: "装飾画像",
+        ocr_bytes=lambda _bytes: "",  # 実OCRを起こさないための空スタブ
     )
     assert len(units) == 1
     assert units[0].text == "OCRで読んだ文字"
@@ -294,7 +310,41 @@ def test_multiple_images_one_fails_others_and_text_survive(tmp_path):
     def _ocr_not_called(_page):
         raise AssertionError("テキストがあるページでOCRを呼んではいけない")
 
-    units = parse_pdf(path, ocr_page=_ocr_not_called, caption_image=_caption)
+    units = parse_pdf(
+        path,
+        ocr_page=_ocr_not_called,
+        caption_image=_caption,
+        ocr_bytes=lambda _bytes: "",  # 実OCRを起こさないための空スタブ
+    )
     assert "Chapter one" in units[0].text
     assert "[図の説明] 2枚目の説明です。" in units[0].text
     assert units[0].vlm is True
+
+
+def test_an_embedded_image_contributes_its_characters_too(pdf_with_large_image):
+    """スライドやPDFに貼ったスクリーンショットの文字が読めない、という
+    Excelと同じ問題がこの2形式にも等しくある。
+    """
+    units = parse_pdf(
+        pdf_with_large_image,
+        ocr_page=lambda _page: "",
+        caption_image=lambda _blob: "構成図です。",
+        ocr_bytes=lambda _blob: "受注 出荷",
+    )
+
+    assert f"{CAPTION_PREFIX}構成図です。" in units[0].text
+    assert f"{OCR_PREFIX}受注 出荷" in units[0].text
+
+
+def test_a_small_image_is_still_skipped(pdf_with_small_image):
+    """OCRが加わっても、ロゴ・アイコンの閾値判定は変えない。"""
+    calls = []
+
+    parse_pdf(
+        pdf_with_small_image,
+        ocr_page=lambda _page: "",
+        caption_image=lambda _blob: calls.append(1) or "図です。",
+        ocr_bytes=lambda _blob: calls.append(1) or "文字",
+    )
+
+    assert calls == []
