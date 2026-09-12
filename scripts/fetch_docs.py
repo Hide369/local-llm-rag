@@ -46,6 +46,41 @@ def _index_url(url: str) -> str:
     return url.replace("llms-full.txt", "llms.txt")
 
 
+class NotDocumentationError(Exception):
+    """取得はできたが、中身がドキュメントではなかった。
+
+    状態コードだけを見ていると掴めない失敗がある（_looks_like_html 参照）。
+    run() はこれを1件の失敗として報告し、他のライブラリの取得は続ける。
+    """
+
+
+# HTML の始まり方。本文の途中に <div> が出てくることは咎めない。
+# ドキュメントは HTML の例を載せるものであり、それを理由に捨てると
+# 正しい資料まで落とすことになる。
+_HTML_PREFIXES = ("<!doctype html", "<html", "<?xml")
+
+
+def _looks_like_html(text: str, content_type: str) -> bool:
+    """HTML のページを掴んでいないか。
+
+    実測 2026-09-13: `python.langchain.com/llms-full.txt` は 404 ではなく、
+    ドキュメントサイトの HTML を **200 で** 返した。状態コードしか見ていな
+    かったため素通りし、HTML・CSS・JavaScript が1,531チャンク（当時のコーパス
+    11,993件の12.8%）DBに入った。正しい URL は
+    `docs.langchain.com/llms-full.txt` である。
+
+    この失敗は静かで、診断が遠い。取り込みは成功と表示され、検索も当たり、
+    ただ答えが書けないノイズが混ざるだけだからである。掴んだ時点で止める。
+
+    先頭と Content-Type の両方を見るのは、どちらか一方では取りこぼすため。
+    doctype を持たない断片を返すサーバーがあり、逆に text/plain と名乗って
+    HTML を返すサーバーもある。
+    """
+    if "text/html" in content_type.lower():
+        return True
+    return text.lstrip()[:200].lower().startswith(_HTML_PREFIXES)
+
+
 def fetch(source: DocSource, session=None) -> tuple[str, bool]:
     """本文と、目次に落ちたかどうかを返す。
 
@@ -58,14 +93,26 @@ def fetch(source: DocSource, session=None) -> tuple[str, bool]:
     session = session or requests
     response = session.get(source.url, timeout=_TIMEOUT)
     if response.status_code < 400:
-        return response.text, False
+        return _checked(response, source.url), False
 
     index = _index_url(source.url)
     if index == source.url:
         response.raise_for_status()
     fallback = session.get(index, timeout=_TIMEOUT)
     fallback.raise_for_status()
-    return fallback.text, True
+    return _checked(fallback, index), True
+
+
+def _checked(response, url: str) -> str:
+    """ドキュメントとして受け入れてよい本文だけを返す。"""
+    content_type = getattr(response, "headers", {}).get("Content-Type", "")
+    if _looks_like_html(response.text, content_type):
+        raise NotDocumentationError(
+            f"{url} は本文ではなく HTML のページを返しました"
+            f"（Content-Type: {content_type or '不明'}）。"
+            "URL が正しいか確認してください"
+        )
+    return response.text
 
 
 def _frontmatter(source: DocSource, fetched_at: str) -> str:
