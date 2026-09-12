@@ -26,6 +26,7 @@ from ingest import (
     conditions,
     display_mode,
     embedder,
+    query_translation,
     reranker,
     store,
     vlm,
@@ -475,6 +476,12 @@ if st.session_state.generating:
             # 検索には直前の質問を継ぎ足す（追質問は単独では引けない）。社内資料側の
             # 検索経路（下の else 節）と同じ判断である。
             query = contextual_query(question, st.session_state.messages[:-1])
+            # 技術ドキュメントは英語、質問は日本語のことが多い。継ぎ足した文字列
+            # ごと英語の検索クエリへ翻訳する（前の質問だけ訳して繋ぐより1回の
+            # LLM呼び出しで済み、追質問の文脈も一緒に訳せる）。生成は原文の
+            # question のまま行う（build_docs_prompt）。詳細は
+            # ingest/query_translation.py のモジュールdocstring参照。
+            query = query_translation.translate_query(query, ask_json)
             hits = search(collection, query, index=index, rerank=rerank_callable)
             user_content = build_docs_prompt(question, hits)
         elif extraction.conditions:

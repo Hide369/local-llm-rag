@@ -15,6 +15,7 @@ AppTest は rag_chat_app.py を同じプロセスで実行する。本番のス�
 再現しなくなる。1チャンクだけの決まった状態を作るため、store.open_store を
 インメモリのものへ差し替える。
 """
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -1015,6 +1016,15 @@ def test_the_corpus_switch_offers_both_choices(app):
     assert list(app.sidebar.radio[0].options) == ["社内資料", "技術ドキュメント"]
 
 
+def _fake_ask_json_returning_query(translated):
+    """検索クエリ翻訳（ingest/query_translation.py）用のask_jsonの代役。
+
+    どのテストも実際のOllamaへ触れさせないため、技術ドキュメントのコーパスへ
+    切り替えるテストでは常にこれで chat.ask_json を差し替える。
+    """
+    return lambda model, prompt, session=None: json.dumps({"query": translated})
+
+
 def test_choosing_the_documentation_corpus_searches_the_other_database(app):
     """切り替えが本当に別のDBを引いていることを、返る本文で見る。
 
@@ -1032,6 +1042,7 @@ def test_choosing_the_documentation_corpus_searches_the_other_database(app):
         ),
         patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
         patch.object(chat, "stream_chat", stream),
+        patch.object(chat, "ask_json", _fake_ask_json_returning_query("dialog")),
     ):
         app.run()
         app.sidebar.radio[0].set_value("技術ドキュメント").run()
@@ -1053,6 +1064,7 @@ def test_the_documentation_corpus_uses_the_documentation_prompt(app):
         ),
         patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
         patch.object(chat, "stream_chat", stream),
+        patch.object(chat, "ask_json", _fake_ask_json_returning_query("dialog")),
     ):
         app.run()
         app.sidebar.radio[0].set_value("技術ドキュメント").run()
@@ -1061,6 +1073,70 @@ def test_the_documentation_corpus_uses_the_documentation_prompt(app):
     sent = stream.calls[-1]["messages"][-1]["content"]
     assert "混ぜないでください" in sent
     assert "社内文書" not in sent
+
+
+def test_the_documentation_corpus_searches_with_the_translated_query(app):
+    """技術ドキュメントの検索クエリは英語へ翻訳したものであること。
+
+    生成側（build_docs_prompt）に渡す質問は原文の日本語のままでなければ
+    ならない（Task 8の設計制約）。search() に渡ったクエリと、生成に渡った
+    プロンプト文面の両方を見て、両者が別物であることを確認する。
+    """
+    stream = _fake_stream_chat("回答")
+    search_calls = []
+
+    def fake_search(
+        collection, query, index=None, session=None, threshold=None, n_results=4, rerank=None
+    ):
+        search_calls.append(query)
+        return []
+
+    with (
+        patch.object(store_module, "open_store", _stub_open_store_per_path({})),
+        patch.object(retrieval, "search", fake_search),
+        patch.object(chat, "stream_chat", stream),
+        patch.object(
+            chat, "ask_json", _fake_ask_json_returning_query("modal dialog st.dialog")
+        ),
+    ):
+        app.run()
+        app.sidebar.radio[0].set_value("技術ドキュメント").run()
+        app.chat_input[0].set_value("Streamlitでモーダルダイアログを出す書き方").run()
+
+    # search() に渡ったのは翻訳後のクエリであり、原文の日本語ではない。
+    assert search_calls == ["modal dialog st.dialog"]
+    # ヒットなしの build_docs_prompt は「ユーザーの質問: {question}」を含む。
+    # ここに原文の日本語質問がそのまま出ていること（生成は翻訳前の質問で行う）。
+    sent = stream.calls[-1]["messages"][-1]["content"]
+    assert "Streamlitでモーダルダイアログを出す書き方" in sent
+    assert "modal dialog st.dialog" not in sent
+
+
+def test_the_internal_corpus_never_calls_translation(app):
+    """社内資料のコーパスでは、翻訳のためのLLM呼び出しが一切起きないこと。
+
+    メタデータを source だけにするとスキーマが空になり、条件抽出
+    （conditions.extract）自体もLLMを呼ばずに即座に戻る
+    （ingest/conditions.py の schema が空なら呼ばない、という既存の門番）。
+    その状態で chat.ask_json の呼び出し回数が0であることは、翻訳のための
+    追加呼び出しがこの経路に一切配線されていないことの直接の証拠になる。
+    """
+    calls = []
+
+    def ask_json(model, prompt, session=None):
+        calls.append(prompt)
+        return "{}"
+
+    with (
+        patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+        patch.object(chat, "ask_json", ask_json),
+    ):
+        app.run()
+        app.chat_input[0].set_value("運転音は？").run()
+
+    assert not app.exception
+    assert calls == []
 
 
 def test_the_internal_corpus_is_unchanged_by_the_switch(app):
