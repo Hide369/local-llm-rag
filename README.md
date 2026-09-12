@@ -248,6 +248,99 @@ BM25に床（フロア）を設けない判断（`ingest/retrieval.py`）が以�
 `.exe` を使えるようにしたい場合は該当パッケージを
 `python.exe -m pip install --force-reinstall --no-deps <package>` で入れ直す。）
 
+## 技術ドキュメントの取り込み
+
+公式ドキュメントを取り込み、モデルの古い知識ではなく取り込んだ記法で
+コード例を答えさせる。社内資料とは**別のDB**（`docs_store.sqlite3`）に入れ、
+画面のサイドバー「検索対象」で切り替える。
+
+```powershell
+# 1. 取得（外部通信あり。docs_sources.toml に書かれたURLだけ）
+.\myvenv313\Scripts\python.exe -m scripts.fetch_docs
+
+# 2. 取り込み（Ollama への接続が要る）
+.\myvenv313\Scripts\python.exe -m scripts.ingest_source --source-dir docs_source `
+    --db docs_store.sqlite3 --keep-code-blocks
+```
+
+対象ライブラリは `docs_sources.toml` で管理する。追加するときは
+`llms-full.txt` の URL を書くこと。**`llms.txt` は本文ではなくリンクの目次
+である。** 実測（2026-09-12）: `docs.streamlit.io/llms.txt` は66,927バイト・
+コードフェンス0個。対して `llms-full.txt` は1,927,203バイト・コードフェンス
+1,877個・`## ` 見出し659個。目次を取り込んでも記法の質問には答えられない。
+
+`llms-full.txt` を公開しているかどうかはライブラリごとに違う。実測
+（2026-09-12）で確認できた範囲では、streamlit・langchain（LangChainのサイトが
+`langchain-text-splitters` を含めて公開）・ollama・huggingface_hub・pymupdf は
+公開している。fastapi・pytest・numpy は404で、対象にできない。
+
+`--keep-code-blocks` はコードブロックを途中で割らずに1チャンクへ収める。
+指定しないと、実測（2026-09-12、実際に取り込んだ `docs_source/streamlit.md`、
+3,427チャンク）でチャンクの8.3%（284件）がフェンスの途中で割れる。
+`--keep-code-blocks` を指定すると4,567チャンク中1.6%（74件）まで下がる。
+区切り文字にフェンス（`` "\n```" ``）を足す案も試したが、実測では17.0%に
+悪化したため採らなかった（`ingest/chunker.py` の `_split_keeping_code`）。
+コードブロックには2,400字の上限があり、938ブロック中33個（3.5%、中央値122字・
+平均465字・最大24,864字）がこれを超えて再分割される。
+社内資料の取り込みでは `--keep-code-blocks` を指定しない（結果が変わる）。
+
+`docs_source/` と `docs_store.sqlite3` は追跡しない。`source/` と
+`vector_store.sqlite3` と同じく、いつでも取り直せるためである。
+
+**実測した完了条件（2026-09-12）:**
+
+- `python -m scripts.fetch_docs` は初回に streamlit 1,919,381B /
+  langchain-text-splitters 1,003,315B / ollama 233,901B /
+  huggingface_hub 1,785,858B / pymupdf 21,987B を書き出した。2回目の実行は
+  5件とも「変更なし」と報告し、ファイルを書き換えなかった。
+- `python -m scripts.ingest_source --source-dir docs_source --db
+  docs_store.sqlite3 --keep-code-blocks` は、NVIDIA L4（ngrok経由で接続した
+  Colab、5ファイル）で **11,993チャンク／5ファイルを724秒（12分4秒、
+  14:03:47Z〜14:15:51Z）** で取り込んだ。内訳は huggingface_hub 4,913 /
+  streamlit 4,567 / langchain-text-splitters 1,531 / ollama 898 /
+  pymupdf 84。DB合計は出現11,993・本文10,879種。
+- 社内資料の `vector_store.sqlite3` はこの取り込みの前後で1バイトも変わって
+  いない（4,894,720バイト、更新日時も不変）。
+
+### 日本語の質問と英語コーパスの言語不一致（検索クエリの英語翻訳）
+
+Task 1〜6を終えた時点では、この機能は**日本語の質問に対して機能していなかった**。
+コーパス（取り込んだ公式ドキュメント）は英語で書かれているのに対し、BM25側
+（`ingest/lexical.py`）は日本語の文字bigramに合わせて調整済みである。実測
+（gpt-oss:20b、`docs_store.sqlite3`、2026-09-12）:
+
+| 質問 | 1位のヒット | リランカー |
+|---|---|---|
+| 「Streamlitのキャッシュはどう書く？」 | CLIコマンド `streamlit cache clear` | 0.06、以降 −3.33, −3.45, −4.66 |
+| "How do I cache data in Streamlit?"（英語） | Cachingの節、続けて `@st.cache_data` の例 | 5.73 |
+| `st.cache_data`（API名そのもの） | ほぼ完全一致 | 7.02 |
+
+3問とも日本語質問ではモデルは「ドキュメントには記述がありません」と（正しく）
+答えていたが、実際にはコーパス中に `cache_data` を含むチャンクが56件、
+`cache_resource` が29件、`dialog` が47件あった。**検索が的外れだったのが
+原因で、モデルの読解が誤っていたわけではない。**
+
+そこで `ingest/query_translation.py` の `translate_query(query, ask)` が、
+検索にだけ使う英語の検索クエリへ質問を翻訳する。**回答の生成は原文の日本語
+質問のまま行う**（`rag_chat_app.py` は翻訳後のクエリを `search()` にだけ渡し、
+`build_docs_prompt(question, hits)` には常に原文の `question` を渡す）。
+これが無いと、コーパスと質問の言語が食い違ったまま検索が成立せず、
+実装した機能全体が日本語話者に対して動かない。導入後の実測
+（2026-09-12）:
+
+| 日本語の質問 | 翻訳後の検索クエリ | リランカー | 実際に答えたAPI |
+|---|---|---|---|
+| 「Streamlitのキャッシュはどう書く？」 | `Streamlit st.cache_data usage` | 5.68 | `st.cache_data`、`st.cache_resource` |
+| 「Streamlitでモーダルダイアログを出す書き方を教えて」 | `Streamlit modal dialog st.dialog example` | 3.40 | `st.dialog`（現行のシグネチャ） |
+| 「Streamlitでマーメイドの図を描くには」 | `Streamlit Mermaid diagram st.markdown ...` | 0.77 | `st.mermaid_chart` |
+| "How do I cache data in Streamlit?"（英語） | `Streamlit st.cache_data usage`に正規化 | 5.68 | 正答 |
+
+**最も余裕が無いのはマーメイドの質問である。** 翻訳後のクエリが
+`st.components.v1.html`（このAPIでは答えられない）を含んでしまい、
+リランカースコアは4問中最低の0.77だった。それでも検索は `st.mermaid_chart`
+を拾えており回答自体は正しかったが、他の3問と比べて安全域が薄いことは
+記録しておく。
+
 ## ColabのL4 GPUに接続する
 
 ローカルPCのGPUが非力な場合、生成・埋め込みの両方をGoogle Colab（有料版のL4 GPU）上の
@@ -310,6 +403,8 @@ Colabの `gpt-oss:20b` をVS Codeのコーディングエージェントとし�
 | `ingest/retrieval.py` | ベクトル検索とBM25をRRFで融合し、圏内ゲートで採否を決める |
 | `ingest/reranker.py` | RRF上位8件をbge-reranker-v2-m3で測り直す（外部サービスに依存しない） |
 | `scripts/check_retrieval.py` | 関連度しきい値の距離実測、BM25側の回帰確認、リランカーの効果比較（`--with-reranker`） |
+| `scripts/fetch_docs.py` | 公式ドキュメント（`llms-full.txt`）の取得CLI。外部通信はここだけ |
+| `ingest/query_translation.py` | 技術ドキュメント検索用に質問を英語へ翻訳する（生成には使わない） |
 | `rag_chat_app.py` | Streamlit UI |
 | `infra/gitlab/` | ローカルGitLab CEのDocker定義（アプリ本体には非依存） |
 | `run_gitlab.ps1` | ローカルGitLabの起動・停止・同期 |
@@ -566,8 +661,11 @@ BM25索引とベクトル行列は `chunks` から作る。
   - **一覧にファイル名は載せない**（`ingest/catalog.py` の `_row`）。モデルは行を丸写し
     するので、載せると回答が「UD-1100S_spec_step3.md です」と、利用者には意味のない
     取り込み元の名前になる（旧形式では8回中8回）。型番と仕様書は1対1に対応するため、
-    絞り込み経路の出典は型番が担う。散文チャンクを渡すベクトル検索経路は従来どおり
-    ファイル名で出典を示す。
+    絞り込み経路の出典は型番が担う。
+  - **散文チャンクを渡すベクトル検索経路も、本文にはファイル名を出さない**
+    （`ingest/prompting.py` の `build_prompt`）。文脈には `[出典]` を付けて渡すが、
+    それはチャンクの境目を示すためで、本文に書くことは明示的に禁じている。
+    出典は回答の下の「参考にした情報」を開くと出る。
 
 - **回答の言い回しはプロンプトでは制御できない。** `llama3.1:8b` は結論を
   「答え： 型番：UD-1100iE 達成率：125%」のように言い直す。これを指示で止めようとすると
@@ -578,6 +676,15 @@ BM25索引とベクトル行列は `chunks` から作る。
   （`ingest/answer_text.py`）。中身は消さない。回答本体がその行にしか無い出力
   （「答え：省エネ基準達成率が125%の機種は、UD-1100iEです。」）があり、行ごと捨てると
   回答が消えるためである。
+
+  **一方で禁止形の指示が効いた例もある。** `ingest/prompting.py` の
+  `build_prompt` / `build_docs_prompt` は「本文には出典を書かないでください」と
+  禁止形で指示しており、2026-09-12にこの禁止を追加した後、`gpt-oss:20b` で
+  生成した回答10件を実測したところ、本文にファイル名（出典）が出た例は
+  **0件**だった。上の `llama3.1:8b` の逆効果はこの実測が誤りだったことを示す
+  ものではなく、**モデルによって禁止形の効き方が違う**ことを示す事例として
+  両方残す。実測は `gpt-oss:20b` のみで、`llama3.1:8b` / `qwen2.5:7b-instruct`
+  では確認していない。
 
 - **「最大の◯◯は」には探させず、並べ替えて先頭に置いて答えさせる。**
   `llama3.1:8b` は12行の表から最大値を見つけられない（素の表で8回中2回。外した6回は

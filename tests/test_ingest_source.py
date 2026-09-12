@@ -412,6 +412,43 @@ def test_main_opens_the_shared_store_path(monkeypatch, tmp_path):
     assert opened == [str(store.DB_PATH), str(store.DB_PATH)]
 
 
+def test_main_prints_the_resolved_absolute_db_path(monkeypatch, tmp_path, capsys):
+    """--db に相対パスを渡しても、画面には解決済みの絶対パスを出す。
+
+    open_store はパスを間違えても例外を出さず空のDBを新規作成する
+    （ingest/store.py）。相対パスのまま表示すると、実行時のカレント
+    ディレクトリが違うだけで実際には別のファイルを開いていても表示上は
+    同じ文字列になり、「どこを開いたか見せる」というこのprintの目的が
+    果たせない。
+    """
+    monkeypatch.chdir(tmp_path)
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    monkeypatch.setattr(
+        ingest_source, "ingest_directory", lambda *a, **k: ingest_source.IngestReport()
+    )
+    monkeypatch.setattr(ingest_source.embedder, "check_ollama", lambda: None)
+    monkeypatch.setattr(
+        ingest_source.store, "open_store", lambda path: _FakeCollectionForMain()
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ingest_source",
+            "--source-dir",
+            str(source_dir),
+            "--db",
+            "relative.sqlite3",
+        ],
+    )
+
+    assert ingest_source.main() == 0
+
+    expected = str((tmp_path / "relative.sqlite3").resolve())
+    assert f"取り込み先: {expected}" in capsys.readouterr().out
+
+
 def _run_main_with(monkeypatch, tmp_path, collection):
     """main() が触る外部をすべてスタブし、渡したストアだけを見せて実行する。"""
     monkeypatch.setattr(
@@ -774,3 +811,51 @@ def test_no_missing_images_key_when_every_reference_resolves(source_dir, collect
     report = ingest_directory(source_dir, collection, session=_FakeSession())
 
     assert report.missing_images == {}
+
+
+def test_ingest_directory_passes_keep_code_blocks_to_the_chunker(tmp_path, monkeypatch):
+    """取り込み経路の端から端まで通っていることを見る。
+
+    chunk_units まで届いていなければ、コードブロック保持の実装が
+    あっても技術ドキュメントの取り込みでは一切効かない。
+    """
+    from ingest import chunker
+
+    (tmp_path / "a.md").write_text(
+        "# 題\n\n## 節\n\n" + "説明です。" * 200 + "\n\n```python\nx = 1\n```\n",
+        encoding="utf-8",
+    )
+    seen = []
+    real = chunker.chunk_units
+
+    def spy(units, source, file_hash, indexed_at, keep_code_blocks=False):
+        seen.append(keep_code_blocks)
+        return real(units, source, file_hash, indexed_at, keep_code_blocks=keep_code_blocks)
+
+    monkeypatch.setattr(ingest_source, "chunk_units", spy)
+
+    collection = open_store(":memory:")
+    ingest_source.ingest_directory(
+        tmp_path, collection, session=_FakeSession(), keep_code_blocks=True
+    )
+
+    assert seen == [True]
+
+
+def test_ingest_directory_does_not_keep_code_blocks_by_default(tmp_path, monkeypatch):
+    from ingest import chunker
+
+    (tmp_path / "a.md").write_text("# 題\n\n## 節\n\n本文です。\n", encoding="utf-8")
+    seen = []
+    real = chunker.chunk_units
+
+    def spy(units, source, file_hash, indexed_at, keep_code_blocks=False):
+        seen.append(keep_code_blocks)
+        return real(units, source, file_hash, indexed_at, keep_code_blocks=keep_code_blocks)
+
+    monkeypatch.setattr(ingest_source, "chunk_units", spy)
+
+    collection = open_store(":memory:")
+    ingest_source.ingest_directory(tmp_path, collection, session=_FakeSession())
+
+    assert seen == [False]

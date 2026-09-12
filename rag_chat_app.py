@@ -26,6 +26,7 @@ from ingest import (
     conditions,
     display_mode,
     embedder,
+    query_translation,
     reranker,
     store,
     vlm,
@@ -33,6 +34,7 @@ from ingest import (
 from ingest.parsers import SUPPORTED_SUFFIXES
 from ingest.prompting import (
     build_catalog_prompt,
+    build_docs_prompt,
     build_prompt,
     format_hit_caption,
     format_report,
@@ -47,6 +49,22 @@ from scripts.ingest_source import (
 
 DB_PATH = str(store.DB_PATH)
 
+# 技術ドキュメントの取り込み先。社内資料とはファイルごと分ける。
+# 同じDBに入れると、社内規程の質問にライブラリのドキュメントが混ざり、
+# 「社内資料に無ければ答えない」という歯止めが効かなくなる。
+DOCS_DB_PATH = str(store.DB_PATH.parent / "docs_store.sqlite3")
+
+CORPUS_INTERNAL = "社内資料"
+CORPUS_DOCS = "技術ドキュメント"
+
+# 技術ドキュメントの取り込み・更新に使う2コマンド。空のときの警告と、空でない
+# ときのキャプションの両方で使うため、ここ一箇所にまとめる（二重管理を避ける）。
+DOCS_INGEST_COMMAND = (
+    "python -m scripts.fetch_docs のあと "
+    "python -m scripts.ingest_source --source-dir docs_source "
+    "--db docs_store.sqlite3 --keep-code-blocks"
+)
+
 
 @st.cache_resource
 def get_collection(db_path):
@@ -54,20 +72,26 @@ def get_collection(db_path):
 
 
 @st.cache_resource
-def get_schema(_collection, revision):
+def get_schema(_collection, db_path, revision):
     """絞り込みに使える属性の一覧。
 
     revision を引数に取るのは、新しい数値属性を持つ資料を取り込んだあとも
     プロセスを再起動するまで絞り込みに出てこない、という状態を防ぐため。
+    ただし revision だけでは足りない。revision は各DBが自分の meta テーブルに
+    持つ、ファイルごとに独立したカウンタであり、社内資料と技術ドキュメントの
+    2つのDBが同じ数値になることは普通に起こる。db_path を鍵に加えないと、
+    たまたま revision が一致した瞬間に、後から呼ばれた側が先に呼ばれた側の
+    コーパスの属性一覧をそのまま受け取ってしまう。
 
-    先頭のアンダースコアは、Streamlitにこの引数をハッシュさせないための目印。
-    VectorStoreはsqlite3.Connectionを抱えており、ハッシュ化できない。
+    先頭のアンダースコアは、Streamlitに _collection をハッシュさせないための
+    目印。VectorStoreはsqlite3.Connectionを抱えており、ハッシュ化できない。
+    db_path は素の文字列なのでそのままハッシュ可能なキーになる。
     """
     return conditions.available_keys(_collection)
 
 
 @st.cache_resource
-def get_index(_collection, revision):
+def get_index(_collection, db_path, revision):
     """BM25インデックスをDBから組む。
 
     ディスクに持たないため起動のたびに作り直す。DBとファイルで状態が二重管理に
@@ -77,9 +101,18 @@ def get_index(_collection, revision):
     revision を引数に取るのは、書き込みと不可分に進む値だけがキャッシュの
     鮮度を正しく判定できるため。チャンク数を鍵にすると「同数の差し替え」を
     取りこぼし、消えた旧チャンクIDを持ったままのBM25索引が、理由の説明なく
-    ヒットを落とす（設計書4.5節）。先頭のアンダースコアはStreamlitにこの引数を
-    ハッシュさせないための目印で、VectorStoreはsqlite3.Connectionを抱えており
-    ハッシュ化できない。
+    ヒットを落とす（設計書4.5節）。
+
+    revision だけでは足りない。revision は各DBが自分の meta テーブルに持つ、
+    ファイルごとに独立したカウンタであり、社内資料と技術ドキュメントの2つの
+    DBが同じ数値になることは普通に起こる（どちらも取り込みのたびに1ずつ
+    進むだけの独立したカウンタである）。db_path を鍵に加えないと、たまたま
+    revision が一致した瞬間に、後から呼ばれた側が先に呼ばれた側のコーパスの
+    BM25索引をそのまま受け取ってしまう。
+
+    先頭のアンダースコアはStreamlitに _collection をハッシュさせないための
+    目印で、VectorStoreはsqlite3.Connectionを抱えておりハッシュ化できない。
+    db_path は素の文字列なのでそのままハッシュ可能なキーになる。
     """
     return build_index(_collection)
 
@@ -112,7 +145,7 @@ def render_hits(hits):
 
 # 図表があるとVLMが画像1枚ごとに同期のAPI呼び出しを行うため、資料によっては
 # 取り込みが大きく伸びる。待たされる理由を画面に残す。
-SPINNER_MESSAGE = "取り込み中…（図表があるとVLMの説明文化に時間がかかります）"
+SPINNER_MESSAGE = "取り込み中…（図表があると時間がかかります）"
 
 
 def caption_image_or_reason():
@@ -289,48 +322,121 @@ SYSTEM_PROMPT = (
     "日本語で回答して下さい。"
 )
 
-collection = get_collection(DB_PATH)
-index = get_index(collection, collection.revision())
-st.sidebar.metric("インデックス済みチャンク", collection.count())
+# どちらを検索するかは利用者が選ぶ。質問文からの自動判定にしないのは、
+# 誤判定が利用者から見えない失敗になるためである。選択はそのまま
+# 「どちらを検索したか」の表示も兼ねる。
+#
+# 生成中は chat_input と同じ理由（下の約470行、disabled=st.session_state.generating
+# のコメント参照）でこのラジオも無効化する。ここを空けたままだと、ストリーミング中に
+# 切り替えてもStreamlitが実行中の生成を打ち切って新しい実行を始めてしまう点は
+# chat_input と同じだが、こちらは打ち切った上できき目が違う。打ち切り後の実行では
+# 下のコーパス切り替えブロックが messages を空にする一方、generating と
+# pending_question はこの後の初期化ブロックまで前回の値のまま残るため、
+# 「消したはずの質問」を新しく選んだコーパスに対してもう一度検索してしまう。
+# chat_input を無効化しているのと同じ手当てをラジオにも及ぼせば、切り替え自体が
+# 生成中は起こらなくなり、この食い違いも生まれない。
+corpus = st.sidebar.radio(
+    "検索対象",
+    [CORPUS_INTERNAL, CORPUS_DOCS],
+    key="corpus_radio",
+    disabled=st.session_state.get("generating", False),
+)
+searching_docs = corpus == CORPUS_DOCS
+
+# コーパスを切り替えたら会話履歴を破棄する。残したままだと、
+# contextual_query（ingest/retrieval.py）が前のコーパス向けの直前の質問を
+# 継ぎ足してしまい、切り替え後の質問と混ざった文字列が translate_query
+# （ingest/query_translation.py）に渡って検索クエリごと壊れる
+# （例：「就業規則の有給休暇は？ キャッシュの書き方は？」を英訳すると
+# 検索が両方とも外れる）。history にも前コーパスの回答が残り、
+# build_docs_prompt の「ドキュメントに書いてあることだけを使う」という
+# 指示と矛盾する。on_change コールバックではなく、前回値を session_state に
+# 覚えておいて差分を見る方式にしているのは、初回描画（前回値がまだ無い）と
+# 区別するためである。
+if "last_corpus" not in st.session_state:
+    st.session_state.last_corpus = corpus
+elif st.session_state.last_corpus != corpus:
+    st.session_state.last_corpus = corpus
+    if st.session_state.get("messages"):
+        st.session_state.messages = []
+        # 履歴が消えたことを画面から読み取れないと、利用者は「さっきの
+        # 話の続き」のつもりで質問し、検索対象が変わったことに気づけない。
+        # 空DBの警告（下のst.sidebar.warning）と同じ理由で、サイドバーに
+        # 明示する。
+        st.sidebar.info("検索対象を切り替えたため、会話履歴をリセットしました。")
+
+    # generating / pending_question も念のためここで打ち切る。ラジオは
+    # 生成中disabled（上の約330行、chat_inputと同じ理由）にしてあり、通常は
+    # 生成中に切り替えが起こること自体がない。ただし disabled はブラウザ側の
+    # 見た目を止めるだけで、session_state を守るものではない。何らかの理由で
+    # （Streamlit自体の不具合、テストのように内部状態を直接書き換える経路など）
+    # 切り替えが素通りした場合、消したはずの pending_question が
+    # generating=True のまま残り、下の「if st.session_state.generating:」が
+    # 新しく選ばれたコーパスに対してそれを再検索してしまう。messages を
+    # 空にするのと矛盾しないよう、ここでも合わせて解除しておく。
+    st.session_state.generating = False
+    st.session_state.pending_question = None
+
+# get_collection と違い get_index / get_schema はコレクションをハッシュに
+# 使わない（先頭アンダースコア）ため、どちらのDBを開いたかを鍵に加える必要が
+# ある。DB_PATH / DOCS_DB_PATH を渡すのは get_collection のキャッシュキーと
+# 揃えるためで、両者の不一致がそのままバグになる。
+db_path = DOCS_DB_PATH if searching_docs else DB_PATH
+collection = get_collection(db_path)
+index = get_index(collection, db_path, collection.revision())
+chunk_count = collection.count()
+st.sidebar.metric("インデックス済みチャンク", chunk_count)
 
 st.sidebar.divider()
-st.sidebar.caption(f"取り込み元: {DEFAULT_SOURCE_DIR.name}/")
-if st.sidebar.button("差分を取り込む"):
-    try:
-        embedder.check_ollama()
-    except embedder.EmbeddingError as error:
-        st.sidebar.error(str(error))
+if searching_docs:
+    if chunk_count == 0:
+        # open_store はパスを間違えても例外を出さず空のDBを新規作成する
+        # （ingest/store.py）。CLIをまだ一度も走らせていない場合、切り替えた
+        # 直後は検索が黙って全部空になるだけで、利用者には理由が分からない。
+        # 設計書5.4節がCLI側に要求している「0件なら警告」の画面側にあたる。
+        st.sidebar.warning(
+            f"技術ドキュメントのDBが空です。次の2つのコマンドで取り込んでください: {DOCS_INGEST_COMMAND}"
+        )
     else:
-        caption_image, reason = caption_image_or_reason()
-        with st.spinner(SPINNER_MESSAGE):
-            report = ingest_directory(
-                DEFAULT_SOURCE_DIR, collection, caption_image=caption_image
-            )
-        # ここで st.sidebar.success() を呼んでも画面には出ない。直後の st.rerun()
-        # がこの実行の描画をまとめて捨てるため（実測）。次の実行で描くために預ける。
-        st.session_state.ingest_report = format_report(report)
-        st.session_state.ingest_notice = reason
-        # 明示的な clear() は要らない。再実行時に読み直す revision が
-        # 書き込みで進んでおり、BM25索引も属性一覧も鍵ごと入れ替わる。
-        st.rerun()
+        st.sidebar.caption(f"更新は CLI で行います: {DOCS_INGEST_COMMAND}")
+else:
+    st.sidebar.caption(f"取り込み元: {DEFAULT_SOURCE_DIR.name}/")
+    if st.sidebar.button("差分を取り込む"):
+        try:
+            embedder.check_ollama()
+        except embedder.EmbeddingError as error:
+            st.sidebar.error(str(error))
+        else:
+            caption_image, reason = caption_image_or_reason()
+            with st.spinner(SPINNER_MESSAGE):
+                report = ingest_directory(
+                    DEFAULT_SOURCE_DIR, collection, caption_image=caption_image
+                )
+            # ここで st.sidebar.success() を呼んでも画面には出ない。直後の st.rerun()
+            # がこの実行の描画をまとめて捨てるため（実測）。次の実行で描くために預ける。
+            st.session_state.ingest_report = format_report(report)
+            st.session_state.ingest_notice = reason
+            # 明示的な clear() は要らない。再実行時に読み直す revision が
+            # 書き込みで進んでおり、BM25索引も属性一覧も鍵ごと入れ替わる。
+            st.rerun()
 
-# 直前の取り込みの結果。取り出したら消す。次に画面が動くまで表示は残る。
-ingest_notice = st.session_state.pop("ingest_notice", None)
-if ingest_notice:
-    st.sidebar.warning(ingest_notice)
-ingest_report = st.session_state.pop("ingest_report", None)
-if ingest_report:
-    st.sidebar.success(ingest_report)
+    # 直前の取り込みの結果。取り出したら消す。次に画面が動くまで表示は残る。
+    ingest_notice = st.session_state.pop("ingest_notice", None)
+    if ingest_notice:
+        st.sidebar.warning(ingest_notice)
+    ingest_report = st.session_state.pop("ingest_report", None)
+    if ingest_report:
+        st.sidebar.success(ingest_report)
 
-# クライアントの画面から取り込むための入口。source/ に置けるのはサーバーを
-# 触れる管理者だけなので、上の「差分を取り込む」だけでは利用者は資料を足せない。
-if st.sidebar.button("資料をアップロード", key="open_upload_dialog"):
-    st.session_state.upload_dialog_open = True
+    # クライアントの画面から取り込むための入口。source/ に置けるのはサーバーを
+    # 触れる管理者だけなので、上の「差分を取り込む」だけでは利用者は資料を足せない。
+    if st.sidebar.button("資料をアップロード", key="open_upload_dialog"):
+        st.session_state.upload_dialog_open = True
 
-# フラグで開閉する。ボタン押下は次の再実行では False に戻るため、押した瞬間に
-# 呼ぶだけではダイアログ内の操作1回目で閉じてしまう。
-if st.session_state.get("upload_dialog_open"):
-    upload_dialog(collection)
+    # フラグで開閉する。ボタン押下は次の再実行では False に戻るため、押した瞬間に
+    # 呼ぶだけではダイアログ内の操作1回目で閉じてしまう。
+    if st.session_state.get("upload_dialog_open"):
+        upload_dialog(collection)
 
 # 検索結果は常に並べ替える。1問あたり約1.3秒（実測。8候補の中央値）であり常用に
 # 耐える。切る手段を画面に置いていたが、使うかどうかを判断する材料は画面に無く、
@@ -367,7 +473,9 @@ for message in st.session_state.messages:
         render_answer(message["content"], message.get("display"))
         render_evidence(message)
 
-schema = get_schema(collection, collection.revision())
+# 絞り込みは社内の製品仕様書に固有の仕組みである。技術ドキュメントでは
+# 属性一覧を組み立てない（条件抽出のLLM呼び出しも走らせない）。
+schema = None if searching_docs else get_schema(collection, db_path, collection.revision())
 
 
 def ask_json(prompt: str) -> str:
@@ -380,7 +488,11 @@ if "generating" not in st.session_state:
 # 生成中は入力欄を無効化する。無効化しないと応答待ちの間にもう一度送信でき、
 # Streamlitが実行中のストリーミングを打ち切って新しい実行に切り替えてしまう。
 # その結果、そこまでの途中経過だけが履歴に残る（qwen3:32bのように最初の
-# 1文字まで40秒以上かかるモデルで実際に起きた）。
+# 1文字まで40秒以上かかるモデルで実際に起きた）。サイドバーのコーパス切り替え
+# ラジオ（上の約330行）も同じ disabled=st.session_state.generating を使っている。
+# 理由も同じ打ち切りだが、あちらは打ち切り後に messages だけが空になり、
+# generating と pending_question は次の初期化まで前回値のまま残るため、消した
+# はずの質問を新しいコーパスへ再送してしまう食い違いが起きる。
 question = st.chat_input("メッセージを入力", disabled=st.session_state.generating)
 
 if question and not st.session_state.generating:
@@ -397,7 +509,13 @@ if st.session_state.generating:
     # 持ち越すと、利用者が何も言っていないのにコードブロックで返り続ける。
     display = display_mode.detect(question)
 
-    extraction = conditions.extract(question, schema, ask_json)
+    # 技術ドキュメントでは条件抽出を走らせない。型番の絞り込みは社内の
+    # 製品仕様書に固有の仕組みであり、ここではLLM呼び出しが1回無駄に増えるだけ。
+    extraction = (
+        conditions.Extraction()
+        if searching_docs
+        else conditions.extract(question, schema, ask_json)
+    )
 
     table = None
     hits = []
@@ -407,7 +525,19 @@ if st.session_state.generating:
     # 捕まえずにいると生のトレースバックが画面に出る。
     search_error = None
     try:
-        if extraction.conditions:
+        if searching_docs:
+            # 検索には直前の質問を継ぎ足す（追質問は単独では引けない）。社内資料側の
+            # 検索経路（下の else 節）と同じ判断である。
+            query = contextual_query(question, st.session_state.messages[:-1])
+            # 技術ドキュメントは英語、質問は日本語のことが多い。継ぎ足した文字列
+            # ごと英語の検索クエリへ翻訳する（前の質問だけ訳して繋ぐより1回の
+            # LLM呼び出しで済み、追質問の文脈も一緒に訳せる）。生成は原文の
+            # question のまま行う（build_docs_prompt）。詳細は
+            # ingest/query_translation.py のモジュールdocstring参照。
+            query = query_translation.translate_query(query, ask_json)
+            hits = search(collection, query, index=index, rerank=rerank_callable)
+            user_content = build_docs_prompt(question, hits)
+        elif extraction.conditions:
             # 「最大の洗濯容量は」に答えるための並べ替え。最大・最小を尋ねる語が
             # 無ければLLMは呼ばれない（ingest/conditions.py の _SUPERLATIVES）。
             ranking = conditions.extract_ranking(question, schema, ask_json)

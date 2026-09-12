@@ -26,7 +26,6 @@ from ingest.models import PAGE, SLIDE, ParsedUnit
 from ingest.parsers import SUPPORTED_SUFFIXES, parse
 
 DEFAULT_SOURCE_DIR = Path(__file__).resolve().parent.parent / "source"
-DB_PATH = store.DB_PATH
 
 # アップロード由来の資料キーに付ける接頭辞。source/ 直下に同名の資料があっても
 # 上書きしないためと、画面の一覧・削除がキーの前方一致だけで済むようにするため。
@@ -132,6 +131,7 @@ def _ingest_one(
     caption_image,
     notify,
     report: IngestReport,
+    keep_code_blocks: bool = False,
 ) -> None:
     """1ファイルを解析して取り込み、結果を report へ記録する。
 
@@ -155,7 +155,9 @@ def _ingest_one(
             dropped = []
         else:
             units = kept
-        chunks = chunk_units(units, source, current_hash, today)
+        chunks = chunk_units(
+            units, source, current_hash, today, keep_code_blocks=keep_code_blocks
+        )
         vectors = embedder.embed_texts(
             [chunk.text for chunk in chunks], session=session
         )
@@ -195,6 +197,7 @@ def ingest_directory(
     force: bool = False,
     only_suffix: str | None = None,
     caption_image=None,
+    keep_code_blocks: bool = False,
 ) -> IngestReport:
     """source_dir を走査し、変更のあった資料だけを取り込む。"""
     # source/uploads/ の資料はキーが uploads/… になり、画面からアップロードした
@@ -233,6 +236,7 @@ def ingest_directory(
                 caption_image,
                 notify,
                 report,
+                keep_code_blocks,
             )
 
         # source/ を唯一の入力とするため、消えた資料はDBからも消す。
@@ -324,6 +328,23 @@ def main() -> int:
             "（指定しないと画像は一切走査されない。取り込みが大幅に遅くなる）"
         ),
     )
+    parser.add_argument(
+        "--db",
+        type=Path,
+        default=store.DB_PATH,
+        help=(
+            "取り込み先のDBファイル（既定は社内資料の vector_store.sqlite3）。"
+            "技術ドキュメントは docs_store.sqlite3 を指定する"
+        ),
+    )
+    parser.add_argument(
+        "--keep-code-blocks",
+        action="store_true",
+        help=(
+            "コードブロックを途中で割らずに1チャンクへ収める"
+            "（技術ドキュメント向け。社内資料には指定しない）"
+        ),
+    )
     args = parser.parse_args()
 
     if not args.source_dir.is_dir():
@@ -346,7 +367,15 @@ def main() -> int:
             return 1
         caption_image = vlm.caption_image
 
-    collection = store.open_store(str(DB_PATH))
+    # open_store はパスを間違えても例外を出さず空のDBを新規作成する
+    # （ingest/store.py の DB_PATH のコメント参照）。タイポは「検索結果が全部空」
+    # という静かな失敗になり、テストも緑のまま通る。どのファイルを開いたかを
+    # 必ず画面に出し、取り込み後の件数でも裏を取る。相対パスのまま出すと、
+    # 実行時のカレントディレクトリが違うだけで別のファイルを指していても
+    # 表示上は同じ文字列になり、この安全策自体が意味を失う。解決済みの
+    # 絶対パスを出す。
+    print(f"取り込み先: {args.db.resolve()}")
+    collection = store.open_store(str(args.db))
     report = ingest_directory(
         args.source_dir,
         collection,
@@ -354,6 +383,7 @@ def main() -> int:
         force=args.force,
         only_suffix=args.only_suffix,
         caption_image=caption_image,
+        keep_code_blocks=args.keep_code_blocks,
     )
 
     print("\n--- 結果 ---")
@@ -376,7 +406,11 @@ def main() -> int:
         print(f"失敗: {len(report.failed)}ファイル")
         for source, message in report.failed.items():
             print(f"  {source}: {message}")
-    print(f"DB内の総チャンク数: {collection.count()}（本文{collection.chunk_count()}種）")
+    total = collection.count()
+    print(f"DB内の総チャンク数: {total}（本文{collection.chunk_count()}種）")
+    if total == 0:
+        # 0件で正常終了すると、検索が全部空になる原因に気づけない。
+        print(f"警告: {args.db} は空です。--db のパスが正しいか確認してください")
 
     # 取り込めたことと、次にDBを開いたときに読めることは別の事実である。
     # ChromaDBでは前者だけが成立し、破損が次回起動まで露見しなかった。
@@ -385,7 +419,7 @@ def main() -> int:
     # 最後まで正しく返っていた。接続を開き直したうえで検索を1回通し、
     # ベクトルの層まで実際に触る。
     try:
-        verified = store.open_store(str(DB_PATH))
+        verified = store.open_store(str(args.db))
         indexed = verified.count()
         if indexed and not verified.search(
             [1.0] + [0.0] * (embedder.EMBED_DIM - 1), limit=1

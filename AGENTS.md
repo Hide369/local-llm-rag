@@ -31,4 +31,21 @@
   パスだけで、検索語も社内資料の中身も含まない。それでも「社内資料の検索は
   完全にローカルで閉じている」とは言えないので、オフライン環境ではモデルを
   事前に取得しておくこと。
+- 3本目は `scripts/fetch_docs.py` である。`docs_sources.toml` に書かれたURLへ
+  GET を出し、公式ドキュメントの `llms-full.txt` を取得する。送るのはURLへの
+  要求だけで、社内資料の内容も検索語も含まない。設定に書かれたURLしか取りに
+  行かず、ページ内のリンクは辿らない。人が明示的に起動したときだけ走り、
+  常駐プロセスもスケジューラも持たない。オフライン環境では実行できないが、
+  取得済みの `docs_source/` があれば取り込みはローカルで完結する。
+- 4本目は `OLLAMA_HOST` である。既定値（`ingest/embedder.py` の
+  `DEFAULT_OLLAMA_HOST = "http://127.0.0.1:11434"`）のままならこの経路は
+  マシンの外へ出ないが、README「ColabのL4 GPU」の節が示すとおり `.env` で
+  ngrok経由のリモートURLへ向けることができる。その場合、質問文・会話履歴・
+  生成に渡す検索結果のチャンク本文（`ingest/chat.py` の `ask_json` /
+  `stream_chat` が叩く `{OLLAMA_HOST}/api/chat`）と、取り込み時のドキュメント
+  自身の本文（`ingest/embedder.py` が叩く `{OLLAMA_HOST}/api/embed`）が、
+  そのつどこの経路に乗って外へ出る。これは技術ドキュメントのコーパスが
+  持ち込んだものではない。回答生成・条件抽出・埋め込みは以前から同じ経路を
+  使っており、`ingest/query_translation.py` の `translate_query()` も
+  `ask_json` を呼ぶだけで、新しい経路を増やすものではない。
 

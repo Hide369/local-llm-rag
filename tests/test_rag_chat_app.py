@@ -15,6 +15,7 @@ AppTest は rag_chat_app.py を同じプロセスで実行する。本番のス�
 再現しなくなる。1チャンクだけの決まった状態を作るため、store.open_store を
 インメモリのものへ差し替える。
 """
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -538,6 +539,69 @@ def test_the_caches_are_keyed_on_the_revision_not_the_chunk_count(app):
     assert len(seen) == 2, "get_index と get_schema の両方が revision を鍵にすること"
 
 
+def test_get_index_and_get_schema_are_keyed_on_the_corpus_not_revision_alone():
+    """revision だけでは鍵として足りない。コーパス（DBパス）も要る。
+
+    revision は各DBが自分の meta テーブルに持つ、ファイルごとに独立した
+    カウンタである（vector_store.sqlite3 と docs_store.sqlite3 はどちらも
+    取り込みのたびに1ずつ進むだけで、互いのカウンタを知らない）。そのため
+    2つのDBが同じ revision を持つことは普通に起こる。get_index / get_schema は
+    @st.cache_resource で、_collection は先頭アンダースコアでハッシュ対象から
+    外れているため、鍵に revision しか無いと、たまたま値が揃った瞬間に後から
+    呼ばれた側が先に呼ばれた側のコーパスの結果をそのまま受け取ってしまう
+    （設計書4.5節が警告する「理由の説明なく古い結果を返す」ことの一種）。
+
+    実際にDBの取り込み回数を揃えて衝突を作らなくても、呼び出し側で revision を
+    同じ値に固定すれば同じ状況を再現できる。ここでは2つの別コーパス（別の
+    中身を持つ2つのインメモリDB）に同じ revision=7 を渡し、返ってくる結果が
+    別物であることを見る。db_path を鍵に加えていなければ、2回目の呼び出しは
+    1回目の呼び出し結果をキャッシュからそのまま受け取り、中身が同じになる。
+    """
+    st.cache_resource.clear()
+    # rag_chat_app はモジュール直下で get_collection(DB_PATH) と
+    # ensure_reranker() を実行する。初回 import 時にそれが実DBやネットワークへ
+    # 触れないよう、ここでだけ store.open_store をスタブに差し替える
+    # （reranker.check_reranker は本ファイルのautouseフィクスチャで既にスタブ
+    # 済みなので、ここでは触れなくてよい）。2回目以降の import はキャッシュ
+    # 済みのモジュールを返すだけなので、このパッチは無害である。
+    with patch.object(store_module, "open_store", _stub_open_store({"source": "import.md"})):
+        import rag_chat_app
+    st.cache_resource.clear()
+
+    collection_a = open_real_store(":memory:")
+    collection_a.add(
+        ids=["a-chunk-1"],
+        documents=["社内資料の本文。"],
+        embeddings=[[0.1, 0.2]],
+        metadatas=[{"source": "internal.md", "shelf_id": 1}],
+    )
+    collection_b = open_real_store(":memory:")
+    collection_b.add(
+        ids=["b-chunk-1", "b-chunk-2"],
+        documents=["技術ドキュメントの本文。", "もう1チャンク。"],
+        embeddings=[[0.3, 0.4], [0.5, 0.6]],
+        metadatas=[
+            {"source": "docs.md", "page_count": 5},
+            {"source": "docs.md", "page_count": 5},
+        ],
+    )
+
+    # 同じ revision=7 を、パスが違う2つのコーパスに対して渡す。
+    index_a = rag_chat_app.get_index(collection_a, "internal/path", 7)
+    index_b = rag_chat_app.get_index(collection_b, "docs/path", 7)
+    assert index_a.ids != index_b.ids, (
+        "get_index が revision だけを鍵にしており、コーパスが違っても"
+        "同じBM25索引を返している"
+    )
+
+    schema_a = rag_chat_app.get_schema(collection_a, "internal/path", 7)
+    schema_b = rag_chat_app.get_schema(collection_b, "docs/path", 7)
+    assert schema_a != schema_b, (
+        "get_schema が revision だけを鍵にしており、コーパスが違っても"
+        "同じ属性一覧を返している"
+    )
+
+
 # --- 取り込みダイアログ ---------------------------------------------------
 #
 # 利用者のブラウザーから資料を取り込む経路。source/ はサーバー側にあり、
@@ -916,3 +980,390 @@ def test_a_search_failure_is_not_shown_as_notation(app):
 
     assert not app.exception
     assert all(OFFLINE_MESSAGE not in element.value for element in app.code)
+
+
+def _stub_open_store_per_path(bodies):
+    """パスごとに中身の違うインメモリDBを返す。
+
+    既存の _stub_open_store は引数を無視して同じDBを返すため、
+    2つのコーパスを区別するテストには使えない。
+    """
+    stores = {}
+
+    def factory(path, *args, **kwargs):
+        key = str(path)
+        if key not in stores:
+            collection = open_real_store(":memory:")
+            body = next(
+                (text for marker, text in bodies.items() if marker in key),
+                "該当なし",
+            )
+            collection.add(
+                ids=["chunk-1"],
+                documents=[body],
+                embeddings=[[0.1, 0.2]],
+                metadatas=[{"source": "a.md", "location_type": "section", "location": 1}],
+            )
+            stores[key] = collection
+        return stores[key]
+
+    return factory
+
+
+def test_the_corpus_switch_offers_both_choices(app):
+    with patch.object(store_module, "open_store", _stub_open_store_per_path({})):
+        app.run()
+    assert list(app.sidebar.radio[0].options) == ["社内資料", "技術ドキュメント"]
+
+
+def _fake_ask_json_returning_query(translated):
+    """検索クエリ翻訳（ingest/query_translation.py）用のask_jsonの代役。
+
+    どのテストも実際のOllamaへ触れさせないため、技術ドキュメントのコーパスへ
+    切り替えるテストでは常にこれで chat.ask_json を差し替える。
+    """
+    return lambda model, prompt, session=None: json.dumps({"query": translated})
+
+
+def test_choosing_the_documentation_corpus_searches_the_other_database(app):
+    """切り替えが本当に別のDBを引いていることを、返る本文で見る。
+
+    ラジオが画面に出ているだけでは配線されている証拠にならない。
+    """
+    stream = _fake_stream_chat("回答")
+    with (
+        patch.object(
+            store_module,
+            "open_store",
+            _stub_open_store_per_path(
+                {"docs_store": "st.dialog でダイアログを出します。",
+                 "vector_store": "洗濯機の運転音は26dBです。"},
+            ),
+        ),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+        patch.object(chat, "stream_chat", stream),
+        patch.object(chat, "ask_json", _fake_ask_json_returning_query("dialog")),
+    ):
+        app.run()
+        app.sidebar.radio[0].set_value("技術ドキュメント").run()
+        app.chat_input[0].set_value("ダイアログの出し方は").run()
+
+    sent = stream.calls[-1]["messages"][-1]["content"]
+    assert "st.dialog でダイアログを出します。" in sent
+    assert "洗濯機" not in sent
+
+
+def test_the_documentation_corpus_uses_the_documentation_prompt(app):
+    """社内資料向けの歯止めが技術ドキュメントに混ざらないことを見る。"""
+    stream = _fake_stream_chat("回答")
+    with (
+        patch.object(
+            store_module,
+            "open_store",
+            _stub_open_store_per_path({"docs_store": "st.dialog を使います。"}),
+        ),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+        patch.object(chat, "stream_chat", stream),
+        patch.object(chat, "ask_json", _fake_ask_json_returning_query("dialog")),
+    ):
+        app.run()
+        app.sidebar.radio[0].set_value("技術ドキュメント").run()
+        app.chat_input[0].set_value("ダイアログの出し方は").run()
+
+    sent = stream.calls[-1]["messages"][-1]["content"]
+    assert "混ぜないでください" in sent
+    assert "社内文書" not in sent
+
+
+def test_the_documentation_corpus_searches_with_the_translated_query(app):
+    """技術ドキュメントの検索クエリは英語へ翻訳したものであること。
+
+    生成側（build_docs_prompt）に渡す質問は原文の日本語のままでなければ
+    ならない（Task 8の設計制約）。search() に渡ったクエリと、生成に渡った
+    プロンプト文面の両方を見て、両者が別物であることを確認する。
+    """
+    stream = _fake_stream_chat("回答")
+    search_calls = []
+
+    def fake_search(
+        collection, query, index=None, session=None, threshold=None, n_results=4, rerank=None
+    ):
+        search_calls.append(query)
+        return []
+
+    with (
+        patch.object(store_module, "open_store", _stub_open_store_per_path({})),
+        patch.object(retrieval, "search", fake_search),
+        patch.object(chat, "stream_chat", stream),
+        patch.object(
+            chat, "ask_json", _fake_ask_json_returning_query("modal dialog st.dialog")
+        ),
+    ):
+        app.run()
+        app.sidebar.radio[0].set_value("技術ドキュメント").run()
+        app.chat_input[0].set_value("Streamlitでモーダルダイアログを出す書き方").run()
+
+    # search() に渡ったのは翻訳後のクエリであり、原文の日本語ではない。
+    assert search_calls == ["modal dialog st.dialog"]
+    # ヒットなしの build_docs_prompt は「ユーザーの質問: {question}」を含む。
+    # ここに原文の日本語質問がそのまま出ていること（生成は翻訳前の質問で行う）。
+    sent = stream.calls[-1]["messages"][-1]["content"]
+    assert "Streamlitでモーダルダイアログを出す書き方" in sent
+    assert "modal dialog st.dialog" not in sent
+
+
+def test_the_internal_corpus_never_calls_translation(app):
+    """社内資料のコーパスでは、翻訳のためのLLM呼び出しが一切起きないこと。
+
+    メタデータを source だけにするとスキーマが空になり、条件抽出
+    （conditions.extract）自体もLLMを呼ばずに即座に戻る
+    （ingest/conditions.py の schema が空なら呼ばない、という既存の門番）。
+    その状態で chat.ask_json の呼び出し回数が0であることは、翻訳のための
+    追加呼び出しがこの経路に一切配線されていないことの直接の証拠になる。
+    """
+    calls = []
+
+    def ask_json(model, prompt, session=None):
+        calls.append(prompt)
+        return "{}"
+
+    with (
+        patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+        patch.object(chat, "ask_json", ask_json),
+    ):
+        app.run()
+        app.chat_input[0].set_value("運転音は？").run()
+
+    assert not app.exception
+    assert calls == []
+
+
+def test_the_internal_corpus_is_unchanged_by_the_switch(app):
+    """既定は社内資料で、振る舞いは変更前と同じでなければならない。"""
+    stream = _fake_stream_chat("回答")
+    with (
+        patch.object(
+            store_module,
+            "open_store",
+            _stub_open_store_per_path({"vector_store": "洗濯機の運転音は26dBです。"}),
+        ),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+        patch.object(chat, "stream_chat", stream),
+    ):
+        app.run()
+        app.chat_input[0].set_value("運転音は").run()
+
+    sent = stream.calls[-1]["messages"][-1]["content"]
+    assert "洗濯機の運転音は26dBです。" in sent
+    assert "社内文書" in sent
+
+
+def _stub_open_store_docs_empty_internal_filled():
+    """技術ドキュメント側だけ、チャンクを1件も入れない状態を作る。
+
+    _stub_open_store_per_path は marker が当たらなくても "該当なし" の
+    1チャンクを必ず入れるため、count() が0になるケースを作れない。
+    open_store がタイポでも例外を出さず空のDBを新規作成する
+    （ingest/store.py）状況そのものを再現するには、このように別の factory が要る。
+    """
+    stores = {}
+
+    def factory(path, *args, **kwargs):
+        key = str(path)
+        if key not in stores:
+            collection = open_real_store(":memory:")
+            if "docs_store" not in key:
+                collection.add(
+                    ids=["chunk-1"],
+                    documents=["洗濯機の運転音は26dBです。"],
+                    embeddings=[[0.1, 0.2]],
+                    metadatas=[{"source": "a.md"}],
+                )
+            stores[key] = collection
+        return stores[key]
+
+    return factory
+
+
+def test_switching_to_the_empty_documentation_corpus_warns_with_the_cli_commands(app):
+    """CLIをまだ一度も走らせていない場合、切り替えただけでは何も分からない。
+
+    open_store はパスを間違えても例外を出さず空のDBを新規作成する
+    （ingest/store.py）。件数0のまま黙って検索するのではなく、取り込みに
+    使う2つのコマンドをサイドバーの警告として出す（設計書5.4節が
+    CLI側に要求している「0件なら警告」の画面側）。
+    """
+    with patch.object(
+        store_module, "open_store", _stub_open_store_docs_empty_internal_filled()
+    ):
+        app.run()
+        app.sidebar.radio[0].set_value("技術ドキュメント").run()
+
+    warnings = [w.value for w in app.sidebar.warning]
+    assert any("scripts.fetch_docs" in w and "scripts.ingest_source" in w for w in warnings)
+
+
+def test_the_nonempty_documentation_corpus_does_not_warn(app):
+    """中身があるときは、警告ではなく従来どおりのキャプションだけを出す。"""
+    with patch.object(
+        store_module,
+        "open_store",
+        _stub_open_store_per_path({"docs_store": "st.dialog を使います。"}),
+    ):
+        app.run()
+        app.sidebar.radio[0].set_value("技術ドキュメント").run()
+
+    warnings = [w.value for w in app.sidebar.warning]
+    assert not any("scripts.fetch_docs" in w for w in warnings)
+    captions = [c.value for c in app.sidebar.caption]
+    assert any("scripts.fetch_docs" in c for c in captions)
+
+
+def test_switching_corpus_clears_history_and_does_not_poison_the_next_query(app):
+    """検索対象を切り替えたら会話履歴を破棄し、次の質問に前コーパスの質問が
+    混ざらないこと。
+
+    再現手順（レビューの指摘）: 社内資料で「就業規則の有給休暇は？」と尋ね、
+    技術ドキュメントへ切り替えて「キャッシュの書き方は？」と尋ねると、
+    contextual_query が前の質問を継ぎ足し、翻訳後の検索クエリが
+    「paid leave work regulations cache」のようになって検索が外れる。
+    history にも前コーパスの回答が残り、build_docs_prompt の
+    「ドキュメントに書いてあることだけを使う」指示と矛盾する。
+    """
+    stream = _fake_stream_chat("回答")
+    translation_prompts = []
+
+    def fake_ask_json(model, prompt, session=None):
+        translation_prompts.append(prompt)
+        return json.dumps({"query": "cache usage"})
+
+    with (
+        patch.object(
+            store_module,
+            "open_store",
+            _stub_open_store_per_path(
+                {"docs_store": "キャッシュの書き方はst.cache_dataです。"}
+            ),
+        ),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+        patch.object(chat, "stream_chat", stream),
+        patch.object(chat, "ask_json", fake_ask_json),
+    ):
+        app.run()
+        app.chat_input[0].set_value("就業規則の有給休暇は？").run()
+        assert app.session_state.messages != []
+
+        # コーパスを切り替えた直後、履歴は残っていない。
+        app.sidebar.radio[0].set_value("技術ドキュメント").run()
+        assert app.session_state.messages == []
+        assert any("リセット" in info.value for info in app.sidebar.info)
+
+        app.chat_input[0].set_value("キャッシュの書き方は？").run()
+
+    # 翻訳へ渡したプロンプト（contextual_queryの出力）に前コーパスの質問語が
+    # 混ざっていないこと。
+    assert not any("有給休暇" in prompt for prompt in translation_prompts)
+    assert any("キャッシュ" in prompt for prompt in translation_prompts)
+
+    # 生成へ渡す履歴にも前コーパスの回答が残っていないこと。
+    sent_history = stream.calls[-1]["messages"]
+    assert not any("有給" in m["content"] for m in sent_history)
+
+
+def test_switching_corpus_with_no_prior_history_does_not_show_the_reset_notice(app):
+    """まだ何も質問していない状態での切り替えでは、消す履歴が無いので
+    リセット通知も出さない（切り替えのたびに毎回出ると煩わしい）。"""
+    with patch.object(store_module, "open_store", _stub_open_store_per_path({})):
+        app.run()
+        app.sidebar.radio[0].set_value("技術ドキュメント").run()
+
+    assert list(app.sidebar.info) == []
+
+
+def _seed_mid_generation_state(app, question):
+    """ストリーミング中の状態を直接作る。
+
+    AppTest.run() は内部のst.rerun()を全部消化してから戻るため、
+    chat_input.set_value().run() を普通に呼ぶだけでは生成が完了した後の
+    状態しか観測できない（test_input_is_re_enabled_and... と同じ制約）。
+    「質問済み・ストリーミング中に一度も再実行が終わっていない」瞬間を
+    再現するには、その時点で存在するはずの session_state を実行前に
+    直接仕込むしかない。
+    """
+    app.session_state["messages"] = [{"role": "user", "content": question}]
+    app.session_state["generating"] = True
+    app.session_state["pending_question"] = question
+    app.session_state["last_corpus"] = "社内資料"
+    app.session_state["corpus_radio"] = "社内資料"
+
+
+def test_the_corpus_radio_is_disabled_while_generating(app):
+    """生成中はコーパス切り替えラジオも無効化する（chat_inputと同じ手当て）。
+
+    レビューの指摘: 切り替えを無効化しないと、ストリーミング中に切り替えて
+    Streamlitが実行を打ち切っても generating と pending_question は
+    次の初期化まで残る。その結果、messages だけ空にした後で
+    「if st.session_state.generating:」が前コーパス向けの質問を新しい
+    コーパスへ再検索してしまう（上の約470行のコメント参照）。chat_input を
+    無効化しているのと同じ理由・同じ手当てが、このラジオにも要る。
+    """
+    with patch.object(
+        store_module,
+        "open_store",
+        _stub_open_store_per_path({"docs_store": "st.dialog を使います。"}),
+    ):
+        _seed_mid_generation_state(app, "就業規則の有給休暇は？")
+        app.run()
+
+    assert app.sidebar.radio[0].disabled is True
+
+
+def test_switching_corpus_mid_generation_does_not_reprocess_the_stale_question(app):
+    """生成中にラジオが切り替わっても、前コーパス向けの質問を新しい
+    コーパスへ再検索してはならない。
+
+    ラジオを無効化しても、それはブラウザ側の見た目を止めるだけで
+    session_state 自体を守るものではない。実機での再現手順（バグ報告の
+    シナリオ）は「ストリーミング中に切り替えると、Streamlitがその実行を
+    打ち切って、切り替え後の値ですぐ次の実行を始める」というものなので、
+    ここでも同じ形を1回のrun()で作る。すなわち、generating=True・
+    pending_question・messages は前コーパス（社内資料）向けのまま、
+    ラジオのキー（corpus_radio）だけ先に新しい値（技術ドキュメント）へ
+    書き換えてから run() する。app.run()を先に呼んで完了させてしまうと
+    その時点で generating が False に戻ってしまい（既存コードの末尾の
+    後始末）、再現したい「まだ後始末が済んでいない」状態を保てない。
+    """
+    search_calls = []
+
+    def fake_search(collection, query, index=None, session=None, threshold=None, n_results=4, rerank=None):
+        search_calls.append(query)
+        return []
+
+    with (
+        patch.object(
+            store_module,
+            "open_store",
+            _stub_open_store_per_path({"docs_store": "st.dialog を使います。"}),
+        ),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+        patch.object(retrieval, "search", fake_search),
+    ):
+        _seed_mid_generation_state(app, "就業規則の有給休暇は？")
+        # ラジオはまだ描画していないが、対応するキーへの代入は次のrun()で
+        # ウィジェットの戻り値としてそのまま読まれる。ストリーミングを
+        # 打ち切って次の実行が始まった瞬間（=前コーパス向けの状態と、
+        # 切り替え後の値が同居する1回のrun()）を1回で再現する。
+        app.session_state["corpus_radio"] = "技術ドキュメント"
+        app.run()
+
+    # 前コーパス向けの質問が、技術ドキュメント側へ再検索されていないこと
+    # （検索そのものが起きないこと）。
+    assert search_calls == []
+    assert app.session_state.messages == []
+    assert app.session_state.generating is False
+    assert app.session_state.pending_question is None
+    # 履歴だけでなく、生成中フラグと保留質問も一緒に打ち切られていること。
+    assert app.session_state.messages == []
+    assert app.session_state.generating is False
+    assert app.session_state.pending_question is None
