@@ -33,6 +33,7 @@ from ingest import (
 from ingest.parsers import SUPPORTED_SUFFIXES
 from ingest.prompting import (
     build_catalog_prompt,
+    build_docs_prompt,
     build_prompt,
     format_hit_caption,
     format_report,
@@ -46,6 +47,14 @@ from scripts.ingest_source import (
 )
 
 DB_PATH = str(store.DB_PATH)
+
+# 技術ドキュメントの取り込み先。社内資料とはファイルごと分ける。
+# 同じDBに入れると、社内規程の質問にライブラリのドキュメントが混ざり、
+# 「社内資料に無ければ答えない」という歯止めが効かなくなる。
+DOCS_DB_PATH = str(store.DB_PATH.parent / "docs_store.sqlite3")
+
+CORPUS_INTERNAL = "社内資料"
+CORPUS_DOCS = "技術ドキュメント"
 
 
 @st.cache_resource
@@ -289,48 +298,74 @@ SYSTEM_PROMPT = (
     "日本語で回答して下さい。"
 )
 
-collection = get_collection(DB_PATH)
+# どちらを検索するかは利用者が選ぶ。質問文からの自動判定にしないのは、
+# 誤判定が利用者から見えない失敗になるためである。選択はそのまま
+# 「どちらを検索したか」の表示も兼ねる。
+corpus = st.sidebar.radio("検索対象", [CORPUS_INTERNAL, CORPUS_DOCS])
+searching_docs = corpus == CORPUS_DOCS
+
+collection = get_collection(DOCS_DB_PATH if searching_docs else DB_PATH)
 index = get_index(collection, collection.revision())
 st.sidebar.metric("インデックス済みチャンク", collection.count())
 
 st.sidebar.divider()
-st.sidebar.caption(f"取り込み元: {DEFAULT_SOURCE_DIR.name}/")
-if st.sidebar.button("差分を取り込む"):
-    try:
-        embedder.check_ollama()
-    except embedder.EmbeddingError as error:
-        st.sidebar.error(str(error))
+if searching_docs:
+    if collection.count() == 0:
+        # open_store はパスを間違えても例外を出さず空のDBを新規作成する
+        # （ingest/store.py）。CLIをまだ一度も走らせていない場合、切り替えた
+        # 直後は検索が黙って全部空になるだけで、利用者には理由が分からない。
+        # 設計書5.4節がCLI側に要求している「0件なら警告」の画面側にあたる。
+        st.sidebar.warning(
+            "技術ドキュメントのDBが空です。次の2つのコマンドで取り込んでください: "
+            "python -m scripts.fetch_docs のあと "
+            "python -m scripts.ingest_source --source-dir docs_source "
+            "--db docs_store.sqlite3 --keep-code-blocks"
+        )
     else:
-        caption_image, reason = caption_image_or_reason()
-        with st.spinner(SPINNER_MESSAGE):
-            report = ingest_directory(
-                DEFAULT_SOURCE_DIR, collection, caption_image=caption_image
-            )
-        # ここで st.sidebar.success() を呼んでも画面には出ない。直後の st.rerun()
-        # がこの実行の描画をまとめて捨てるため（実測）。次の実行で描くために預ける。
-        st.session_state.ingest_report = format_report(report)
-        st.session_state.ingest_notice = reason
-        # 明示的な clear() は要らない。再実行時に読み直す revision が
-        # 書き込みで進んでおり、BM25索引も属性一覧も鍵ごと入れ替わる。
-        st.rerun()
+        st.sidebar.caption(
+            "更新は CLI で行います: "
+            "python -m scripts.fetch_docs のあと "
+            "python -m scripts.ingest_source --source-dir docs_source "
+            "--db docs_store.sqlite3 --keep-code-blocks"
+        )
+else:
+    st.sidebar.caption(f"取り込み元: {DEFAULT_SOURCE_DIR.name}/")
+    if st.sidebar.button("差分を取り込む"):
+        try:
+            embedder.check_ollama()
+        except embedder.EmbeddingError as error:
+            st.sidebar.error(str(error))
+        else:
+            caption_image, reason = caption_image_or_reason()
+            with st.spinner(SPINNER_MESSAGE):
+                report = ingest_directory(
+                    DEFAULT_SOURCE_DIR, collection, caption_image=caption_image
+                )
+            # ここで st.sidebar.success() を呼んでも画面には出ない。直後の st.rerun()
+            # がこの実行の描画をまとめて捨てるため（実測）。次の実行で描くために預ける。
+            st.session_state.ingest_report = format_report(report)
+            st.session_state.ingest_notice = reason
+            # 明示的な clear() は要らない。再実行時に読み直す revision が
+            # 書き込みで進んでおり、BM25索引も属性一覧も鍵ごと入れ替わる。
+            st.rerun()
 
-# 直前の取り込みの結果。取り出したら消す。次に画面が動くまで表示は残る。
-ingest_notice = st.session_state.pop("ingest_notice", None)
-if ingest_notice:
-    st.sidebar.warning(ingest_notice)
-ingest_report = st.session_state.pop("ingest_report", None)
-if ingest_report:
-    st.sidebar.success(ingest_report)
+    # 直前の取り込みの結果。取り出したら消す。次に画面が動くまで表示は残る。
+    ingest_notice = st.session_state.pop("ingest_notice", None)
+    if ingest_notice:
+        st.sidebar.warning(ingest_notice)
+    ingest_report = st.session_state.pop("ingest_report", None)
+    if ingest_report:
+        st.sidebar.success(ingest_report)
 
-# クライアントの画面から取り込むための入口。source/ に置けるのはサーバーを
-# 触れる管理者だけなので、上の「差分を取り込む」だけでは利用者は資料を足せない。
-if st.sidebar.button("資料をアップロード", key="open_upload_dialog"):
-    st.session_state.upload_dialog_open = True
+    # クライアントの画面から取り込むための入口。source/ に置けるのはサーバーを
+    # 触れる管理者だけなので、上の「差分を取り込む」だけでは利用者は資料を足せない。
+    if st.sidebar.button("資料をアップロード", key="open_upload_dialog"):
+        st.session_state.upload_dialog_open = True
 
-# フラグで開閉する。ボタン押下は次の再実行では False に戻るため、押した瞬間に
-# 呼ぶだけではダイアログ内の操作1回目で閉じてしまう。
-if st.session_state.get("upload_dialog_open"):
-    upload_dialog(collection)
+    # フラグで開閉する。ボタン押下は次の再実行では False に戻るため、押した瞬間に
+    # 呼ぶだけではダイアログ内の操作1回目で閉じてしまう。
+    if st.session_state.get("upload_dialog_open"):
+        upload_dialog(collection)
 
 # 検索結果は常に並べ替える。1問あたり約1.3秒（実測。8候補の中央値）であり常用に
 # 耐える。切る手段を画面に置いていたが、使うかどうかを判断する材料は画面に無く、
@@ -367,7 +402,9 @@ for message in st.session_state.messages:
         render_answer(message["content"], message.get("display"))
         render_evidence(message)
 
-schema = get_schema(collection, collection.revision())
+# 絞り込みは社内の製品仕様書に固有の仕組みである。技術ドキュメントでは
+# 属性一覧を組み立てない（条件抽出のLLM呼び出しも走らせない）。
+schema = None if searching_docs else get_schema(collection, collection.revision())
 
 
 def ask_json(prompt: str) -> str:
@@ -397,7 +434,13 @@ if st.session_state.generating:
     # 持ち越すと、利用者が何も言っていないのにコードブロックで返り続ける。
     display = display_mode.detect(question)
 
-    extraction = conditions.extract(question, schema, ask_json)
+    # 技術ドキュメントでは条件抽出を走らせない。型番の絞り込みは社内の
+    # 製品仕様書に固有の仕組みであり、ここではLLM呼び出しが1回無駄に増えるだけ。
+    extraction = (
+        conditions.Extraction()
+        if searching_docs
+        else conditions.extract(question, schema, ask_json)
+    )
 
     table = None
     hits = []
@@ -407,7 +450,13 @@ if st.session_state.generating:
     # 捕まえずにいると生のトレースバックが画面に出る。
     search_error = None
     try:
-        if extraction.conditions:
+        if searching_docs:
+            # 検索には直前の質問を継ぎ足す（追質問は単独では引けない）。社内資料側の
+            # 検索経路（下の else 節）と同じ判断である。
+            query = contextual_query(question, st.session_state.messages[:-1])
+            hits = search(collection, query, index=index, rerank=rerank_callable)
+            user_content = build_docs_prompt(question, hits)
+        elif extraction.conditions:
             # 「最大の洗濯容量は」に答えるための並べ替え。最大・最小を尋ねる語が
             # 無ければLLMは呼ばれない（ingest/conditions.py の _SUPERLATIVES）。
             ranking = conditions.extract_ranking(question, schema, ask_json)
