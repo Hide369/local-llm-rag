@@ -78,6 +78,20 @@ def test_bare_md_is_not_a_format_word():
     assert detect("md で表示して") is None
 
 
+def test_a_known_false_positive_asking_about_the_source_format():
+    """既知の誤検出であり、直さない。
+
+    「この資料はマークダウンで書いてありますか」は資料の書式を尋ねているだけで
+    表示形式の指定ではないが、「マークダウン」から8文字以内に意図語「書い」
+    （「書いてあります」の一部）が来るため "markdown" と判定される。
+    「Markdownで書いてください」（意図的な陽性、上のテスト）と語彙だけでは
+    区別できず、意図語から「書い」を抜くと今度はこちらを取りこぼす。
+    結果はコードブロック表示という見た目の崩れだけで、回答自体は失われない
+    ため、実害の小さいこの誤検出は許容する（レビュー2026-09-12）。
+    """
+    assert detect("この資料はマークダウンで書いてありますか") == "markdown"
+
+
 def test_the_returned_name_is_usable_as_a_code_language():
     """返り値は st.code の language にそのまま渡す。表記を揺らさない。"""
     assert detect("マークダウンで表示して") == "markdown"
