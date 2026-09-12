@@ -126,23 +126,27 @@ def run(sources, out_dir: Path, fetched_at: str, session=None, notify=None) -> F
     for source in sources:
         say(f"取得中: {source.name} — {source.url}")
         try:
+            # fetch と write_if_changed の両方をここに含める。書き込み側だけ
+            # 外に出すと、ディスク満杯や権限エラーがここで拾われずに run() の
+            # 外へ抜けてしまい、残りのソースが一切試されなくなる
+            # （仕様書5.2節「1件が失敗しても残りを続ける」はfetchに限定していない）。
             body, fell_back = fetch(source, session=session)
+            if fell_back:
+                report.index_only.append(source.name)
+                say(
+                    f"警告: {source.name} は llms-full.txt が無く llms.txt に落ちました。"
+                    "取り込めるのはリンクの目次だけで、記法の質問には答えられません"
+                )
+            if write_if_changed(source, body, out_dir, fetched_at):
+                report.updated.append(source.name)
+                say(f"更新: {source.name}（{len(body.encode('utf-8'))}バイト）")
+            else:
+                report.unchanged.append(source.name)
+                say(f"変更なし: {source.name}")
         except Exception as error:  # 1件の失敗で残りを止めない
             report.failed[source.name] = str(error)
             say(f"失敗: {source.name} — {error}")
             continue
-        if fell_back:
-            report.index_only.append(source.name)
-            say(
-                f"警告: {source.name} は llms-full.txt が無く llms.txt に落ちました。"
-                "取り込めるのはリンクの目次だけで、記法の質問には答えられません"
-            )
-        if write_if_changed(source, body, out_dir, fetched_at):
-            report.updated.append(source.name)
-            say(f"更新: {source.name}（{len(body)}バイト）")
-        else:
-            report.unchanged.append(source.name)
-            say(f"変更なし: {source.name}")
     return report
 
 

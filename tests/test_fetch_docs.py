@@ -197,12 +197,57 @@ def test_run_continues_after_a_failure(tmp_path):
 
 
 def test_run_records_the_sources_that_only_yielded_an_index(tmp_path):
-    """目次しか取れなかったことは、報告に必ず残す（仕様書4.1節）。"""
+    """目次しか取れなかったことは、報告に必ず残す（仕様書4.1節）。
+
+    report オブジェクトだけでなく notify に渡る文言も見る。CLI利用者は
+    report ではなく notify の出力しか目にしないため、そちらで警告が
+    読めなければ「本文が取れていない」ことに気づけない。
+    """
     sources = [fetch_docs.DocSource("a", "https://a.test/llms-full.txt", "1")]
     session = _FakeSession({"https://a.test/llms.txt": _FakeResponse(200, "- [x](/x)\n")})
-    report = fetch_docs.run(sources, tmp_path, "2026-09-12", session=session)
+    messages = []
+    report = fetch_docs.run(
+        sources, tmp_path, "2026-09-12", session=session, notify=messages.append
+    )
     assert report.index_only == ["a"]
     assert report.updated == ["a"]
+    assert any("llms.txt" in message and "警告" in message for message in messages)
+
+
+def test_run_continues_after_a_write_failure(tmp_path, monkeypatch):
+    """書き込みが落ちても、他のソースは続けて取りに行く。
+
+    write_if_changed を try/except の外に出していると、ディスク満杯や
+    権限エラーがここで run() の外へ抜け、b・c が一切試されなくなる。
+    fetch の失敗と同じ扱いにすることを monkeypatch で確かめる。
+    """
+    sources = [
+        fetch_docs.DocSource("a", "https://a.test/llms-full.txt", "1"),
+        fetch_docs.DocSource("b", "https://b.test/llms-full.txt", "2"),
+        fetch_docs.DocSource("c", "https://c.test/llms-full.txt", "3"),
+    ]
+    session = _FakeSession(
+        {
+            "https://a.test/llms-full.txt": _FakeResponse(200, "A\n"),
+            "https://b.test/llms-full.txt": _FakeResponse(200, "B\n"),
+            "https://c.test/llms-full.txt": _FakeResponse(200, "C\n"),
+        }
+    )
+    real_write_if_changed = fetch_docs.write_if_changed
+
+    def _fail_for_b(source, body, out_dir, fetched_at):
+        if source.name == "b":
+            raise OSError("disk full")
+        return real_write_if_changed(source, body, out_dir, fetched_at)
+
+    monkeypatch.setattr(fetch_docs, "write_if_changed", _fail_for_b)
+
+    report = fetch_docs.run(sources, tmp_path, "2026-09-12", session=session)
+
+    assert report.updated == ["a", "c"]
+    assert list(report.failed) == ["b"]
+    assert (tmp_path / "a.md").is_file()
+    assert (tmp_path / "c.md").is_file()
 
 
 def test_run_notifies_progress_per_source(tmp_path):
