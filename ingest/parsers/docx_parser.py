@@ -63,10 +63,15 @@ def parse_docx(path: Path, caption_image=None, on_missing_image=None, ocr_bytes=
             if described:
                 blocks.append(described)
 
-    # 表のセル・ヘッダー・浮動配置の画像は document.paragraphs に現れない
-    # （実測で確認済み）。段落を辿るだけでは黙って落ちるため、残りを末尾に付ける。
-    # 表の中まで辿る実装より短く、取りこぼしを構造的に無くせる。位置は失うが、
-    # 失うのは本文のどこにも紐づかない画像だけである。
+    # 表のセル・浮動配置の画像は document.paragraphs に現れない（実測で確認済み）。
+    # 段落を辿るだけでは黙って落ちるため、残りを末尾に付ける。表の中まで辿る
+    # 実装より短く、取りこぼしを構造的に無くせる。位置は失うが、失うのは
+    # 本文のどこにも紐づかない画像だけである。
+    # なおヘッダー・フッターの画像はここでは拾えない（README「既知の制約」参照）。
+    # それらはヘッダー/フッターパート配下にあり、document.part.related_parts に
+    # 現れるのはヘッダー/フッターパートそのものであって、画像はさらにその先の
+    # related_parts にある。_image_parts() が見ているのは document.part 直下
+    # なので、たどり着けない。
     if read_images:
         for rid, part in parts.items():
             if rid in seen:
