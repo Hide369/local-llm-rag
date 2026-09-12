@@ -219,6 +219,44 @@ def test_the_workbook_is_opened_once_when_no_image_reader_is_given(book_with_ima
     assert opens[0].get("read_only") is True
 
 
+def test_two_images_on_one_sheet_are_ordered_by_their_anchor_cell(tmp_path):
+    """_anchor_key は3段の getattr 連鎖で書かれていて、期待する形が無ければ
+    黙って (0, 0) を返す（防御的だが検証は無かった）。2枚の画像を別々の
+    セルに置き、行→列の読み順どおりに並ぶかを確かめる。
+    """
+    import io
+
+    from PIL import Image as PILImage
+
+    def _label(blob: bytes) -> str:
+        # どちらの画像かは、再エンコード経路に左右されないようPILで開いて
+        # 色そのもので見分ける（バイト列の一致に頼るとエンコード差で崩れる）。
+        color = PILImage.open(io.BytesIO(blob)).convert("RGB").getpixel((0, 0))
+        return "青い画像です。" if color[2] > color[0] else "赤い画像です。"
+
+    blue_path = tmp_path / "blue.png"
+    red_path = tmp_path / "red.png"
+    Image.new("RGB", (40, 40), "blue").save(blue_path)
+    Image.new("RGB", (40, 40), "red").save(red_path)
+
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "並び"
+    sheet["A1"] = "先頭行"
+    # 赤を先に「貼り付ける」が、アンカーは下の行（D10）にする。
+    # 挿入順ではなくセル位置で並ぶことを確かめるため、わざと逆にする。
+    sheet.add_image(XlsxImage(str(red_path)), "D10")
+    sheet.add_image(XlsxImage(str(blue_path)), "A2")
+    path = tmp_path / "並び.xlsx"
+    book.save(path)
+
+    text = parse_xlsx(path, caption_image=_label, ocr_bytes=lambda _b: "")[0].text
+
+    assert "青い画像です。" in text
+    assert "赤い画像です。" in text
+    assert text.index("青い画像です。") < text.index("赤い画像です。")
+
+
 def test_an_empty_sheet_without_images_still_produces_no_unit(tmp_path):
     """画像対応を入れても、本当に空のシートは飛ばし続ける。"""
     book = Workbook()
