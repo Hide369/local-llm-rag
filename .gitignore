@@ -22,6 +22,12 @@ chroma_db/
 # 取り込み対象の原本（バイナリが大きく、内容も配布対象ではない）
 source/
 
+# 取得した公式ドキュメントと、その取り込み先DB。source/ と vector_store.sqlite3 と
+# 同じ理由で追跡しない（大きく、docs_sources.toml からいつでも取り直せる）
+docs_source/
+docs_store.sqlite3
+docs_store.sqlite3.bak-*
+
 # 取り込み対象から外した資料。削除ではなく退避しているだけで、戻せば索引に復帰する
 source_archive/
 

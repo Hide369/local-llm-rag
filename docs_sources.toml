@@ -1,0 +1,36 @@
+# 取り込む公式ドキュメントの一覧。scripts/fetch_docs.py が読む。
+#
+# url には llms-full.txt を書くこと。llms.txt は各ページへのリンクの目次であって
+# 本文ではない（実測 2026-09-12: docs.streamlit.io/llms.txt はコードフェンス0個）。
+#
+# version は requirements.txt で固定している版を書く。取得先は常に最新版の
+# ドキュメントなので厳密には一致しないが、どの版を使っている状態で取り込んだかを
+# 残すために持つ。
+#
+# llms.txt を公開していないライブラリは載せられない（実測 2026-09-12 で
+# fastapi・pytest・numpy は404）。
+
+[[source]]
+name = "streamlit"
+url = "https://docs.streamlit.io/llms-full.txt"
+version = "1.61.1"
+
+[[source]]
+name = "langchain-text-splitters"
+url = "https://python.langchain.com/llms-full.txt"
+version = "1.1.2"
+
+[[source]]
+name = "ollama"
+url = "https://docs.ollama.com/llms-full.txt"
+version = "0.0.0"
+
+[[source]]
+name = "huggingface_hub"
+url = "https://huggingface.co/docs/huggingface_hub/llms-full.txt"
+version = "1.27.0"
+
+[[source]]
+name = "pymupdf"
+url = "https://pymupdf.readthedocs.io/llms-full.txt"
+version = "1.28.2"
