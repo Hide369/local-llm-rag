@@ -12,9 +12,10 @@ from scripts import fetch_docs
 
 
 class _FakeResponse:
-    def __init__(self, status_code, text=""):
+    def __init__(self, status_code, text="", content_type="text/plain"):
         self.status_code = status_code
         self.text = text
+        self.headers = {"Content-Type": content_type}
 
     def raise_for_status(self):
         if self.status_code >= 400:
@@ -307,3 +308,83 @@ def test_main_reports_a_missing_required_key_instead_of_a_traceback(
     out = capsys.readouterr().out
     assert str(config) in out
     assert "version" in out
+
+
+# 実測 2026-09-13: python.langchain.com/llms-full.txt は 404 ではなく、
+# ドキュメントサイトの HTML を 200 で返した。素通しした結果、HTML・CSS・
+# JavaScript が1,531チャンク（当時のコーパスの12.8%）DBに入り、検索で
+# 引けるノイズになった。正しいURLは docs.langchain.com/llms-full.txt である。
+_HTML_PAGE = (
+    '<!DOCTYPE html><html lang="en"><head><title>Docs</title>'
+    "<script>var a=1;</script></head><body>…</body></html>"
+)
+
+
+def test_fetch_rejects_an_html_page_served_with_a_success_status():
+    """200 で返る HTML を本文として受け入れない。
+
+    状態コードだけでは足りない。取り込んでしまうと、失敗が「検索がノイズを
+    引く」という形でしか現れず、原因に辿り着くまでが遠い。
+    """
+    session = _FakeSession(
+        {"https://example.test/llms-full.txt": _FakeResponse(200, _HTML_PAGE)}
+    )
+    with pytest.raises(fetch_docs.NotDocumentationError) as error:
+        fetch_docs.fetch(_source(), session=session)
+    assert "HTML" in str(error.value)
+
+
+def test_fetch_rejects_html_by_content_type_even_without_a_doctype():
+    """本文の見た目に頼らず Content-Type も見る。
+
+    doctype を持たない断片を返すサーバーもある。どちらか一方でも
+    HTML だと分かれば受け入れない。
+    """
+    session = _FakeSession(
+        {
+            "https://example.test/llms-full.txt": _FakeResponse(
+                200, "<div>本文ではない</div>", content_type="text/html; charset=utf-8"
+            )
+        }
+    )
+    with pytest.raises(fetch_docs.NotDocumentationError):
+        fetch_docs.fetch(_source(), session=session)
+
+
+def test_fetch_accepts_markdown_that_merely_mentions_html():
+    """HTML の話をしている Markdown は本文である。誤検出しない。
+
+    ドキュメントは HTML の例を載せることがある。先頭が HTML かどうかで
+    判定し、本文中に <div> が出てくることを理由に捨てない。
+    """
+    body = "\n".join(
+        ["# 見出し", "", "HTML を埋め込むには:", "", "```html", "<div>x</div>", "```", ""]
+    )
+    session = _FakeSession(
+        {"https://example.test/llms-full.txt": _FakeResponse(200, body)}
+    )
+    text, fell_back = fetch_docs.fetch(_source(), session=session)
+    assert text == body
+    assert fell_back is False
+
+
+def test_an_html_response_is_reported_as_a_failure_not_written(tmp_path):
+    """HTML を掴んだソースは failed に入り、ファイルを書かない。
+
+    run() は1件の失敗で止まらないので、他のライブラリの取得は続く。
+    """
+    sources = [
+        fetch_docs.DocSource("a", "https://a.test/llms-full.txt", "1"),
+        fetch_docs.DocSource("b", "https://b.test/llms-full.txt", "2"),
+    ]
+    session = _FakeSession(
+        {
+            "https://a.test/llms-full.txt": _FakeResponse(200, _HTML_PAGE),
+            "https://b.test/llms-full.txt": _FakeResponse(200, "# 本文\n"),
+        }
+    )
+    report = fetch_docs.run(sources, tmp_path, "2026-09-13", session=session)
+
+    assert list(report.failed) == ["a"]
+    assert report.updated == ["b"]
+    assert not (tmp_path / "a.md").exists()

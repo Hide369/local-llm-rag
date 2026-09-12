@@ -254,6 +254,10 @@ BM25に床（フロア）を設けない判断（`ingest/retrieval.py`）が以�
 コード例を答えさせる。社内資料とは**別のDB**（`docs_store.sqlite3`）に入れ、
 画面のサイドバー「検索対象」で切り替える。
 
+**どのライブラリに答えられるか**、各資料が実際に扱う範囲、対象にできない
+ライブラリとその理由は [docs/コーディング対応ライブラリ.md](docs/コーディング対応ライブラリ.md)
+にまとめてある。
+
 ```powershell
 # 1. 取得（外部通信あり。docs_sources.toml に書かれたURLだけ）
 .\myvenv313\Scripts\python.exe -m scripts.fetch_docs

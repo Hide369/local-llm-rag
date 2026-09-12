@@ -15,9 +15,11 @@ name = "streamlit"
 url = "https://docs.streamlit.io/llms-full.txt"
 version = "1.61.1"
 
+# URL は docs.langchain.com にする。python.langchain.com/llms-full.txt は
+# 404 ではなく、ドキュメントサイトの HTML を 200 で返す（実測 2026-09-13）。
 [[source]]
 name = "langchain-text-splitters"
-url = "https://python.langchain.com/llms-full.txt"
+url = "https://docs.langchain.com/llms-full.txt"
 version = "1.1.2"
 
 [[source]]
@@ -34,3 +36,11 @@ version = "1.27.0"
 name = "pymupdf"
 url = "https://pymupdf.readthedocs.io/llms-full.txt"
 version = "1.28.2"
+
+# このリポジトリは scripts/rag_mcp_server.py で MCP サーバーを提供している。
+# 公式ドキュメントは modelcontextprotocol.io にあり、ライブラリのドメインとは
+# 別である（実測 2026-09-13: 2,399,231バイト、コードフェンス940個）。
+[[source]]
+name = "mcp"
+url = "https://modelcontextprotocol.io/llms-full.txt"
+version = "2.2.0"
