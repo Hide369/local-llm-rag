@@ -1,5 +1,6 @@
 from ingest.prompting import (
     build_catalog_prompt,
+    build_docs_prompt,
     build_prompt,
     format_hit_caption,
     format_report,
@@ -290,3 +291,48 @@ def test_the_report_names_the_images_that_were_not_found():
 def test_the_report_stays_quiet_when_no_image_is_missing():
     """0件なのか機能が働いていないのか、読み手が区別できなくなるのを防ぐ。"""
     assert "画像が見つかりません" not in format_report(IngestReport(indexed={"a.md": 1}))
+
+
+def test_docs_prompt_tells_the_model_to_use_only_the_retrieved_syntax():
+    """この機能の核。文脈を読んだうえで学習時の記法に戻るのを止める。
+
+    「ドキュメントに書かれている記法を使え」だけでは足りない。モデルは
+    参考にしたうえで、知っている古い書き方を混ぜる余地が残る。混ぜるなと
+    明示的に言う。
+    """
+    prompt = build_docs_prompt("ダイアログの出し方は", [_hit(text="st.dialog を使う")])
+    assert "st.dialog を使う" in prompt
+    assert "ダイアログの出し方は" in prompt
+    assert "混ぜないでください" in prompt
+
+
+def test_docs_prompt_does_not_mention_internal_documents():
+    """社内資料向けの歯止めをそのまま流用すると文面が嘘になる。
+
+    技術ドキュメントの検索結果に対して「社内文書からは回答できない」と
+    答えさせるのは意味が通らない。
+    """
+    prompt = build_docs_prompt("ダイアログの出し方は", [_hit()])
+    assert "社内" not in prompt
+
+
+def test_docs_prompt_forbids_inventing_an_api():
+    prompt = build_docs_prompt("ダイアログの出し方は", [_hit()])
+    assert "推測で補わないでください" in prompt
+
+
+def test_docs_prompt_forbids_writing_the_citation_in_the_answer_body():
+    """社内資料側と揃える。出典は画面の畳み込みで見せる。"""
+    prompt = build_docs_prompt("ダイアログの出し方は", [_hit()])
+    assert "出典を書かないでください" in prompt
+
+
+def test_docs_prompt_declines_when_there_are_no_hits():
+    """根拠が1件も無いときこそ歯止めが要る。
+
+    ここで質問をそのまま返すと、system prompt だけが残りモデルは
+    知識で答えにいく。それはこの機能が避けたかったことそのものである。
+    """
+    prompt = build_docs_prompt("ダイアログの出し方は", [])
+    assert "ダイアログの出し方は" in prompt
+    assert "見つかりませんでした" in prompt
