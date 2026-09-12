@@ -150,3 +150,60 @@ def test_a_page_without_labels_produces_no_unit(tmp_path):
 def test_drawio_is_routed_by_the_registry(compressed_path):
     assert ".drawio" in SUPPORTED_SUFFIXES
     assert parse(compressed_path)[0].heading == "業務フロー"
+
+
+def test_a_decompression_bomb_is_skipped_and_other_pages_survive(tmp_path, monkeypatch, capsys):
+    """.drawio はアップロード可能な形式なので、数KBが展開後に膨れ上がる
+    zip bomb への歯止めが要る（md_parser._resolve が資料の中身をファイル
+    システムへ渡す前に防御しているのと同じ考え方）。上限を超えたページは
+    1件だけ諦め、他のページは生き残ることを確かめる。
+    """
+    import ingest.parsers.drawio_parser as drawio_parser
+
+    # 通常のページ（_MODEL、URLエンコード後で1KB弱）は収まり、繰り返しで
+    # 膨らませた爆弾ページだけが超えるよう、上限を小さく差し替える。
+    monkeypatch.setattr(drawio_parser, "_MAX_DECOMPRESSED_BYTES", 2000)
+    bomb = (
+        '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>'
+        + (
+            '<mxCell id="9" value="繰り返し" vertex="1" parent="1">'
+            '<mxGeometry x="0" y="0" width="1" height="1"/></mxCell>'
+        )
+        * 1000
+        + "</root></mxGraphModel>"
+    )
+    path = tmp_path / "爆弾.drawio"
+    path.write_text(
+        f'<mxfile><diagram name="爆弾" id="a">{_pack(bomb)}</diagram>'
+        f'<diagram name="無事" id="b">{_pack(_MODEL)}</diagram></mxfile>',
+        encoding="utf-8",
+    )
+
+    units = parse_drawio(path)
+
+    assert [unit.heading for unit in units] == ["無事"]
+    assert "上限" in capsys.readouterr().err
+
+
+def test_a_malformed_coordinate_is_skipped_without_taking_down_the_file(tmp_path, capsys):
+    """_position() の float(y or 0) は非数値座標で ValueError を投げる。
+    以前はこれが parse_drawio の except に無く、1ページの壊れた座標が
+    ファイル全体を道連れにしていた。他のページは生き残ることを確かめる。
+    """
+    bad = (
+        '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>'
+        '<mxCell id="2" value="壊れた図形" vertex="1" parent="1">'
+        '<mxGeometry x="abc" y="0" width="1" height="1"/></mxCell>'
+        "</root></mxGraphModel>"
+    )
+    path = tmp_path / "壊れた座標.drawio"
+    path.write_text(
+        f'<mxfile><diagram name="壊れた図" id="a">{_pack(bad)}</diagram>'
+        f'<diagram name="無事" id="b">{_pack(_MODEL)}</diagram></mxfile>',
+        encoding="utf-8",
+    )
+
+    units = parse_drawio(path)
+
+    assert [unit.heading for unit in units] == ["無事"]
+    assert "警告" in capsys.readouterr().err

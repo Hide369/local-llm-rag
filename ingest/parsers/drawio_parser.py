@@ -28,6 +28,13 @@ _TAG = re.compile(r"<[^>]+>")
 # 座標を持たない要素（辺のラベル等）を末尾へ送るための番兵。
 _NO_POSITION = float("inf")
 
+# 展開後サイズの上限（zip bomb対策）。.drawio はアップロード可能な形式であり、
+# 数KBのファイルが圧縮率次第で数GBに膨らみうる。md_parser._resolve が資料の
+# 中身をファイルシステムへ渡す前に防御しているのと同じ考え方で、ここでは
+# 展開そのものに歯止めをかける。実際の図はテキストラベルの羅列でしかなく
+# 展開後も数百KB程度に収まるため、50MBは実運用のどんな図面より十分大きい。
+_MAX_DECOMPRESSED_BYTES = 50 * 1024 * 1024
+
 
 def _model_element(diagram):
     """<diagram> の中身を mxGraphModel 要素にする。
@@ -48,7 +55,15 @@ def _model_element(diagram):
     text = (diagram.text or "").strip()
     if not text:
         return None
-    raw = zlib.decompress(base64.b64decode(text), -15)
+    decompressor = zlib.decompressobj(-15)
+    raw = decompressor.decompress(base64.b64decode(text), _MAX_DECOMPRESSED_BYTES)
+    if decompressor.unconsumed_tail:
+        # 上限に達してもまだ展開しきれていない = zip bomb とみなして
+        # このページを諦める。zlib.error に載せるのは、呼び出し元
+        # (parse_drawio) が既に拾っている例外の型を増やさないため。
+        raise zlib.error(
+            f"展開後サイズが上限（{_MAX_DECOMPRESSED_BYTES}バイト）を超えました"
+        )
     xml = urllib.parse.unquote(raw.decode("utf-8"))
     return ElementTree.fromstring(xml)
 
@@ -106,9 +121,17 @@ def parse_drawio(path: Path, caption_image=None, on_missing_image=None) -> list[
         try:
             model = _model_element(diagram)
             labels = _page_labels(model) if model is not None else []
-        except (zlib.error, binascii.Error, ElementTree.ParseError, UnicodeDecodeError) as error:
+        except (
+            zlib.error,
+            binascii.Error,
+            ElementTree.ParseError,
+            UnicodeDecodeError,
+            ValueError,
+        ) as error:
             # 1ページの失敗で他のページと他の資料を道連れにしない
-            # （pdf_parser._describe_images と同じ方針）。
+            # （pdf_parser._describe_images と同じ方針）。ValueError は
+            # _position() の float(y or 0) が非数値の座標に当たったときに出る。
+            # これが漏れると、1ページの壊れた座標がファイル全体を落としていた。
             print(
                 f"警告: 図を読めませんでした（{path.name} 図「{name}」）: {error}",
                 file=sys.stderr,
