@@ -36,3 +36,11 @@ version = "1.27.0"
 name = "pymupdf"
 url = "https://pymupdf.readthedocs.io/llms-full.txt"
 version = "1.28.2"
+
+# このリポジトリは scripts/rag_mcp_server.py で MCP サーバーを提供している。
+# 公式ドキュメントは modelcontextprotocol.io にあり、ライブラリのドメインとは
+# 別である（実測 2026-09-13: 2,399,231バイト、コードフェンス940個）。
+[[source]]
+name = "mcp"
+url = "https://modelcontextprotocol.io/llms-full.txt"
+version = "2.2.0"
