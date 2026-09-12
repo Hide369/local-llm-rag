@@ -1279,3 +1279,91 @@ def test_switching_corpus_with_no_prior_history_does_not_show_the_reset_notice(a
         app.sidebar.radio[0].set_value("技術ドキュメント").run()
 
     assert list(app.sidebar.info) == []
+
+
+def _seed_mid_generation_state(app, question):
+    """ストリーミング中の状態を直接作る。
+
+    AppTest.run() は内部のst.rerun()を全部消化してから戻るため、
+    chat_input.set_value().run() を普通に呼ぶだけでは生成が完了した後の
+    状態しか観測できない（test_input_is_re_enabled_and... と同じ制約）。
+    「質問済み・ストリーミング中に一度も再実行が終わっていない」瞬間を
+    再現するには、その時点で存在するはずの session_state を実行前に
+    直接仕込むしかない。
+    """
+    app.session_state["messages"] = [{"role": "user", "content": question}]
+    app.session_state["generating"] = True
+    app.session_state["pending_question"] = question
+    app.session_state["last_corpus"] = "社内資料"
+    app.session_state["corpus_radio"] = "社内資料"
+
+
+def test_the_corpus_radio_is_disabled_while_generating(app):
+    """生成中はコーパス切り替えラジオも無効化する（chat_inputと同じ手当て）。
+
+    レビューの指摘: 切り替えを無効化しないと、ストリーミング中に切り替えて
+    Streamlitが実行を打ち切っても generating と pending_question は
+    次の初期化まで残る。その結果、messages だけ空にした後で
+    「if st.session_state.generating:」が前コーパス向けの質問を新しい
+    コーパスへ再検索してしまう（上の約470行のコメント参照）。chat_input を
+    無効化しているのと同じ理由・同じ手当てが、このラジオにも要る。
+    """
+    with patch.object(
+        store_module,
+        "open_store",
+        _stub_open_store_per_path({"docs_store": "st.dialog を使います。"}),
+    ):
+        _seed_mid_generation_state(app, "就業規則の有給休暇は？")
+        app.run()
+
+    assert app.sidebar.radio[0].disabled is True
+
+
+def test_switching_corpus_mid_generation_does_not_reprocess_the_stale_question(app):
+    """生成中にラジオが切り替わっても、前コーパス向けの質問を新しい
+    コーパスへ再検索してはならない。
+
+    ラジオを無効化しても、それはブラウザ側の見た目を止めるだけで
+    session_state 自体を守るものではない。実機での再現手順（バグ報告の
+    シナリオ）は「ストリーミング中に切り替えると、Streamlitがその実行を
+    打ち切って、切り替え後の値ですぐ次の実行を始める」というものなので、
+    ここでも同じ形を1回のrun()で作る。すなわち、generating=True・
+    pending_question・messages は前コーパス（社内資料）向けのまま、
+    ラジオのキー（corpus_radio）だけ先に新しい値（技術ドキュメント）へ
+    書き換えてから run() する。app.run()を先に呼んで完了させてしまうと
+    その時点で generating が False に戻ってしまい（既存コードの末尾の
+    後始末）、再現したい「まだ後始末が済んでいない」状態を保てない。
+    """
+    search_calls = []
+
+    def fake_search(collection, query, index=None, session=None, threshold=None, n_results=4, rerank=None):
+        search_calls.append(query)
+        return []
+
+    with (
+        patch.object(
+            store_module,
+            "open_store",
+            _stub_open_store_per_path({"docs_store": "st.dialog を使います。"}),
+        ),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+        patch.object(retrieval, "search", fake_search),
+    ):
+        _seed_mid_generation_state(app, "就業規則の有給休暇は？")
+        # ラジオはまだ描画していないが、対応するキーへの代入は次のrun()で
+        # ウィジェットの戻り値としてそのまま読まれる。ストリーミングを
+        # 打ち切って次の実行が始まった瞬間（=前コーパス向けの状態と、
+        # 切り替え後の値が同居する1回のrun()）を1回で再現する。
+        app.session_state["corpus_radio"] = "技術ドキュメント"
+        app.run()
+
+    # 前コーパス向けの質問が、技術ドキュメント側へ再検索されていないこと
+    # （検索そのものが起きないこと）。
+    assert search_calls == []
+    assert app.session_state.messages == []
+    assert app.session_state.generating is False
+    assert app.session_state.pending_question is None
+    # 履歴だけでなく、生成中フラグと保留質問も一緒に打ち切られていること。
+    assert app.session_state.messages == []
+    assert app.session_state.generating is False
+    assert app.session_state.pending_question is None

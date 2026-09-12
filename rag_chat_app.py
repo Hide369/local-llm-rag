@@ -325,7 +325,22 @@ SYSTEM_PROMPT = (
 # どちらを検索するかは利用者が選ぶ。質問文からの自動判定にしないのは、
 # 誤判定が利用者から見えない失敗になるためである。選択はそのまま
 # 「どちらを検索したか」の表示も兼ねる。
-corpus = st.sidebar.radio("検索対象", [CORPUS_INTERNAL, CORPUS_DOCS], key="corpus_radio")
+#
+# 生成中は chat_input と同じ理由（下の約470行、disabled=st.session_state.generating
+# のコメント参照）でこのラジオも無効化する。ここを空けたままだと、ストリーミング中に
+# 切り替えてもStreamlitが実行中の生成を打ち切って新しい実行を始めてしまう点は
+# chat_input と同じだが、こちらは打ち切った上できき目が違う。打ち切り後の実行では
+# 下のコーパス切り替えブロックが messages を空にする一方、generating と
+# pending_question はこの後の初期化ブロックまで前回の値のまま残るため、
+# 「消したはずの質問」を新しく選んだコーパスに対してもう一度検索してしまう。
+# chat_input を無効化しているのと同じ手当てをラジオにも及ぼせば、切り替え自体が
+# 生成中は起こらなくなり、この食い違いも生まれない。
+corpus = st.sidebar.radio(
+    "検索対象",
+    [CORPUS_INTERNAL, CORPUS_DOCS],
+    key="corpus_radio",
+    disabled=st.session_state.get("generating", False),
+)
 searching_docs = corpus == CORPUS_DOCS
 
 # コーパスを切り替えたら会話履歴を破棄する。残したままだと、
@@ -349,6 +364,18 @@ elif st.session_state.last_corpus != corpus:
         # 空DBの警告（下のst.sidebar.warning）と同じ理由で、サイドバーに
         # 明示する。
         st.sidebar.info("検索対象を切り替えたため、会話履歴をリセットしました。")
+
+    # generating / pending_question も念のためここで打ち切る。ラジオは
+    # 生成中disabled（上の約330行、chat_inputと同じ理由）にしてあり、通常は
+    # 生成中に切り替えが起こること自体がない。ただし disabled はブラウザ側の
+    # 見た目を止めるだけで、session_state を守るものではない。何らかの理由で
+    # （Streamlit自体の不具合、テストのように内部状態を直接書き換える経路など）
+    # 切り替えが素通りした場合、消したはずの pending_question が
+    # generating=True のまま残り、下の「if st.session_state.generating:」が
+    # 新しく選ばれたコーパスに対してそれを再検索してしまう。messages を
+    # 空にするのと矛盾しないよう、ここでも合わせて解除しておく。
+    st.session_state.generating = False
+    st.session_state.pending_question = None
 
 # get_collection と違い get_index / get_schema はコレクションをハッシュに
 # 使わない（先頭アンダースコア）ため、どちらのDBを開いたかを鍵に加える必要が
@@ -461,7 +488,11 @@ if "generating" not in st.session_state:
 # 生成中は入力欄を無効化する。無効化しないと応答待ちの間にもう一度送信でき、
 # Streamlitが実行中のストリーミングを打ち切って新しい実行に切り替えてしまう。
 # その結果、そこまでの途中経過だけが履歴に残る（qwen3:32bのように最初の
-# 1文字まで40秒以上かかるモデルで実際に起きた）。
+# 1文字まで40秒以上かかるモデルで実際に起きた）。サイドバーのコーパス切り替え
+# ラジオ（上の約330行）も同じ disabled=st.session_state.generating を使っている。
+# 理由も同じ打ち切りだが、あちらは打ち切り後に messages だけが空になり、
+# generating と pending_question は次の初期化まで前回値のまま残るため、消した
+# はずの質問を新しいコーパスへ再送してしまう食い違いが起きる。
 question = st.chat_input("メッセージを入力", disabled=st.session_state.generating)
 
 if question and not st.session_state.generating:
