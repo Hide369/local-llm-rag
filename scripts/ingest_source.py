@@ -26,7 +26,6 @@ from ingest.models import PAGE, SLIDE, ParsedUnit
 from ingest.parsers import SUPPORTED_SUFFIXES, parse
 
 DEFAULT_SOURCE_DIR = Path(__file__).resolve().parent.parent / "source"
-DB_PATH = store.DB_PATH
 
 # アップロード由来の資料キーに付ける接頭辞。source/ 直下に同名の資料があっても
 # 上書きしないためと、画面の一覧・削除がキーの前方一致だけで済むようにするため。
