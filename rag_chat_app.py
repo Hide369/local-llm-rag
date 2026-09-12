@@ -56,6 +56,14 @@ DOCS_DB_PATH = str(store.DB_PATH.parent / "docs_store.sqlite3")
 CORPUS_INTERNAL = "社内資料"
 CORPUS_DOCS = "技術ドキュメント"
 
+# 技術ドキュメントの取り込み・更新に使う2コマンド。空のときの警告と、空でない
+# ときのキャプションの両方で使うため、ここ一箇所にまとめる（二重管理を避ける）。
+DOCS_INGEST_COMMAND = (
+    "python -m scripts.fetch_docs のあと "
+    "python -m scripts.ingest_source --source-dir docs_source "
+    "--db docs_store.sqlite3 --keep-code-blocks"
+)
+
 
 @st.cache_resource
 def get_collection(db_path):
@@ -63,20 +71,26 @@ def get_collection(db_path):
 
 
 @st.cache_resource
-def get_schema(_collection, revision):
+def get_schema(_collection, db_path, revision):
     """絞り込みに使える属性の一覧。
 
     revision を引数に取るのは、新しい数値属性を持つ資料を取り込んだあとも
     プロセスを再起動するまで絞り込みに出てこない、という状態を防ぐため。
+    ただし revision だけでは足りない。revision は各DBが自分の meta テーブルに
+    持つ、ファイルごとに独立したカウンタであり、社内資料と技術ドキュメントの
+    2つのDBが同じ数値になることは普通に起こる。db_path を鍵に加えないと、
+    たまたま revision が一致した瞬間に、後から呼ばれた側が先に呼ばれた側の
+    コーパスの属性一覧をそのまま受け取ってしまう。
 
-    先頭のアンダースコアは、Streamlitにこの引数をハッシュさせないための目印。
-    VectorStoreはsqlite3.Connectionを抱えており、ハッシュ化できない。
+    先頭のアンダースコアは、Streamlitに _collection をハッシュさせないための
+    目印。VectorStoreはsqlite3.Connectionを抱えており、ハッシュ化できない。
+    db_path は素の文字列なのでそのままハッシュ可能なキーになる。
     """
     return conditions.available_keys(_collection)
 
 
 @st.cache_resource
-def get_index(_collection, revision):
+def get_index(_collection, db_path, revision):
     """BM25インデックスをDBから組む。
 
     ディスクに持たないため起動のたびに作り直す。DBとファイルで状態が二重管理に
@@ -86,9 +100,18 @@ def get_index(_collection, revision):
     revision を引数に取るのは、書き込みと不可分に進む値だけがキャッシュの
     鮮度を正しく判定できるため。チャンク数を鍵にすると「同数の差し替え」を
     取りこぼし、消えた旧チャンクIDを持ったままのBM25索引が、理由の説明なく
-    ヒットを落とす（設計書4.5節）。先頭のアンダースコアはStreamlitにこの引数を
-    ハッシュさせないための目印で、VectorStoreはsqlite3.Connectionを抱えており
-    ハッシュ化できない。
+    ヒットを落とす（設計書4.5節）。
+
+    revision だけでは足りない。revision は各DBが自分の meta テーブルに持つ、
+    ファイルごとに独立したカウンタであり、社内資料と技術ドキュメントの2つの
+    DBが同じ数値になることは普通に起こる（どちらも取り込みのたびに1ずつ
+    進むだけの独立したカウンタである）。db_path を鍵に加えないと、たまたま
+    revision が一致した瞬間に、後から呼ばれた側が先に呼ばれた側のコーパスの
+    BM25索引をそのまま受け取ってしまう。
+
+    先頭のアンダースコアはStreamlitに _collection をハッシュさせないための
+    目印で、VectorStoreはsqlite3.Connectionを抱えておりハッシュ化できない。
+    db_path は素の文字列なのでそのままハッシュ可能なキーになる。
     """
     return build_index(_collection)
 
@@ -304,30 +327,28 @@ SYSTEM_PROMPT = (
 corpus = st.sidebar.radio("検索対象", [CORPUS_INTERNAL, CORPUS_DOCS])
 searching_docs = corpus == CORPUS_DOCS
 
-collection = get_collection(DOCS_DB_PATH if searching_docs else DB_PATH)
-index = get_index(collection, collection.revision())
-st.sidebar.metric("インデックス済みチャンク", collection.count())
+# get_collection と違い get_index / get_schema はコレクションをハッシュに
+# 使わない（先頭アンダースコア）ため、どちらのDBを開いたかを鍵に加える必要が
+# ある。DB_PATH / DOCS_DB_PATH を渡すのは get_collection のキャッシュキーと
+# 揃えるためで、両者の不一致がそのままバグになる。
+db_path = DOCS_DB_PATH if searching_docs else DB_PATH
+collection = get_collection(db_path)
+index = get_index(collection, db_path, collection.revision())
+chunk_count = collection.count()
+st.sidebar.metric("インデックス済みチャンク", chunk_count)
 
 st.sidebar.divider()
 if searching_docs:
-    if collection.count() == 0:
+    if chunk_count == 0:
         # open_store はパスを間違えても例外を出さず空のDBを新規作成する
         # （ingest/store.py）。CLIをまだ一度も走らせていない場合、切り替えた
         # 直後は検索が黙って全部空になるだけで、利用者には理由が分からない。
         # 設計書5.4節がCLI側に要求している「0件なら警告」の画面側にあたる。
         st.sidebar.warning(
-            "技術ドキュメントのDBが空です。次の2つのコマンドで取り込んでください: "
-            "python -m scripts.fetch_docs のあと "
-            "python -m scripts.ingest_source --source-dir docs_source "
-            "--db docs_store.sqlite3 --keep-code-blocks"
+            f"技術ドキュメントのDBが空です。次の2つのコマンドで取り込んでください: {DOCS_INGEST_COMMAND}"
         )
     else:
-        st.sidebar.caption(
-            "更新は CLI で行います: "
-            "python -m scripts.fetch_docs のあと "
-            "python -m scripts.ingest_source --source-dir docs_source "
-            "--db docs_store.sqlite3 --keep-code-blocks"
-        )
+        st.sidebar.caption(f"更新は CLI で行います: {DOCS_INGEST_COMMAND}")
 else:
     st.sidebar.caption(f"取り込み元: {DEFAULT_SOURCE_DIR.name}/")
     if st.sidebar.button("差分を取り込む"):
@@ -404,7 +425,7 @@ for message in st.session_state.messages:
 
 # 絞り込みは社内の製品仕様書に固有の仕組みである。技術ドキュメントでは
 # 属性一覧を組み立てない（条件抽出のLLM呼び出しも走らせない）。
-schema = None if searching_docs else get_schema(collection, collection.revision())
+schema = None if searching_docs else get_schema(collection, db_path, collection.revision())
 
 
 def ask_json(prompt: str) -> str:

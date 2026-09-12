@@ -538,6 +538,69 @@ def test_the_caches_are_keyed_on_the_revision_not_the_chunk_count(app):
     assert len(seen) == 2, "get_index と get_schema の両方が revision を鍵にすること"
 
 
+def test_get_index_and_get_schema_are_keyed_on_the_corpus_not_revision_alone():
+    """revision だけでは鍵として足りない。コーパス（DBパス）も要る。
+
+    revision は各DBが自分の meta テーブルに持つ、ファイルごとに独立した
+    カウンタである（vector_store.sqlite3 と docs_store.sqlite3 はどちらも
+    取り込みのたびに1ずつ進むだけで、互いのカウンタを知らない）。そのため
+    2つのDBが同じ revision を持つことは普通に起こる。get_index / get_schema は
+    @st.cache_resource で、_collection は先頭アンダースコアでハッシュ対象から
+    外れているため、鍵に revision しか無いと、たまたま値が揃った瞬間に後から
+    呼ばれた側が先に呼ばれた側のコーパスの結果をそのまま受け取ってしまう
+    （設計書4.5節が警告する「理由の説明なく古い結果を返す」ことの一種）。
+
+    実際にDBの取り込み回数を揃えて衝突を作らなくても、呼び出し側で revision を
+    同じ値に固定すれば同じ状況を再現できる。ここでは2つの別コーパス（別の
+    中身を持つ2つのインメモリDB）に同じ revision=7 を渡し、返ってくる結果が
+    別物であることを見る。db_path を鍵に加えていなければ、2回目の呼び出しは
+    1回目の呼び出し結果をキャッシュからそのまま受け取り、中身が同じになる。
+    """
+    st.cache_resource.clear()
+    # rag_chat_app はモジュール直下で get_collection(DB_PATH) と
+    # ensure_reranker() を実行する。初回 import 時にそれが実DBやネットワークへ
+    # 触れないよう、ここでだけ store.open_store をスタブに差し替える
+    # （reranker.check_reranker は本ファイルのautouseフィクスチャで既にスタブ
+    # 済みなので、ここでは触れなくてよい）。2回目以降の import はキャッシュ
+    # 済みのモジュールを返すだけなので、このパッチは無害である。
+    with patch.object(store_module, "open_store", _stub_open_store({"source": "import.md"})):
+        import rag_chat_app
+    st.cache_resource.clear()
+
+    collection_a = open_real_store(":memory:")
+    collection_a.add(
+        ids=["a-chunk-1"],
+        documents=["社内資料の本文。"],
+        embeddings=[[0.1, 0.2]],
+        metadatas=[{"source": "internal.md", "shelf_id": 1}],
+    )
+    collection_b = open_real_store(":memory:")
+    collection_b.add(
+        ids=["b-chunk-1", "b-chunk-2"],
+        documents=["技術ドキュメントの本文。", "もう1チャンク。"],
+        embeddings=[[0.3, 0.4], [0.5, 0.6]],
+        metadatas=[
+            {"source": "docs.md", "page_count": 5},
+            {"source": "docs.md", "page_count": 5},
+        ],
+    )
+
+    # 同じ revision=7 を、パスが違う2つのコーパスに対して渡す。
+    index_a = rag_chat_app.get_index(collection_a, "internal/path", 7)
+    index_b = rag_chat_app.get_index(collection_b, "docs/path", 7)
+    assert index_a.ids != index_b.ids, (
+        "get_index が revision だけを鍵にしており、コーパスが違っても"
+        "同じBM25索引を返している"
+    )
+
+    schema_a = rag_chat_app.get_schema(collection_a, "internal/path", 7)
+    schema_b = rag_chat_app.get_schema(collection_b, "docs/path", 7)
+    assert schema_a != schema_b, (
+        "get_schema が revision だけを鍵にしており、コーパスが違っても"
+        "同じ属性一覧を返している"
+    )
+
+
 # --- 取り込みダイアログ ---------------------------------------------------
 #
 # 利用者のブラウザーから資料を取り込む経路。source/ はサーバー側にあり、
