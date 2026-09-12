@@ -3,7 +3,7 @@
 ネットワークへは絶対に出ない。requests.Session を差し替えて、
 状態コードと本文をこちらで決める。
 """
-from pathlib import Path
+import sys
 
 import pytest
 import requests
@@ -256,3 +256,54 @@ def test_run_notifies_progress_per_source(tmp_path):
     messages = []
     fetch_docs.run(sources, tmp_path, "2026-09-12", session=session, notify=messages.append)
     assert any("a" in message for message in messages)
+
+
+def test_write_if_changed_rejects_a_name_with_parent_directory_reference(tmp_path):
+    """name に ../../evil のような親ディレクトリ参照が来ると、out_dir の外
+    （実測: docs_source/ の2階層上）へ書き出せてしまう。設定ファイルは
+    バージョン管理下で危険は低いが、1行で防げるので防ぐ。"""
+    source = _source(name="../../evil")
+    with pytest.raises(ValueError):
+        fetch_docs.write_if_changed(source, "本文\n", tmp_path, "2026-09-12")
+    assert not (tmp_path.parent.parent / "evil.md").exists()
+
+
+def test_write_if_changed_rejects_a_name_with_a_path_separator(tmp_path):
+    source = _source(name="sub/evil")
+    with pytest.raises(ValueError):
+        fetch_docs.write_if_changed(source, "本文\n", tmp_path, "2026-09-12")
+
+
+def test_main_reports_a_malformed_toml_file_instead_of_a_traceback(tmp_path, monkeypatch, capsys):
+    """[[source] のようにかっこが崩れた設定は tomllib.TOMLDecodeError になる。
+
+    docs_sources.toml はライブラリを足すたびに手で編集するファイルなので、
+    書式ミスは例外的な入力ではなく通常起こりうる入力として扱う。
+    """
+    config = tmp_path / "docs_sources.toml"
+    config.write_text('[[source]\nname = "streamlit"\n', encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["fetch_docs", "--config", str(config)])
+
+    assert fetch_docs.main() == 1
+
+    out = capsys.readouterr().out
+    assert str(config) in out
+    assert "不正" in out
+
+
+def test_main_reports_a_missing_required_key_instead_of_a_traceback(
+    tmp_path, monkeypatch, capsys
+):
+    """version を書き忘れると load_sources 内で KeyError('version') になる。"""
+    config = tmp_path / "docs_sources.toml"
+    config.write_text(
+        '[[source]]\nname = "streamlit"\nurl = "https://example.test/llms-full.txt"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(sys, "argv", ["fetch_docs", "--config", str(config)])
+
+    assert fetch_docs.main() == 1
+
+    out = capsys.readouterr().out
+    assert str(config) in out
+    assert "version" in out

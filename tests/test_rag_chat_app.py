@@ -1218,3 +1218,64 @@ def test_the_nonempty_documentation_corpus_does_not_warn(app):
     assert not any("scripts.fetch_docs" in w for w in warnings)
     captions = [c.value for c in app.sidebar.caption]
     assert any("scripts.fetch_docs" in c for c in captions)
+
+
+def test_switching_corpus_clears_history_and_does_not_poison_the_next_query(app):
+    """検索対象を切り替えたら会話履歴を破棄し、次の質問に前コーパスの質問が
+    混ざらないこと。
+
+    再現手順（レビューの指摘）: 社内資料で「就業規則の有給休暇は？」と尋ね、
+    技術ドキュメントへ切り替えて「キャッシュの書き方は？」と尋ねると、
+    contextual_query が前の質問を継ぎ足し、翻訳後の検索クエリが
+    「paid leave work regulations cache」のようになって検索が外れる。
+    history にも前コーパスの回答が残り、build_docs_prompt の
+    「ドキュメントに書いてあることだけを使う」指示と矛盾する。
+    """
+    stream = _fake_stream_chat("回答")
+    translation_prompts = []
+
+    def fake_ask_json(model, prompt, session=None):
+        translation_prompts.append(prompt)
+        return json.dumps({"query": "cache usage"})
+
+    with (
+        patch.object(
+            store_module,
+            "open_store",
+            _stub_open_store_per_path(
+                {"docs_store": "キャッシュの書き方はst.cache_dataです。"}
+            ),
+        ),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+        patch.object(chat, "stream_chat", stream),
+        patch.object(chat, "ask_json", fake_ask_json),
+    ):
+        app.run()
+        app.chat_input[0].set_value("就業規則の有給休暇は？").run()
+        assert app.session_state.messages != []
+
+        # コーパスを切り替えた直後、履歴は残っていない。
+        app.sidebar.radio[0].set_value("技術ドキュメント").run()
+        assert app.session_state.messages == []
+        assert any("リセット" in info.value for info in app.sidebar.info)
+
+        app.chat_input[0].set_value("キャッシュの書き方は？").run()
+
+    # 翻訳へ渡したプロンプト（contextual_queryの出力）に前コーパスの質問語が
+    # 混ざっていないこと。
+    assert not any("有給休暇" in prompt for prompt in translation_prompts)
+    assert any("キャッシュ" in prompt for prompt in translation_prompts)
+
+    # 生成へ渡す履歴にも前コーパスの回答が残っていないこと。
+    sent_history = stream.calls[-1]["messages"]
+    assert not any("有給" in m["content"] for m in sent_history)
+
+
+def test_switching_corpus_with_no_prior_history_does_not_show_the_reset_notice(app):
+    """まだ何も質問していない状態での切り替えでは、消す履歴が無いので
+    リセット通知も出さない（切り替えのたびに毎回出ると煩わしい）。"""
+    with patch.object(store_module, "open_store", _stub_open_store_per_path({})):
+        app.run()
+        app.sidebar.radio[0].set_value("技術ドキュメント").run()
+
+    assert list(app.sidebar.info) == []

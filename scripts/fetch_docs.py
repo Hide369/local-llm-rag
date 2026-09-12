@@ -99,6 +99,15 @@ def write_if_changed(
     source: DocSource, body: str, out_dir: Path, fetched_at: str
 ) -> bool:
     """本文が変わっていれば書く。書いたら True。"""
+    # name はそのままファイル名に使う。docs_sources.toml の name に
+    # "../../evil" のようなパス区切りや親ディレクトリ参照が書かれていると、
+    # out_dir の外（実測: docs_source/ の2階層上）へ書き出せてしまう。
+    # 設定ファイルはバージョン管理下にあり悪意ある入力の危険は低いが、
+    # 防ぐのに1行で足りるので防ぐ。
+    if "/" in source.name or "\\" in source.name or ".." in source.name:
+        raise ValueError(
+            f"name にパス区切りや親ディレクトリ参照は使えません: {source.name!r}"
+        )
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{source.name}.md"
     if _digest(_body_of(path)) == _digest(body):
@@ -162,7 +171,20 @@ def main() -> int:
         print(f"設定ファイルがありません: {args.config}")
         return 1
 
-    sources = load_sources(args.config)
+    # docs_sources.toml はライブラリを1つ足すたびに手で編集するファイルであり、
+    # 書式の崩れ（例: [[source] のかっこ抜け）も必須キーの書き忘れ（例: version
+    # を書かない）も、想定外の事故ではなく起こりうる入力である。ここで拾わないと
+    # tomllib.TOMLDecodeError や KeyError の生のトレースバックがそのまま
+    # ターミナルへ出てしまう。
+    try:
+        sources = load_sources(args.config)
+    except tomllib.TOMLDecodeError as error:
+        print(f"設定ファイルの書式が不正です: {args.config} — {error}")
+        return 1
+    except KeyError as error:
+        print(f"設定ファイルに必須のキーがありません: {args.config} — {error}")
+        return 1
+
     if not sources:
         print(f"{args.config} に [[source]] が1件もありません")
         return 1

@@ -325,8 +325,30 @@ SYSTEM_PROMPT = (
 # どちらを検索するかは利用者が選ぶ。質問文からの自動判定にしないのは、
 # 誤判定が利用者から見えない失敗になるためである。選択はそのまま
 # 「どちらを検索したか」の表示も兼ねる。
-corpus = st.sidebar.radio("検索対象", [CORPUS_INTERNAL, CORPUS_DOCS])
+corpus = st.sidebar.radio("検索対象", [CORPUS_INTERNAL, CORPUS_DOCS], key="corpus_radio")
 searching_docs = corpus == CORPUS_DOCS
+
+# コーパスを切り替えたら会話履歴を破棄する。残したままだと、
+# contextual_query（ingest/retrieval.py）が前のコーパス向けの直前の質問を
+# 継ぎ足してしまい、切り替え後の質問と混ざった文字列が translate_query
+# （ingest/query_translation.py）に渡って検索クエリごと壊れる
+# （例：「就業規則の有給休暇は？ キャッシュの書き方は？」を英訳すると
+# 検索が両方とも外れる）。history にも前コーパスの回答が残り、
+# build_docs_prompt の「ドキュメントに書いてあることだけを使う」という
+# 指示と矛盾する。on_change コールバックではなく、前回値を session_state に
+# 覚えておいて差分を見る方式にしているのは、初回描画（前回値がまだ無い）と
+# 区別するためである。
+if "last_corpus" not in st.session_state:
+    st.session_state.last_corpus = corpus
+elif st.session_state.last_corpus != corpus:
+    st.session_state.last_corpus = corpus
+    if st.session_state.get("messages"):
+        st.session_state.messages = []
+        # 履歴が消えたことを画面から読み取れないと、利用者は「さっきの
+        # 話の続き」のつもりで質問し、検索対象が変わったことに気づけない。
+        # 空DBの警告（下のst.sidebar.warning）と同じ理由で、サイドバーに
+        # 明示する。
+        st.sidebar.info("検索対象を切り替えたため、会話履歴をリセットしました。")
 
 # get_collection と違い get_index / get_schema はコレクションをハッシュに
 # 使わない（先頭アンダースコア）ため、どちらのDBを開いたかを鍵に加える必要が

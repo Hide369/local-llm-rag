@@ -370,8 +370,11 @@ def main() -> int:
     # open_store はパスを間違えても例外を出さず空のDBを新規作成する
     # （ingest/store.py の DB_PATH のコメント参照）。タイポは「検索結果が全部空」
     # という静かな失敗になり、テストも緑のまま通る。どのファイルを開いたかを
-    # 必ず画面に出し、取り込み後の件数でも裏を取る。
-    print(f"取り込み先: {args.db}")
+    # 必ず画面に出し、取り込み後の件数でも裏を取る。相対パスのまま出すと、
+    # 実行時のカレントディレクトリが違うだけで別のファイルを指していても
+    # 表示上は同じ文字列になり、この安全策自体が意味を失う。解決済みの
+    # 絶対パスを出す。
+    print(f"取り込み先: {args.db.resolve()}")
     collection = store.open_store(str(args.db))
     report = ingest_directory(
         args.source_dir,
