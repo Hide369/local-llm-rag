@@ -191,13 +191,14 @@ url = "https://python.langchain.com/llms-full.txt"
 version = "1.1.2"
 ```
 
-`version` は `requirements.txt` で固定している版を書く。`name` は取り込み元を
-識別する名前であって URL の持ち主とは限らない。上の例では、使っているのは
-`langchain-text-splitters` だが、ドキュメントは LangChain 本体のサイトが
-まとめて公開している。取得先は最新版の
-ドキュメントなので厳密には一致しないが、「どの版を想定して取り込んだか」を
+`version` は `requirements.txt` で固定している版を書く。取得先は常に最新版の
+ドキュメントなので厳密には一致しないが、「どの版を使っている状態で取り込んだか」を
 残すために持つ。書き出すファイルの front matter に入れ、既存の
 `_split_frontmatter` がメタデータとして拾う（**この配線は既にある**）。
+
+`name` は取り込み元を識別する名前であって、URL の持ち主とは限らない。上の例で
+使っているのは `langchain-text-splitters` だが、ドキュメントは LangChain 本体の
+サイトがまとめて公開している。
 
 `tomllib` は Python 3.11 以降の標準ライブラリであり、依存は増えない。
 
