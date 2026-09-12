@@ -29,9 +29,28 @@ def test_prompt_includes_retrieved_text():
     assert "経費の上限は" in prompt
 
 
-def test_prompt_includes_citations_so_the_model_can_cite_them():
+def test_prompt_includes_citations_to_separate_the_chunks():
+    """出典はチャンクの境目として文脈に残す。モデルに書かせるためではない。
+
+    出典を文脈から抜くと、複数のチャンクが区切りなく1つの塊に見え、どの記述が
+    どの資料のものかをモデルが取り違える。画面の出典表示は hits から直接
+    組み立てており（rag_chat_app.py の render_hits）、この行には依存しない。
+    """
     prompt = build_prompt("経費の上限は", [_hit()])
     assert "a.pdf p.48" in prompt
+
+
+def test_prompt_forbids_writing_the_citation_in_the_answer_body():
+    """本文にファイル名を書かせない（要望）。出典は畳み込みの中だけで見せる。
+
+    指示を消すだけでは足りない。文脈は `[出典]
+本文` という形で渡しており、
+    出典はモデルの目に入る位置にある。消すだけにすると、モデルは文脈の書式を
+    真似て本文に出典を書き続ける余地が残る。明示的に禁じる。
+    """
+    prompt = build_prompt("経費の上限は", [_hit()])
+    assert "出典を示してください" not in prompt
+    assert "出典を書かないでください" in prompt
 
 
 def test_prompt_instructs_the_model_to_decline_when_hits_are_irrelevant():

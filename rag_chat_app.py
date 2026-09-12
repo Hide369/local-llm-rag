@@ -112,7 +112,7 @@ def render_hits(hits):
 
 # 図表があるとVLMが画像1枚ごとに同期のAPI呼び出しを行うため、資料によっては
 # 取り込みが大きく伸びる。待たされる理由を画面に残す。
-SPINNER_MESSAGE = "取り込み中…（図表があるとVLMの説明文化に時間がかかります）"
+SPINNER_MESSAGE = "取り込み中…（図表があると時間がかかります）"
 
 
 def caption_image_or_reason():
