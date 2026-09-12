@@ -774,3 +774,51 @@ def test_no_missing_images_key_when_every_reference_resolves(source_dir, collect
     report = ingest_directory(source_dir, collection, session=_FakeSession())
 
     assert report.missing_images == {}
+
+
+def test_ingest_directory_passes_keep_code_blocks_to_the_chunker(tmp_path, monkeypatch):
+    """取り込み経路の端から端まで通っていることを見る。
+
+    chunk_units まで届いていなければ、コードブロック保持の実装が
+    あっても技術ドキュメントの取り込みでは一切効かない。
+    """
+    from ingest import chunker
+
+    (tmp_path / "a.md").write_text(
+        "# 題\n\n## 節\n\n" + "説明です。" * 200 + "\n\n```python\nx = 1\n```\n",
+        encoding="utf-8",
+    )
+    seen = []
+    real = chunker.chunk_units
+
+    def spy(units, source, file_hash, indexed_at, keep_code_blocks=False):
+        seen.append(keep_code_blocks)
+        return real(units, source, file_hash, indexed_at, keep_code_blocks=keep_code_blocks)
+
+    monkeypatch.setattr(ingest_source, "chunk_units", spy)
+
+    collection = open_store(":memory:")
+    ingest_source.ingest_directory(
+        tmp_path, collection, session=_FakeSession(), keep_code_blocks=True
+    )
+
+    assert seen == [True]
+
+
+def test_ingest_directory_does_not_keep_code_blocks_by_default(tmp_path, monkeypatch):
+    from ingest import chunker
+
+    (tmp_path / "a.md").write_text("# 題\n\n## 節\n\n本文です。\n", encoding="utf-8")
+    seen = []
+    real = chunker.chunk_units
+
+    def spy(units, source, file_hash, indexed_at, keep_code_blocks=False):
+        seen.append(keep_code_blocks)
+        return real(units, source, file_hash, indexed_at, keep_code_blocks=keep_code_blocks)
+
+    monkeypatch.setattr(ingest_source, "chunk_units", spy)
+
+    collection = open_store(":memory:")
+    ingest_source.ingest_directory(tmp_path, collection, session=_FakeSession())
+
+    assert seen == [False]
