@@ -239,19 +239,43 @@ def test_a_code_block_is_not_split_when_code_blocks_are_kept():
 
 
 def test_a_code_block_longer_than_the_limit_is_split():
-    """入力窓を超える巨大なブロックは、丸ごと残すほうが害になる。
+    """上限未満のブロックは丸ごと残り、上限を超えるブロックは割れる。
 
-    bge-m3 は入力窓を超えた分を切り捨てる。24,864字のブロックを1チャンクに
-    すると、後ろが黙って失われる（実測での最大値）。割れても分割するほうがよい。
+    この対比を同じユニット内で確認するのが目的である。単に「巨大な入力を
+    渡して len(chunks) > 1 かつ全チャンクが上限以下」なことだけを見るテスト
+    では、フェンス認識が丸ごと壊れて地の文の分割器（_split）に落ちても
+    両方の条件がそのまま成立してしまう（800字ずつに割られた断片は当然
+    2400字の上限以下になるため）。それではコードブロックが実際に
+    フェンスとして認識されたことの証明にならない。
+
+    上限未満のブロック（913字。CHUNK_SIZE=800より長いので、フェンスを
+    認識せず地の文の分割器に落ちれば必ず割れる）が丸ごと1チャンクとして
+    残ることと、上限超えのブロック（bge-m3 の入力窓を超え、実測の最大値
+    24,864字に近い規模）が複数チャンクに割れて上限以下に収まることを
+    同時に確認することで、フェンス認識が効いていることを検証する。
     """
+    kept_whole = "```python\n" + "x = 1\n" * 150 + "```"
+    assert CHUNK_SIZE < len(kept_whole) <= MAX_CODE_BLOCK_CHARS
     huge = "```python\n" + "y = 2\n" * 1000 + "```"
     assert len(huge) > MAX_CODE_BLOCK_CHARS
-    unit = ParsedUnit(text=huge, location_type=SECTION, location=1)
+
+    text = (
+        _long_prose("前置き", 900)
+        + "\n\n" + kept_whole
+        + "\n\n" + _long_prose("中間", 900)
+        + "\n\n" + huge
+    )
+    unit = ParsedUnit(text=text, location_type=SECTION, location=1)
 
     chunks = chunk_units([unit], "a.md", "hash", "2026-09-12", keep_code_blocks=True)
 
-    assert len(chunks) > 1
-    assert all(len(chunk.text) <= MAX_CODE_BLOCK_CHARS for chunk in chunks)
+    # 上限未満のブロックは丸ごと1チャンクのまま現れる。
+    assert any(chunk.text.strip() == kept_whole for chunk in chunks)
+    # 上限超えのブロックは丸ごとのままでは現れず、複数チャンクに割れている。
+    assert not any(chunk.text.strip() == huge for chunk in chunks)
+    huge_pieces = [chunk for chunk in chunks if "y = 2" in chunk.text]
+    assert len(huge_pieces) > 1
+    assert all(len(chunk.text) <= MAX_CODE_BLOCK_CHARS for chunk in huge_pieces)
 
 
 def test_keeping_code_blocks_is_off_by_default():
