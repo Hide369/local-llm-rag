@@ -59,6 +59,17 @@ _HEADING = re.compile(r"^(?P<hashes>#{1,6})(?P<space>[ \t]+)(?P<title>.*)$")
 # まで消える。落としてよいのは `#`（id）か `.`（class）で始まる属性だけである。
 _ATTRIBUTES = re.compile(r"[ \t]*\{[#.][^{}]*\}[ \t]*$")
 
+# 中身の無いHTMLのアンカー。`<span id="datamodel--code-objects"></span>` の形。
+#
+# 見出しの `{#id}` と同じもので、置かれる場所が本文の行であるだけの違いである。
+# HTML から md へ変換したときに、元の id 属性が本文として残る。実測 2026-09-13
+# （Python 言語リファレンス）: 303個・15,145バイトあり、うち171個はそれだけの行に
+# なっていた。中身を持つものは1つも無い。Go と C# の原本には1つも無い。
+#
+# 閉じタグまで含めて一致させる。`<span id="x">中身</span>` は本文を持つので
+# 落とさない。
+_ANCHOR_SPAN = re.compile(r'<span id="[^"]*"></span>')
+
 
 def normalise(body: str, section_level: int = 2, demote_h1: bool = False) -> str:
     """取り込み側が読める形へ整える。
@@ -73,6 +84,9 @@ def normalise(body: str, section_level: int = 2, demote_h1: bool = False) -> str
        中央値1,076バイトになり、`For statements` のように質問の単位と揃う。
     3. demote_h1 なら H1 も `## ` へ下ろす。原本の H1 が章題であって資料の題名では
        ない場合で、題名は LocalSource.title から別に作る（render_page）。
+    4. 中身の無いHTMLのアンカー（`<span id="x"></span>`）を落とす。1と同じもので、
+       置かれる場所が本文の行であるだけの違いである。それだけの行になっていたものは
+       行ごと落とす。空行にして残す意味は無い。
 
     demote_h1 でないかぎり H1 と H2 は動かさない。H1 は資料の題名で、取り込み側が
     各節の先頭へ1行付けるためのものである。増やすとどれが題名なのか決まらなくなる。
@@ -90,6 +104,11 @@ def normalise(body: str, section_level: int = 2, demote_h1: bool = False) -> str
     shift = max(section_level - 2, 0)
     out = []
     for line, in_fence in scan_fences(body.split("\n")):
+        if not in_fence and "<span id=" in line:
+            stripped = _ANCHOR_SPAN.sub("", line)
+            if line.strip() and not stripped.strip():
+                continue  # アンカーだけの行だった。空行を残す意味は無い
+            line = stripped
         heading = None if in_fence else _HEADING.match(line)
         if heading is None:
             out.append(line)

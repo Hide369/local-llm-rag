@@ -113,6 +113,43 @@ def test_normalise_tracks_an_indented_opening_fence():
     )
 
 
+# --- 中身の無いHTMLのアンカー ---
+
+
+def test_normalise_drops_a_line_that_is_only_an_anchor():
+    """`<span id="x"></span>` は見出しの `{#id}` と同じ、HTML の id の名残である。
+
+    実測 2026-09-13: Python の言語リファレンスに303個・15,145バイトあり、うち
+    171個はそれだけの行になっていた。残すと本文として索引に入る。
+    """
+    body = '<span id="datamodel--code-objects"></span>\n\n本文\n'
+    assert local_source.normalise(body) == "\n本文\n"
+
+
+def test_normalise_removes_an_inline_anchor_but_keeps_the_line():
+    """行の途中にあるものは、その部分だけ落とす。周りの文は本文である。"""
+    body = 'これは<span id="x"></span>本文である\n'
+    assert local_source.normalise(body) == "これは本文である\n"
+
+
+def test_normalise_keeps_a_span_that_has_content():
+    """中身のある span は本文を持っている。落とすと文が消える。"""
+    body = '<span id="x">大事な語</span>\n'
+    assert local_source.normalise(body) == body
+
+
+def test_normalise_strips_an_anchor_from_a_heading_line():
+    """アンカーが見出しの行頭に付いていても、見出しとして扱えること。"""
+    body = '<span id="x"></span>## 節 {#anchor}\n'
+    assert local_source.normalise(body) == "## 節\n"
+
+
+def test_normalise_does_not_touch_an_anchor_inside_a_code_fence():
+    """フェンスの中は HTML の例そのものであることがある。"""
+    body = '```html\n<span id="x"></span>\n```\n'
+    assert local_source.normalise(body) == body
+
+
 # --- 章題の H1（題名が1つに決まらない資料）---
 
 
