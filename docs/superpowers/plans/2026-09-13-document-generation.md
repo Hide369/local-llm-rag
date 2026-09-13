@@ -2554,6 +2554,8 @@ if st.session_state.get("template_dialog_open"):
 
 生成の本体は関数に切り出す。`rag_chat_app.py` は665行あり、この処理をチャットの分岐の中に直接書くと読めなくなる。
 
+**実測 2026-09-13（実装中に判明）**: 下のコードは `st.error` / `st.download_button` をその場で呼ぶ形だが、**このままでは画面に何も出ない**。生成の分岐の末尾には `generating` を戻すための `st.rerun()` があり（チャットの入力欄を再び使えるようにするため）、同じ実行での描画ごと消える。結果は `st.session_state.cowork_result` に積み、次の実行で描くこと。既存の `ingest_report`（取り込みの結果を `st.session_state` 経由で次の実行に描き直している箇所）と同じ形にする。下のコードの `st.*` の呼び出しは、**その `render_cowork_result` の中に置く**と読み替えること。
+
 ```python
 def _generate_document(template_path, names, question, attachments, use_internal, use_docs):
     """雛形を埋めてダウンロードボタンまで出す。
