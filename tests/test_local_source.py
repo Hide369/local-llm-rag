@@ -187,3 +187,16 @@ def test_read_body_normalises_crlf(tmp_path):
     (tmp_path / "spec.md").write_bytes(b"# ok\r\n## a\r\n")
     body, _ = local_source.read_body(_source(path="spec.md"), tmp_path)
     assert body == "# ok\n## a\n"
+
+
+def test_read_body_gives_the_same_digest_for_both_line_endings(tmp_path):
+    """原本はチェックアウトで改行コードが書き換わる（Windowsでは LF → CRLF）。
+
+    生バイトを数えると、内容が1文字も変わっていないのにマシンごとに違う指紋が
+    フロントマターへ記録される。
+    """
+    (tmp_path / "lf.md").write_bytes(b"# ok\n## a\n")
+    (tmp_path / "crlf.md").write_bytes(b"# ok\r\n## a\r\n")
+    _, lf = local_source.read_body(_source(path="lf.md"), tmp_path)
+    _, crlf = local_source.read_body(_source(path="crlf.md"), tmp_path)
+    assert lf == crlf

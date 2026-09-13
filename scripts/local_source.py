@@ -91,6 +91,11 @@ def read_body(source: LocalSource, root: Path) -> tuple[str, str]:
 
     CRLF をここで潰すのは、残したまま写すと取り込み側の見出しの末尾に \\r が
     残り、出典が壊れるためである（md_parser._read_lines と同じ理由）。
+
+    指紋は生バイトではなく、潰したあとの本文から取る。原本はバージョン管理下に
+    あり、チェックアウトで改行コードが書き換わる（実測: Windows で LF の原本が
+    CRLF になる）。生バイトを数えると、内容が1文字も変わっていないのにマシンごとに
+    違う指紋が記録される。
     """
     if Path(source.path).is_absolute() or ".." in Path(source.path).parts:
         raise ValueError(
@@ -100,9 +105,8 @@ def read_body(source: LocalSource, root: Path) -> tuple[str, str]:
     path = root / source.path
     if not path.is_file():
         raise FileNotFoundError(f"原本がありません: {path}")
-    raw = path.read_bytes()
-    text = raw.decode("utf-8-sig").replace("\r\n", "\n").replace("\r", "\n")
-    return text, hashlib.sha256(raw).hexdigest()
+    text = path.read_text(encoding="utf-8-sig").replace("\r\n", "\n").replace("\r", "\n")
+    return text, hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def render_page(
