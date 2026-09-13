@@ -17,7 +17,14 @@ import re
 import textwrap
 
 # 行まるごとが1つの指令である。本文の途中に出てくる ::: は拾わない。
-_DIRECTIVE = re.compile(r"^:::code\s+(?P<attrs>.*?):::[ \t]*$", re.MULTILINE)
+#
+# 行頭の空白を許すのは、箇条書きの中の :::code が字下げされているためである。
+# 実測 2026-09-13: 581ページ中254件がこの形で、行頭しか見ていなかったときは
+# 解決も報告もされず素通りしていた。数えられない取りこぼしがいちばん悪い。
+#
+# 置き換えるフェンスは字下げしない。ingest/chunker.py の _CODE_BLOCK は
+# 行頭の ``` しか見ないため、字下げするとコードブロックとして扱われなくなる。
+_DIRECTIVE = re.compile(r"^[ \t]*:::code\s+(?P<attrs>.*?):::[ \t]*$", re.MULTILINE)
 _ATTRIBUTE = re.compile(r'(\w[\w-]*)="([^"]*)"')
 
 # language= を書かないページがある。このモジュールを使うのは C# の資料だけ
@@ -38,7 +45,11 @@ def resolve_code_references(text: str, source_path: str, blob_paths, fetch):
 
     def replace(match: re.Match) -> str:
         nonlocal unresolved
-        attributes = dict(_ATTRIBUTE.findall(match.group("attrs")))
+        # 属性名を小書きに揃える。ID= と大文字で書いたページが3件あった
+        # （実測 2026-09-13）。
+        attributes = {
+            key.lower(): value for key, value in _ATTRIBUTE.findall(match.group("attrs"))
+        }
         target = _target_of(attributes.get("source", ""), source_path)
         if target is None or target not in blob_paths:
             unresolved += 1
@@ -71,6 +82,9 @@ def _target_of(source: str, source_path: str) -> str | None:
 
 
 def _selected(code: str, attributes: dict) -> str | None:
+    # .cs の先頭に BOM が付いていることがある。落とさないとファイルの最初の
+    # 印だけが見つからない（実測 2026-09-13: 13件）。
+    code = code.lstrip("﻿")
     if "id" in attributes:
         return _region(code, attributes["id"])
     if "range" in attributes:
@@ -79,20 +93,40 @@ def _selected(code: str, attributes: dict) -> str | None:
 
 
 def _region(code: str, name: str) -> str | None:
-    """#region <name> 〜 #endregion の中身。
+    """id= が指す範囲の中身。
 
-    字下げを落とすのは、#region の中が class の内側にあって丸ごと
+    印の書き方は1つではない。実測 2026-09-13 の内訳がこれを決めている。
+
+    - `// <Name>` 〜 `// </Name>` — いまの dotnet/docs が使う形。`#region` しか
+      見ていなかったとき、581ページの取得で1,384件が解決できなかった。
+    - `#region Name` 〜 `#endregion` — 古い形。まだ残っている。
+    - 印の名前に `Snippet` が前置されることがある（`id="PublicAccess"` が
+      `//<SnippetPublicAccess>` を指す）。木にある .cs を参照しながら印が
+      見つからなかった333件のうち、219件がこれだった。
+
+    字下げを落とすのは、印の中が class やメソッドの内側にあって丸ごと
     字下げされているためである。そのまま差し込むと動かないコードになる。
     """
-    start = re.search(
-        rf"^[ \t]*#region[ \t]+{re.escape(name)}[ \t]*$", code, re.MULTILINE
-    )
-    if start is None:
-        return None
-    rest = code[start.end() :]
-    end = re.search(r"^[ \t]*#endregion", rest, re.MULTILINE)
-    body = rest[: end.start()] if end else rest
-    return textwrap.dedent(body).strip("\n")
+    for candidate in (name, f"Snippet{name}"):
+        found = _between(code, candidate)
+        if found is not None:
+            return found
+    return None
+
+
+def _between(code: str, name: str) -> str | None:
+    for opening, closing in (
+        (rf"^[ \t]*//[ \t]*<{re.escape(name)}>[ \t]*$", r"^[ \t]*//[ \t]*</"),
+        (rf"^[ \t]*#region[ \t]+{re.escape(name)}[ \t]*$", r"^[ \t]*#endregion"),
+    ):
+        start = re.search(opening, code, re.MULTILINE)
+        if start is None:
+            continue
+        rest = code[start.end() :]
+        end = re.search(closing, rest, re.MULTILINE)
+        body = rest[: end.start()] if end else rest
+        return textwrap.dedent(body).strip("\n")
+    return None
 
 
 def _range(code: str, spec: str) -> str | None:

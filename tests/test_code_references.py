@@ -150,3 +150,102 @@ def test_a_missing_language_falls_back_to_csharp():
         text, "docs/csharp/a.md", set(files), _fetcher(files)
     )
     assert resolved == "```csharp\nx\n```\n"
+
+
+def test_an_id_selector_reads_the_comment_markers_dotnet_docs_actually_uses():
+    """実測 2026-09-13: dotnet/docs の .cs は #region ではなく
+    `// <Name>` 〜 `// </Name>` でコード例を囲んでいる。
+
+    #region しか見ていなかったとき、581ページの取得で1,384件の :::code が
+    解決できなかった。片方だけでは足りない。
+    """
+    text = ':::code language="csharp" source="snippets/P.cs" id="AddExpression":::\n'
+    files = {
+        "docs/csharp/snippets/P.cs": (
+            "public static void AddExpression()\n"
+            "{\n"
+            "    // <AddExpression>\n"
+            "    Expression<Func<int>> sum = () => 1 + 2;\n"
+            "    // </AddExpression>\n"
+            "}\n"
+        )
+    }
+    resolved, unresolved = code_references.resolve_code_references(
+        text, "docs/csharp/a.md", set(files), _fetcher(files)
+    )
+    assert resolved == "```csharp\nExpression<Func<int>> sum = () => 1 + 2;\n```\n"
+    assert unresolved == 0
+
+
+def test_an_indented_directive_inside_a_list_is_resolved():
+    """箇条書きの中の :::code は字下げされている。
+
+    実測 2026-09-13: 581ページ中254件がこの形で、行頭しか見ていなかったため
+    解決も報告もされず素通りしていた。数えられない取りこぼしがいちばん悪い。
+    """
+    text = '  :::code language="csharp" source="./snippets/P.cs" id="S":::\n'
+    files = {"docs/csharp/snippets/P.cs": "// <S>\nint x = 1;\n// </S>\n"}
+    resolved, unresolved = code_references.resolve_code_references(
+        text, "docs/csharp/a.md", set(files), _fetcher(files)
+    )
+    # フェンスは字下げしない。ingest/chunker.py の _CODE_BLOCK は行頭の ``` しか
+    # 見ないため、字下げするとコードブロックとして扱われなくなる。
+    assert resolved == "```csharp\nint x = 1;\n```\n"
+    assert unresolved == 0
+
+
+def test_an_indented_directive_that_cannot_be_resolved_is_counted():
+    text = '    :::code source="snippets/Missing.cs":::\n'
+    resolved, unresolved = code_references.resolve_code_references(
+        text, "docs/csharp/a.md", set(), _fetcher({})
+    )
+    assert resolved == text
+    assert unresolved == 1
+
+
+def test_an_id_matches_a_marker_with_the_snippet_prefix():
+    """`id="PublicAccess"` が `//<SnippetPublicAccess>` を指すページがある。
+
+    実測 2026-09-13: 木にある .cs を参照していながら印が見つからなかった333件の
+    うち219件がこの形だった。id をそのまま探して無ければ Snippet を付けて探す。
+    """
+    text = ':::code language="csharp" source="s/P.cs" id="PublicAccess":::\n'
+    files = {
+        "docs/csharp/s/P.cs": (
+            "//<SnippetPublicAccess>\npublic class Bicycle { }\n//</SnippetPublicAccess>\n"
+        )
+    }
+    resolved, unresolved = code_references.resolve_code_references(
+        text, "docs/csharp/a.md", set(files), _fetcher(files)
+    )
+    assert resolved == "```csharp\npublic class Bicycle { }\n```\n"
+    assert unresolved == 0
+
+
+def test_a_byte_order_mark_does_not_hide_the_first_marker():
+    """.cs の先頭に BOM が付いていることがある。
+
+    実測 2026-09-13: 13件がこれで、ファイルの最初の印だけが見つからなかった。
+    """
+    text = ':::code language="csharp" source="s/P.cs" id="HelloWorld":::\n'
+    files = {
+        "docs/csharp/s/P.cs": (
+            '\ufeff// <HelloWorld>\nConsole.WriteLine("Hi");\n// </HelloWorld>\n'
+        )
+    }
+    resolved, unresolved = code_references.resolve_code_references(
+        text, "docs/csharp/a.md", set(files), _fetcher(files)
+    )
+    assert resolved == '```csharp\nConsole.WriteLine("Hi");\n```\n'
+    assert unresolved == 0
+
+
+def test_the_attribute_names_are_matched_regardless_of_case():
+    """ID= と大文字で書いたページが3件あった（実測 2026-09-13）。"""
+    text = ':::code language="csharp" SOURCE="s/P.cs" ID="S":::\n'
+    files = {"docs/csharp/s/P.cs": "// <S>\nint x = 1;\n// </S>\n"}
+    resolved, unresolved = code_references.resolve_code_references(
+        text, "docs/csharp/a.md", set(files), _fetcher(files)
+    )
+    assert resolved == "```csharp\nint x = 1;\n```\n"
+    assert unresolved == 0
