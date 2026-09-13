@@ -1993,7 +1993,7 @@ def fill(path: Path, values: dict[str, str], on_diagram_error=None) -> bytes:
     # .md は Mermaid をコードブロックのまま入れる。GitHub・VS Code・画面の
     # プレビューが図として表示するため、PNG にする理由が無い。引数を受け取る
     # のは、振り分け役が形式ごとに呼び分けなくて済むようにするためである。
-    text = path.read_text(encoding="utf-8-sig")
+    text = path.read_text(encoding="utf-8")
     return marks.replace(text, values).encode("utf-8")
 ```
 
