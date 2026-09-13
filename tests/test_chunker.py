@@ -5,6 +5,7 @@ from ingest.chunker import (
     RESERVED_METADATA_KEYS,
     chunk_units,
 )
+from ingest import chunker
 from ingest.models import SECTION, ParsedUnit
 
 
@@ -318,3 +319,103 @@ def test_chunk_ids_stay_sequential_when_code_blocks_are_kept():
     ids = [chunk.id for chunk in chunks]
     assert len(ids) == len(set(ids))
     assert ids == [f"a.md::section1::{index}" for index in range(len(chunks))]
+
+
+# --- 4字下げのコードブロック ---
+
+
+def test_an_indented_code_block_is_kept_whole():
+    """Markdown はフェンスの前から字下げ記法を持つ。
+
+    実測 2026-09-13: Python の言語リファレンス（548KB）はフェンスが18個しか
+    無く、文法の生成規則もコード例もすべて4字下げだった。フェンスだけを守って
+    いたときは、技術ドキュメント全体で字下げ塊の割れが544件あった。
+    """
+    code = "\n".join(f"    line_{index} = {index}" for index in range(40))
+    text = _long_prose("前置き", 900) + "\n\n" + code + "\n\n" + _long_prose("後書き", 900)
+    unit = ParsedUnit(text=text, location_type=SECTION, location=1)
+
+    chunks = chunk_units([unit], "a.md", "hash", "2026-09-13", keep_code_blocks=True)
+
+    assert any(chunk.text.strip() == code.strip() for chunk in chunks)
+
+
+def test_an_indented_block_under_a_list_item_is_left_alone():
+    """箇条書きの継続行も4字下げである。塊として切り出すと親から切り離される。
+
+    実測 2026-09-13（docs_source/ と source/ の全Markdown）: 2行以上の字下げ塊
+    2,494個のうち671個（26.9%）が箇条書きの直後にある。「手順3」の下の説明が
+    単独のチャンクになると、何の手順か分からなくなる。
+    """
+    text = "- 手順3を実行する\n\n    詳しい説明の1行目\n    詳しい説明の2行目\n"
+
+    assert chunker._split_keeping_code(text) == [text]
+
+
+def test_an_indented_block_needs_a_blank_line_before_it():
+    """段落の途中の字下げはコードブロックではない（CommonMark）。"""
+    text = "段落の続きとして\n    字下げしただけの行\n    もう1行\n"
+
+    assert chunker._split_keeping_code(text) == [text]
+
+
+def test_a_single_indented_line_is_not_a_block():
+    """1行だけの字下げは表の桁揃えや引用の折り返しであることが多い。"""
+    text = "本文\n\n    一行だけ\n\n続き\n"
+
+    assert chunker._indented_spans(text) == []
+
+
+def test_an_indented_block_inside_a_fence_is_not_taken_twice():
+    """フェンスの中の字下げはフェンス側が既に守っている。
+
+    二重に拾うと範囲が重なり、同じ文字を2回書き出すことになる。
+    """
+    text = "```python\n    indented = 1\n    also = 2\n```\n"
+
+    assert chunker._split_keeping_code(text) == [text.strip()]
+
+
+def test_an_indented_block_longer_than_the_limit_is_split():
+    """上限を超える塊はフェンスと同じく地の文の分割器に通す。
+
+    実測 2026-09-13: 技術ドキュメントに残る割れ40件はすべてこれである。
+    """
+    code = "\n".join(f"    line_{index} = {index}" for index in range(400))
+    unit = ParsedUnit(text=code, location_type=SECTION, location=1)
+
+    chunks = chunk_units([unit], "a.md", "hash", "2026-09-13", keep_code_blocks=True)
+
+    assert len(chunks) > 1
+    assert all(len(chunk.text) <= chunker.MAX_CODE_BLOCK_CHARS for chunk in chunks)
+
+
+def test_the_internal_corpus_is_not_affected_by_indented_blocks():
+    """社内資料は keep_code_blocks を渡さない。取り込み結果を1バイトも変えない。
+
+    実測 2026-09-13: source/ の全Markdownを両方の経路に通しても181チャンクで
+    変わらなかった。
+    """
+    code = "\n".join(f"    line_{index} = {index}" for index in range(40))
+    text = _long_prose("前", 900) + "\n\n" + code + "\n\n" + _long_prose("後", 900)
+    unit = ParsedUnit(text=text, location_type=SECTION, location=1)
+
+    kept = chunk_units([unit], "a.md", "h", "2026-09-13", keep_code_blocks=False)
+
+    assert [chunk.text for chunk in kept] == chunker._split(text)
+
+
+def test_a_short_lead_in_before_a_block_is_not_dropped():
+    """ブロックの手前に残る短い断片は _split が捨てる（MIN_CHUNK_CHARS）。
+
+    実測 2026-09-13: 「And:」「After」のような導入文が技術ドキュメント全体で
+    14行、どのチャンクにも入らず消えていた。ブロックの先頭に付けて残す。
+    フェンスにも同じ問題があり、こちらは旧実装が55行落としていた。
+    """
+    code = "\n".join(f"    line_{index} = {index}" for index in range(5))
+    text = "And:\n\n" + code + "\n"
+
+    chunks = chunker._split_keeping_code(text)
+
+    assert any("And:" in chunk for chunk in chunks)
+    assert any("line_4 = 4" in chunk for chunk in chunks)
