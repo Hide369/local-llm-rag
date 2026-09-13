@@ -129,10 +129,17 @@ def test_stream_chat_raises_when_the_connection_fails():
         list(stream_chat("m", [], 0.3, session=session))
 
 
-def test_ask_json_accepts_custom_context_size():
-    """Cowork は添付ファイルを丸ごと渡すため 8192 では足りない。呼び出し側で指定できる。"""
+def test_ask_json_uses_the_default_context_size():
+    """既存の呼び出しが1つも変わらないこと。既定値は現行の NUM_CTX である。"""
     session = _FakeSession([_reply('{"ok": true}')])
-    result = ask_json("qwen2.5:7b-instruct", "prompt", session=session, num_ctx=32768)
+    chat.ask_json("gpt-oss:20b", "質問", session=session)
+    assert session.payloads[0]["options"]["num_ctx"] == NUM_CTX
+
+
+def test_ask_json_accepts_a_larger_context_size():
+    """Cowork は添付ファイルを丸ごと渡すため 8192 では足りない（設計書7節）。"""
+    session = _FakeSession([_reply('{"ok": true}')])
+    result = ask_json("gpt-oss:20b", "質問", session=session, num_ctx=32768)
     assert result == '{"ok": true}'
     payload = session.payloads[0]
     assert payload["options"]["num_ctx"] == 32768
