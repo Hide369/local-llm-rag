@@ -16,6 +16,8 @@ from pathlib import Path
 
 import requests
 
+from scripts import github_source
+
 _ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = _ROOT / "docs_sources.toml"
 DEFAULT_OUT_DIR = _ROOT / "docs_source"
@@ -26,19 +28,55 @@ _TIMEOUT = 60
 
 
 @dataclass(frozen=True)
-class DocSource:
+class LlmsSource:
+    """`llms-full.txt` を1本の URL から取るソース（`kind = "llms"`、既定）。"""
+
     name: str
     url: str
     version: str
 
 
-def load_sources(path: Path = DEFAULT_CONFIG) -> list[DocSource]:
+# kind ごとに「使ってよいキー」を決めておく。混ざった設定を黙って無視すると、
+# 設定を直したつもりの人が直っていないことに気付けない。
+_LLMS_ONLY = ("url",)
+_GITHUB_ONLY = ("repo", "ref", "paths", "resolve_code_refs")
+
+
+def load_sources(path: Path = DEFAULT_CONFIG) -> list:
+    """docs_sources.toml を読む。kind で LlmsSource か GitHubSource になる。"""
     with path.open("rb") as handle:
         config = tomllib.load(handle)
-    return [
-        DocSource(name=entry["name"], url=entry["url"], version=str(entry["version"]))
-        for entry in config.get("source", [])
-    ]
+    return [_source_of(entry) for entry in config.get("source", [])]
+
+
+def _source_of(entry: dict):
+    kind = entry.get("kind", "llms")
+    name = entry["name"]
+    version = str(entry["version"])
+    if kind == "llms":
+        _reject(entry, _GITHUB_ONLY, name, kind)
+        return LlmsSource(name=name, url=entry["url"], version=version)
+    if kind == "github":
+        _reject(entry, _LLMS_ONLY, name, kind)
+        return github_source.GitHubSource(
+            name=name,
+            repo=entry["repo"],
+            ref=entry["ref"],
+            paths=tuple(entry["paths"]),
+            version=version,
+            resolve_code_refs=bool(entry.get("resolve_code_refs", False)),
+        )
+    raise ValueError(
+        f'{name} の kind が不明です: {kind!r}（使えるのは "llms" か "github"）'
+    )
+
+
+def _reject(entry: dict, forbidden, name: str, kind: str) -> None:
+    found = [key for key in forbidden if key in entry]
+    if found:
+        raise ValueError(
+            f'{name} は kind = "{kind}" なので {"、".join(found)} は書けません'
+        )
 
 
 def _index_url(url: str) -> str:
@@ -81,7 +119,7 @@ def _looks_like_html(text: str, content_type: str) -> bool:
     return text.lstrip()[:200].lower().startswith(_HTML_PREFIXES)
 
 
-def fetch(source: DocSource, session=None) -> tuple[str, bool]:
+def fetch(source: LlmsSource, session=None) -> tuple[str, bool]:
     """本文と、目次に落ちたかどうかを返す。
 
     llms.txt は各ページへのリンクの目次であって本文ではない（実測 2026-09-12:
@@ -115,7 +153,7 @@ def _checked(response, url: str) -> str:
     return response.text
 
 
-def _frontmatter(source: DocSource, fetched_at: str) -> str:
+def _frontmatter(source: LlmsSource, fetched_at: str) -> str:
     return (
         "---\n"
         f"name: {source.name}\n"
@@ -143,7 +181,7 @@ def _body_of(path: Path) -> str:
 
 
 def write_if_changed(
-    source: DocSource, body: str, out_dir: Path, fetched_at: str
+    source: LlmsSource, body: str, out_dir: Path, fetched_at: str
 ) -> bool:
     """本文が変わっていれば書く。書いたら True。"""
     # name はそのままファイル名に使う。docs_sources.toml の name に

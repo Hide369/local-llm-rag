@@ -8,7 +8,7 @@ import sys
 import pytest
 import requests
 
-from scripts import fetch_docs
+from scripts import fetch_docs, github_source
 
 
 class _FakeResponse:
@@ -37,7 +37,7 @@ class _FakeSession:
 
 
 def _source(name="streamlit", url="https://example.test/llms-full.txt", version="1.0"):
-    return fetch_docs.DocSource(name=name, url=url, version=version)
+    return fetch_docs.LlmsSource(name=name, url=url, version=version)
 
 
 def test_load_sources_reads_the_name_url_and_version(tmp_path):
@@ -49,7 +49,7 @@ def test_load_sources_reads_the_name_url_and_version(tmp_path):
     )
     sources = fetch_docs.load_sources(config)
     assert sources == [
-        fetch_docs.DocSource(
+        fetch_docs.LlmsSource(
             name="streamlit", url="https://example.test/llms-full.txt", version="1.61.1"
         )
     ]
@@ -154,9 +154,9 @@ def test_the_written_file_parses_as_markdown_with_the_attributes(tmp_path):
 
 def test_run_reports_updated_unchanged_and_failed(tmp_path):
     sources = [
-        fetch_docs.DocSource("a", "https://a.test/llms-full.txt", "1"),
-        fetch_docs.DocSource("b", "https://b.test/llms-full.txt", "2"),
-        fetch_docs.DocSource("c", "https://c.test/llms-full.txt", "3"),
+        fetch_docs.LlmsSource("a", "https://a.test/llms-full.txt", "1"),
+        fetch_docs.LlmsSource("b", "https://b.test/llms-full.txt", "2"),
+        fetch_docs.LlmsSource("c", "https://c.test/llms-full.txt", "3"),
     ]
     session = _FakeSession(
         {
@@ -181,9 +181,9 @@ def test_run_continues_after_a_failure(tmp_path):
     更新できなくなる。ingest_source.py の _ingest_one と同じ方針。
     """
     sources = [
-        fetch_docs.DocSource("a", "https://a.test/llms-full.txt", "1"),
-        fetch_docs.DocSource("b", "https://b.test/llms-full.txt", "2"),
-        fetch_docs.DocSource("c", "https://c.test/llms-full.txt", "3"),
+        fetch_docs.LlmsSource("a", "https://a.test/llms-full.txt", "1"),
+        fetch_docs.LlmsSource("b", "https://b.test/llms-full.txt", "2"),
+        fetch_docs.LlmsSource("c", "https://c.test/llms-full.txt", "3"),
     ]
     session = _FakeSession(
         {
@@ -204,7 +204,7 @@ def test_run_records_the_sources_that_only_yielded_an_index(tmp_path):
     report ではなく notify の出力しか目にしないため、そちらで警告が
     読めなければ「本文が取れていない」ことに気づけない。
     """
-    sources = [fetch_docs.DocSource("a", "https://a.test/llms-full.txt", "1")]
+    sources = [fetch_docs.LlmsSource("a", "https://a.test/llms-full.txt", "1")]
     session = _FakeSession({"https://a.test/llms.txt": _FakeResponse(200, "- [x](/x)\n")})
     messages = []
     report = fetch_docs.run(
@@ -223,9 +223,9 @@ def test_run_continues_after_a_write_failure(tmp_path, monkeypatch):
     fetch の失敗と同じ扱いにすることを monkeypatch で確かめる。
     """
     sources = [
-        fetch_docs.DocSource("a", "https://a.test/llms-full.txt", "1"),
-        fetch_docs.DocSource("b", "https://b.test/llms-full.txt", "2"),
-        fetch_docs.DocSource("c", "https://c.test/llms-full.txt", "3"),
+        fetch_docs.LlmsSource("a", "https://a.test/llms-full.txt", "1"),
+        fetch_docs.LlmsSource("b", "https://b.test/llms-full.txt", "2"),
+        fetch_docs.LlmsSource("c", "https://c.test/llms-full.txt", "3"),
     ]
     session = _FakeSession(
         {
@@ -252,7 +252,7 @@ def test_run_continues_after_a_write_failure(tmp_path, monkeypatch):
 
 
 def test_run_notifies_progress_per_source(tmp_path):
-    sources = [fetch_docs.DocSource("a", "https://a.test/llms-full.txt", "1")]
+    sources = [fetch_docs.LlmsSource("a", "https://a.test/llms-full.txt", "1")]
     session = _FakeSession({"https://a.test/llms-full.txt": _FakeResponse(200, "A\n")})
     messages = []
     fetch_docs.run(sources, tmp_path, "2026-09-12", session=session, notify=messages.append)
@@ -374,8 +374,8 @@ def test_an_html_response_is_reported_as_a_failure_not_written(tmp_path):
     run() は1件の失敗で止まらないので、他のライブラリの取得は続く。
     """
     sources = [
-        fetch_docs.DocSource("a", "https://a.test/llms-full.txt", "1"),
-        fetch_docs.DocSource("b", "https://b.test/llms-full.txt", "2"),
+        fetch_docs.LlmsSource("a", "https://a.test/llms-full.txt", "1"),
+        fetch_docs.LlmsSource("b", "https://b.test/llms-full.txt", "2"),
     ]
     session = _FakeSession(
         {
@@ -388,3 +388,94 @@ def test_an_html_response_is_reported_as_a_failure_not_written(tmp_path):
     assert list(report.failed) == ["a"]
     assert report.updated == ["b"]
     assert not (tmp_path / "a.md").exists()
+
+
+def test_load_sources_defaults_to_the_llms_kind(tmp_path):
+    """kind を書かない既存の設定は、今までどおり LlmsSource になる。
+
+    docs_sources.toml の既存6件は1行も編集しない方針である（設計書5.1節）。
+    既定が変わると、その6件が黙って別の経路に入る。
+    """
+    config = tmp_path / "docs_sources.toml"
+    config.write_text(
+        '[[source]]\nname = "streamlit"\n'
+        'url = "https://example.test/llms-full.txt"\nversion = "1.61.1"\n',
+        encoding="utf-8",
+    )
+    assert fetch_docs.load_sources(config) == [
+        fetch_docs.LlmsSource(
+            name="streamlit", url="https://example.test/llms-full.txt", version="1.61.1"
+        )
+    ]
+
+
+def test_load_sources_reads_a_github_source(tmp_path):
+    config = tmp_path / "docs_sources.toml"
+    config.write_text(
+        '[[source]]\nname = "csharp"\nkind = "github"\n'
+        'repo = "dotnet/docs"\nref = "main"\n'
+        'paths = ["docs/csharp/language-reference", "docs/csharp/linq"]\n'
+        'resolve_code_refs = true\nversion = "0.0.0"\n',
+        encoding="utf-8",
+    )
+    assert fetch_docs.load_sources(config) == [
+        github_source.GitHubSource(
+            name="csharp",
+            repo="dotnet/docs",
+            ref="main",
+            paths=("docs/csharp/language-reference", "docs/csharp/linq"),
+            version="0.0.0",
+            resolve_code_refs=True,
+        )
+    ]
+
+
+def test_load_sources_defaults_resolve_code_refs_to_false(tmp_path):
+    """:::code の解決は明示的に有効にしたソースでだけ走る（設計書5.4節）。
+
+    参照を辿るのは AGENTS.md の「ページ内のリンクは辿らない」と関わる。
+    既定で有効にすると、設定を書いた人が気付かないまま辿ることになる。
+    """
+    config = tmp_path / "docs_sources.toml"
+    config.write_text(
+        '[[source]]\nname = "mermaid"\nkind = "github"\n'
+        'repo = "mermaid-js/mermaid"\nref = "develop"\n'
+        'paths = ["packages/mermaid/src/docs"]\nversion = "0.0.0"\n',
+        encoding="utf-8",
+    )
+    assert fetch_docs.load_sources(config)[0].resolve_code_refs is False
+
+
+def test_load_sources_rejects_a_github_key_on_an_llms_source(tmp_path):
+    """黙って無視すると、設定を直したつもりの人が直っていないことに気付けない。"""
+    config = tmp_path / "docs_sources.toml"
+    config.write_text(
+        '[[source]]\nname = "streamlit"\n'
+        'url = "https://example.test/llms-full.txt"\n'
+        'repo = "dotnet/docs"\nversion = "1.0.0"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="repo"):
+        fetch_docs.load_sources(config)
+
+
+def test_load_sources_rejects_a_url_on_a_github_source(tmp_path):
+    config = tmp_path / "docs_sources.toml"
+    config.write_text(
+        '[[source]]\nname = "csharp"\nkind = "github"\n'
+        'repo = "dotnet/docs"\nref = "main"\npaths = ["docs/csharp"]\n'
+        'url = "https://example.test/llms-full.txt"\nversion = "0.0.0"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="url"):
+        fetch_docs.load_sources(config)
+
+
+def test_load_sources_rejects_an_unknown_kind(tmp_path):
+    config = tmp_path / "docs_sources.toml"
+    config.write_text(
+        '[[source]]\nname = "x"\nkind = "ftp"\nversion = "0.0.0"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="ftp"):
+        fetch_docs.load_sources(config)
