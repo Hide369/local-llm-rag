@@ -33,6 +33,19 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+# OLLAMA_HOST を ingest.embedder がインポート時に読むため、他のプロジェクト内
+# import より先に .env を読み込む（scripts/ingest_source.py と同じ理由）。
+#
+# ここが抜けていた。実測 2026-09-13: `.env` が ngrok 経由のリモートを指している
+# のに、このスクリプトだけ既定の 127.0.0.1:11434 を叩いていた。手元の Ollama には
+# `bge-m3` があるので**距離は黙って測れてしまい**、`gpt-oss:20b` が無いために
+# 翻訳だけが全問失敗した。translate_query は失敗を握って原文を返す設計なので、
+# 中止させたのは translation_worked() である。埋め込み側には同じ歯止めが無い。
+# このスクリプトは「実行時と同じ条件で測る」ためにあり、宛先が違えば前提が崩れる。
+load_dotenv()
+
 from ingest import chat, embedder, lexical, query_translation, reranker, store
 from ingest.retrieval import (
     DOCS_RERANK_FLOOR,
@@ -123,12 +136,28 @@ DOCS_RELEVANT = (
     "C#のrecord型はどう定義しますか",
     "C#のswitch式でパターンマッチングを書く方法を教えてください",
     "C#のasync awaitで非同期メソッドを書く方法を教えてください",
-    # Go に入っているのはリリースノート・FAQ・モジュール/データベースのガイドと
-    # 言語仕様である。入門的な解説（effective_go など）はHTMLで書かれており
-    # 取り込み対象外なので、そちらを前提にした質問はここに置けない
-    # （DOCS_OUT_OF_DOMAIN のゴルーチンの項を参照）。
+    # Go は2ソースある。go がリリースノート・FAQ・モジュール/データベースの
+    # ガイド、go-spec が言語仕様（2026-09-13追加）である。入門的な解説
+    # （effective_go など）はHTMLで書かれており取り込み対象外なので、そちらを
+    # 前提にした質問はここに置けない。
     "Goでジェネリクスの型パラメータを使う書き方を教えてください",
     "Goのモジュールでバージョンを上げて公開する手順を教えてください",
+    # go-spec（言語仕様）。文法そのものを尋ねる形で、リリースノート側には
+    # 答えの無い質問を置く。
+    #
+    # 「複数のチャネルを待つ」のような説明を足した形にすると外れる。実測
+    # 2026-09-13: その形は `Go select multiple channels syntax` と訳され、床1.0で
+    # 根拠が**0件**になった。`Go select statement syntax` なら
+    # `go-spec.md ＞ Select statements` が4.33で当たる。仕様書は節の名前で
+    # 引ける資料であり、節の名前から離れた言い回しほど外れる（4節）。
+    "Goのselect文の構文を教えてください",
+    "Goのfor文でrange句を使うときの構文を教えてください",
+    # 2026-09-13まで DOCS_OUT_OF_DOMAIN に置いていた質問である。当時は「Goの
+    # 資料はあるのに答えられない」1問だったが、go-spec を入れて答えられる側へ
+    # 変わった。実測（訳: `Go goroutine channel example`）: 床1.0で
+    # `go-spec.md ＞ Channel types` が2.64で1件残る。仕様書は `go` 文と
+    # チャネルの定義・例を持つ。
+    "Goでゴルーチンとチャネルを使う例を教えてください",
     "Mermaidでフローチャートを書く構文を教えてください",
     "Mermaidのシーケンス図で参加者を宣言するにはどう書きますか",
     "Markdownで表を書く記法を教えてください",
@@ -167,11 +196,10 @@ DOCS_OUT_OF_DOMAIN = (
     # Rust は「取り込まない」と決めた言語である（公式リポジトリの Markdown が
     # 404。docs/コーディング対応ライブラリ.md）。
     "Rustで所有権と借用はどう動きますか",
-    # Go の入門的な解説（effective_go など）はHTMLで書かれており取り込み対象外
-    # である。リリースノートのランタイムの節が0.432で最良という状態なので、
-    # 例を書かせるには足りない。「Goの資料はあるのに、この質問には答えられない」
-    # という、コーパスの中で最も判断の難しい位置にある1問として置いている。
-    "Goでゴルーチンとチャネルを使う例を教えてください",
+    # ここに「Goでゴルーチンとチャネルを使う例」を置いていた（2026-09-13まで）。
+    # 言語仕様（go-spec）を入れて答えられる側へ変わったので DOCS_RELEVANT へ
+    # 移した。**圏外の質問は資料を足すと圏外でなくなる。** 資料を入れ替えたら
+    # この集合も見直すこと。
 )
 
 # 断片だけが資料に紛れ込んでいる話題。記録するだけで、合否判定には使わない。
@@ -623,6 +651,10 @@ def main() -> int:
     if args.with_reranker:
         reranker.check_reranker()
     print(f"コーパス: {corpus.name}（{db_path}）")
+    # 宛先を必ず出す。埋め込みも翻訳もここへ行く。宛先が実行時と違っていても
+    # 距離は黙って測れてしまい、数字だけを見ても気づけない（上の load_dotenv の
+    # コメント参照）。取り込みCLIが「取り込み先」を必ず出すのと同じ理由である。
+    print(f"Ollama: {embedder.OLLAMA_HOST}")
     print(f"しきい値: {corpus.threshold}")
     collection = store.open_store(str(db_path))
     indexed = collection.count()

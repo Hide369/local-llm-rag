@@ -123,6 +123,9 @@ def test_the_docs_questions_cover_every_configured_source():
         "pymupdf": "PyMuPDF",
         "csharp": "C#",
         "go": "Go",
+        # go と go-spec は同じ「Go」で照合できてしまう。仕様側は文法そのものを
+        # 尋ねる語で照合する（リリースノートには select 文の構文は無い）。
+        "go-spec": "select文",
         "mermaid": "Mermaid",
         "markdown": "Markdown",
     }
