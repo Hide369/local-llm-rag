@@ -121,15 +121,19 @@ DOCS_RELEVANT = (
     "PyMuPDFでPDFのページを画像として書き出すにはどうしますか",
     "C#のrecord型はどう定義しますか",
     "C#のswitch式でパターンマッチングを書く方法を教えてください",
-    # Go はバージョン番号を添えると当たりが良くなる（実測 2026-09-13:
-    # 「Goのジェネリクス」は2.52止まりだが「Go 1.18 generics type parameters」で
-    # go1.18.md が4.41）。既存の「API名を書くと強い」という所見と同じ傾向である。
-    # 番号を添えない側を残してあるのは、弱いほうの実力でしきい値を決めるため。
+    "C#のasync awaitで非同期メソッドを書く方法を教えてください",
+    # Go に入っているのはリリースノート・FAQ・モジュール/データベースのガイドと
+    # 言語仕様である。入門的な解説（effective_go など）はHTMLで書かれており
+    # 取り込み対象外なので、そちらを前提にした質問はここに置けない
+    # （DOCS_OUT_OF_DOMAIN のゴルーチンの項を参照）。
     "Goでジェネリクスの型パラメータを使う書き方を教えてください",
-    "Goでゴルーチンとチャネルを使う例を教えてください",
+    "Goのモジュールでバージョンを上げて公開する手順を教えてください",
     "Mermaidでフローチャートを書く構文を教えてください",
     "Mermaidのシーケンス図で参加者を宣言するにはどう書きますか",
     "Markdownで表を書く記法を教えてください",
+    "GitHubのMarkdownでタスクリストを書く記法を教えてください",
+    "Streamlitでサイドバーにウィジェットを置くにはどう書きますか",
+    "huggingface_hubでリポジトリにファイルをアップロードする方法を教えてください",
 )
 
 # 技術ドキュメントのどこにも答えがない「問い」。合否判定はこちらだけで行う。
@@ -151,6 +155,24 @@ DOCS_OUT_OF_DOMAIN = (
     # なので、距離が近いこと自体は埋め込みの誤りではない。ゲートの位置の問題である。
     "Snowflakeのロール権限を設定するSQLをGo言語のサンプルで書いてください",
     "確定申告の医療費控除の上限はいくらですか",
+    # 取り込んでいない技術。ここがいちばん難しく、いちばん危ない。資料が1件も
+    # 無いのに、話題としては技術ドキュメントそのものなので距離が近くなる。
+    # Snowflakeの件はまさにこれで、LangSmith の権限表が0.402で通った。
+    # 雑談や社内規程の質問より、こちらのほうが実際に起きる。
+    "Kubernetesでデプロイメントをスケールするコマンドを教えてください",
+    "ReactのuseEffectフックの使い方を教えてください",
+    "PostgreSQLでインデックスを作成するSQLを教えてください",
+    # Java と Rust は「取り込まない」と決めた言語である（Java は公式の
+    # Markdown が存在せず、Rust は404。docs/コーディング対応ライブラリ.md）。
+    # ここが通ると、Javaの質問にC#の資料で答えることになる。取り違えとしては
+    # 天気やラーメンより遥かに起こりやすく、間違いにも気づきにくい。
+    "Javaでストリームapiを使う例を教えてください",
+    "Rustで所有権と借用はどう動きますか",
+    # Go の入門的な解説（effective_go など）はHTMLで書かれており取り込み対象外
+    # である。リリースノートのランタイムの節が0.432で最良という状態なので、
+    # 例を書かせるには足りない。「Goの資料はあるのに、この質問には答えられない」
+    # という、コーパスの中で最も判断の難しい位置にある1問として置いている。
+    "Goでゴルーチンとチャネルを使う例を教えてください",
 )
 
 DOCS_GREETINGS = GREETINGS
@@ -297,7 +319,27 @@ def translator(corpus, ask):
     return query_of
 
 
-def _report(collection, index, session, title, questions, query_of):
+def translation_worked(corpus, query_of) -> bool:
+    """訳すコーパスで、1問でも訳せたか。
+
+    ingest/query_translation.py は失敗しても例外を出さず原文を返す。回答自体は
+    止めないための設計で、実行時にはそれが正しい。しかし実測では話が別で、
+    日本語のまま測った距離をそのまま英語コーパスのしきい値にしてしまう。
+    2026-09-13にこれが実際に起きた（宛先の設定を取り違えていて25問すべてが
+    原文のまま測られた）。
+
+    「たまたま全問が原文と一致した」はまず起こらないので、全滅だけを異常とみなす。
+    1問だけの失敗は原文の行が出るのでその場で読み取れる。
+    """
+    if not corpus.translate:
+        return True
+    return any(
+        query_of(question) != question
+        for question in tuple(corpus.relevant) + tuple(corpus.out_of_domain)
+    )
+
+
+def _report(collection, index, session, title, questions, query_of, translate=False):
     """1グループ分を表示し、(距離, BM25スコア) の並びを返す。"""
     print(f"\n=== {title} ===")
     measured = []
@@ -307,9 +349,13 @@ def _report(collection, index, session, title, questions, query_of):
         score, lexical_citation = _lexical_best(collection, index, query)
         measured.append((distance, score))
         print(f"  {question}")
-        # 訳した場合だけ、実際に検索へ渡った文字列を出す。距離が悪いときに、
-        # 翻訳が的外れだったのか資料に無いのかは、これが無いと切り分けられない。
-        if query != question:
+        # 訳すコーパスでは、原文と変わらなかった場合も必ず出す。translate_query は
+        # 失敗すると例外も警告も出さずに原文を返す設計なので、「訳した結果たまたま
+        # 同じ」と「訳せずに落ちた」が同じ見た目になる。実際、2026-09-13の最初の
+        # 実測は宛先の設定を取り違えていて25問すべてが日本語のまま測られており、
+        # この行が無かったために気づくのが遅れた。翻訳を通したつもりの数字で
+        # しきい値を決めるのがいちばん避けたい間違いである。
+        if translate:
             print(f"      → 検索クエリ: {query}")
         print(f"      ベクトル {distance:.3f}  → {vector_citation}")
         print(f"      BM25     {score:6.2f}  → {lexical_citation}")
@@ -494,10 +540,22 @@ def main() -> int:
         if corpus.translate:
             print(f"検索クエリは {args.model} で英語へ訳してから測ります。")
         relevant = _report(
-            collection, index, session, "関連する質問", corpus.relevant, query_of
+            collection,
+            index,
+            session,
+            "関連する質問",
+            corpus.relevant,
+            query_of,
+            corpus.translate,
         )
         out_of_domain = _report(
-            collection, index, session, "圏外の質問", corpus.out_of_domain, query_of
+            collection,
+            index,
+            session,
+            "圏外の質問",
+            corpus.out_of_domain,
+            query_of,
+            corpus.translate,
         )
         _report(
             collection,
@@ -506,7 +564,15 @@ def main() -> int:
             "挨拶（参考値。距離では分離できないため合否判定には使わない）",
             corpus.greetings,
             query_of,
+            corpus.translate,
         )
+        if not translation_worked(corpus, query_of):
+            print(
+                f"\n翻訳が1問も効いていません（{args.model} に届いていないか、"
+                "JSONを返していません）。このまま測ると日本語の質問の値になるため"
+                "中止します。"
+            )
+            return 1
         print(
             "  意味的に空な入力はコーパスの重心付近に埋め込まれるため、際どい関連質問"
             "より近傍にヒットすることがある。ingest/prompting.py の「根拠がなければ"

@@ -141,3 +141,31 @@ def test_the_snowflake_question_is_measured_as_out_of_domain():
     assert any(
         "Snowflake" in question for question in check_retrieval.DOCS.out_of_domain
     )
+
+
+def test_a_translation_that_fell_back_on_every_question_is_treated_as_broken():
+    """translate_query は失敗しても例外を出さず原文を返す（回答を止めないため）。
+
+    実測ではそれが害になる。2026-09-13、宛先の設定を取り違えていて25問すべてが
+    日本語のまま測られ、英語コーパスのしきい値をその値で決めるところだった。
+    """
+    assert not check_retrieval.translation_worked(
+        check_retrieval.DOCS, lambda question: question
+    )
+
+
+def test_one_translated_question_is_enough_to_call_it_working():
+    """1問だけの失敗は、その行に原文が出るのでその場で読み取れる。全滅だけを異常とみなす。"""
+    first = check_retrieval.DOCS.relevant[0]
+
+    def query_of(question):
+        return "translated" if question == first else question
+
+    assert check_retrieval.translation_worked(check_retrieval.DOCS, query_of)
+
+
+def test_the_internal_corpus_never_counts_as_a_broken_translation():
+    """社内資料は日本語のまま検索する。原文と同じなのが正しい。"""
+    assert check_retrieval.translation_worked(
+        check_retrieval.INTERNAL, lambda question: question
+    )
