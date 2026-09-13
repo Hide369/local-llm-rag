@@ -13,6 +13,7 @@ import streamlit as st
 from streamlit.testing.v1 import AppTest
 
 import ingest.retrieval as retrieval
+from docgen import filling
 from docgen import mermaid
 from docgen import templates as templates_module
 from ingest import chat
@@ -83,6 +84,54 @@ def test_cowork_without_any_template_tells_the_user_to_register_one(app, tmp_pat
 
     assert not app.exception
     assert any("雛形" in warning.value for warning in app.warning)
+
+
+def test_cowork_without_a_template_does_not_silently_answer_as_chat(app, tmp_path):
+    """雛形が無いまま Cowork で送ると、黙ってチャットの回答を返さない。
+
+    元の分岐は「Cowork かつ雛形あり」以外を全部チャットの else 節に落として
+    いたため、雛形0件で送信すると通常のチャット回答が返っていた。利用者は
+    Cowork のつもりで読むため、どこから来た答えなのかを取り違える。
+    """
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+        app.chat_input[0].set_value("第5回会議の議事録を作って").run()
+
+    assert not app.exception
+    assert any("雛形が登録されていません" in error.value for error in app.error)
+
+
+def test_cowork_shows_the_error_when_generation_fails(app, tmp_path):
+    """PromptTooLongError等の失敗は、埋まらない欄を残すだけでなく画面に伝える。
+
+    黙って落とすと、利用者は生成が止まったこと自体に気づけない
+    （_generate_document は結果を st.session_state.cowork_result に積むだけで
+    直接 st.error を呼ばないため、例外経路がその積み方から漏れていないかを
+    別途押さえる）。
+    """
+    store = tmp_path / "templates"
+    _register(store)
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", store),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+        patch.object(
+            filling,
+            "fill_values",
+            side_effect=filling.PromptTooLongError("添付と検索結果が長すぎます"),
+        ),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+        app.chat_input[0].set_value("第5回会議の議事録を作って").run()
+
+    assert not app.exception
+    assert any("添付と検索結果が長すぎます" in error.value for error in app.error)
 
 
 def test_cowork_generates_a_file_and_offers_it_for_download(app, tmp_path):

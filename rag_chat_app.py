@@ -325,8 +325,14 @@ def render_cowork_result(result):
             render_hits(hits)
 
 
+def _empty_cowork_result():
+    return {"errors": [], "warnings": [], "infos": [], "download": None, "sources": []}
+
+
 def _cowork_error(message):
-    return {"errors": [message], "warnings": [], "infos": [], "download": None, "sources": []}
+    result = _empty_cowork_result()
+    result["errors"].append(message)
+    return result
 
 
 def _generate_document(template_path, names, question, attachments, use_internal, use_docs):
@@ -339,7 +345,7 @@ def _generate_document(template_path, names, question, attachments, use_internal
     どのコーパスを引くかは画面が決め、filling.py へは (種類の名前, ヒット) の
     並びで渡す。filling.py にコーパスの知識を持たせない（設計書6節）。
     """
-    result = {"errors": [], "warnings": [], "infos": [], "download": None, "sources": []}
+    result = _empty_cowork_result()
 
     def ask(prompt):
         return chat.ask_json(
@@ -700,26 +706,44 @@ if mode == MODE_COWORK:
         )
     else:
         left, right = st.columns([3, 1])
+        # 生成は30〜60秒かかる。その最中にここを触れると、その場で再実行が
+        # 走って生成が打ち切られ、雛形や参照先が入れ替わった状態のまま
+        # generating と pending_question だけが前回の質問を抱えて残る。
+        # サイドバーのコーパス切り替えラジオ（上の約510行）と同じ食い違いが
+        # 起きるため、同じく生成中は無効化する。
         template_path = left.selectbox(
-            "雛形", available, format_func=lambda path: path.name, key="template"
+            "雛形",
+            available,
+            format_func=lambda path: path.name,
+            key="template",
+            disabled=st.session_state.generating,
         )
-        if right.button("雛形を登録・削除"):
+        if right.button(
+            "雛形を登録・削除", disabled=st.session_state.generating
+        ):
             st.session_state.template_dialog_open = True
         # どの資料を引くかは雛形と依頼で決まるので、利用者に選ばせる。
         # 技術ドキュメントを入れると英訳のLLM呼び出しが1回と検索が1本増え、
         # 生成が30〜60秒遅くなる。要らない回に払う理由がない。
         corpora = st.columns(2)
         use_internal = corpora[0].checkbox(
-            "社内資料を参照", value=True, key="cowork_internal"
+            "社内資料を参照",
+            value=True,
+            key="cowork_internal",
+            disabled=st.session_state.generating,
         )
         use_docs = corpora[1].checkbox(
-            "技術ドキュメントを参照", value=False, key="cowork_docs"
+            "技術ドキュメントを参照",
+            value=False,
+            key="cowork_docs",
+            disabled=st.session_state.generating,
         )
         attached = st.file_uploader(
             "添付（この回だけ使い、DBには入れません）",
             type=sorted(suffix.lstrip(".") for suffix in SUPPORTED_SUFFIXES),
             accept_multiple_files=True,
             key="cowork_files",
+            disabled=st.session_state.generating,
         )
         attachments = attached or []
 
@@ -744,7 +768,15 @@ if question and not st.session_state.generating:
 if st.session_state.generating:
     question = st.session_state.pending_question
 
-    if mode == MODE_COWORK and template_path is not None:
+    if mode == MODE_COWORK and template_path is None:
+        # 雛形が無いまま Cowork で送られたら、黙ってチャットの回答を返さない
+        # （下の else 節に落として通常の検索・生成を行うと、利用者は Cowork の
+        # つもりで読むため、どこから来た答えなのかを取り違える）。事前の警告は
+        # 出ているが、無視して送信した人にも画面で伝える。
+        st.session_state.cowork_result = _cowork_error(
+            "雛形が登録されていません。先に「雛形を登録・削除」から登録してください。"
+        )
+    elif mode == MODE_COWORK:
         names = docgen.placeholders(template_path)
         if not names:
             # ここで直接 st.error を呼ばないのは、generating を戻すための下の
