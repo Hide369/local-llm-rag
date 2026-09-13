@@ -249,3 +249,19 @@ def test_the_attribute_names_are_matched_regardless_of_case():
     )
     assert resolved == "```csharp\nint x = 1;\n```\n"
     assert unresolved == 0
+
+
+def test_a_directive_inside_a_blockquote_is_resolved():
+    """引用ブロックの中の :::code は `> ` が前に付く。
+
+    実測 2026-09-13: 581ページ中3件がこの形で、字下げを許すだけでは拾えず、
+    解決も報告もされずに素通りしていた（報告154件に対し実在157件）。
+    件数が少なくても、報告に出ない取りこぼしは別扱いにしない。
+    """
+    text = '> :::code language="csharp" source="./snippets/P.cs" id="Singleton":::\n'
+    files = {"docs/csharp/snippets/P.cs": "// <Singleton>\nint x = 1;\n// </Singleton>\n"}
+    resolved, unresolved = code_references.resolve_code_references(
+        text, "docs/csharp/a.md", set(files), _fetcher(files)
+    )
+    assert resolved == "```csharp\nint x = 1;\n```\n"
+    assert unresolved == 0
