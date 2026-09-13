@@ -27,11 +27,10 @@ def _paragraphs(presentation):
 def _shape_paragraphs(shapes):
     """図形の列から段落を取得する。再帰的にグループの中も見る。"""
     for shape in shapes:
-        # テキストフレームを持つ図形から段落を取得
-        if shape.shape_type is not None and shape.has_text_frame:
+        if shape.has_text_frame:
             yield from shape.text_frame.paragraphs
-        # テーブルセルから段落を取得
         if shape.has_table:
+            # テーブルセルの段落も見ないと、テーブル内の印を取りこぼす。
             for row in shape.table.rows:
                 for cell in row.cells:
                     yield from cell.text_frame.paragraphs

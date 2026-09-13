@@ -69,6 +69,26 @@ def test_a_placeholder_inside_a_grouped_shape_is_found(tmp_path):
     assert docgen.placeholders(path) == ["会議名", "開催日"]
 
 
+def test_a_placeholder_inside_a_grouped_shape_is_filled(tmp_path):
+    """グループ図形内のプレースホルダが実際に値に置き換わることを確かめる。
+
+    走査の取りこぼしは「印が無い雛形」と同じ見え方になり、利用者には気づけない。
+    埋める側でも取りこぼしがないことを確認する。
+    """
+    presentation, slide, path = _blank(tmp_path)
+    first = _textbox(slide, "{{会議名}}")
+    second = _textbox(slide, "{{開催日}}")
+    slide.shapes.add_group_shape([first, second])
+    presentation.save(path)
+
+    filled = Presentation(io.BytesIO(docgen.fill(path, {"会議名": "第5回", "開催日": "2026-09-13"})))
+    # グループ図形は add_group_shape 後に新しい GroupShape として添加されるため、
+    # 最後の図形がグループ図形になる
+    group_shape = filled.slides[0].shapes[-1]
+    assert group_shape.shapes[0].text_frame.text == "第5回"
+    assert group_shape.shapes[1].text_frame.text == "2026-09-13"
+
+
 def test_an_unfilled_mark_is_left_in_place(tmp_path):
     presentation, slide, path = _blank(tmp_path)
     _textbox(slide, "{{会議名}} / {{決定事項}}")
