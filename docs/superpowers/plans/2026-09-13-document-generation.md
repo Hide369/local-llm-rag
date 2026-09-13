@@ -2574,15 +2574,22 @@ if st.session_state.get("template_dialog_open"):
 
 生成の本体は関数に切り出す。`rag_chat_app.py` は665行あり、この処理をチャットの分岐の中に直接書くと読めなくなる。
 
-**実測 2026-09-13（実装中に判明）**: 下のコードは `st.error` / `st.download_button` をその場で呼ぶ形だが、**このままでは画面に何も出ない**。生成の分岐の末尾には `generating` を戻すための `st.rerun()` があり（チャットの入力欄を再び使えるようにするため）、同じ実行での描画ごと消える。結果は `st.session_state.cowork_result` に積み、次の実行で描くこと。既存の `ingest_report`（取り込みの結果を `st.session_state` 経由で次の実行に描き直している箇所）と同じ形にする。下のコードの `st.*` の呼び出しは、**その `render_cowork_result` の中に置く**と読み替えること。
+**当初はこう書いていた**が、実装中の実測で分かったのは次の点である: `st.error` / `st.download_button` をその場で呼ぶ形では、**このままでは画面に何も出ない**。生成の分岐の末尾には `generating` を戻すための `st.rerun()` があり（チャットの入力欄を再び使えるようにするため）、同じ実行での描画ごと消える。結果は `st.session_state.cowork_result` に積み、次の実行で描く必要がある。既存の `ingest_report`（取り込みの結果を `st.session_state` 経由で次の実行に描き直している箇所）と同じ形にする。
+
+さらにレビュー（最終仕上げ、後日）で次の2点も判明した。`docgen.fill` と添付の `parse` は生の例外（壊れた雛形・壊れた添付ファイル）を投げうるため捕捉して `_cowork_error` に積むこと、添付は `caption_image_or_reason()` を通して VLM に回し、本文が空だった添付は警告として出すこと。以下は最終的な実装である。
 
 ```python
 def _generate_document(template_path, names, question, attachments, use_internal, use_docs):
-    """雛形を埋めてダウンロードボタンまで出す。
+    """雛形を埋め、結果を st.session_state.cowork_result に積む。
+
+    ここで直接 st.error や st.download_button を呼ばないのは、generating を
+    戻すための下の st.rerun() が同じ実行の描画ごと消してしまうためである。
+    render_cowork_result が次の実行でこれを描く。
 
     どのコーパスを引くかは画面が決め、filling.py へは (種類の名前, ヒット) の
     並びで渡す。filling.py にコーパスの知識を持たせない（設計書6節）。
     """
+    result = _empty_cowork_result()
 
     def ask(prompt):
         return chat.ask_json(
@@ -2594,7 +2601,7 @@ def _generate_document(template_path, names, question, attachments, use_internal
         if use_internal:
             internal = get_collection(DB_PATH)
             sources.append((
-                "社内資料",
+                CORPUS_INTERNAL,
                 search(
                     internal,
                     question,
@@ -2606,13 +2613,15 @@ def _generate_document(template_path, names, question, attachments, use_internal
             documents = get_collection(DOCS_DB_PATH)
             if documents.count() == 0:
                 # 取り込み前でも生成は止めない。社内資料と添付だけで埋める。
-                st.info("技術ドキュメントが取り込まれていません。この検索は飛ばしました。")
+                result["infos"].append(
+                    "技術ドキュメントが取り込まれていません。この検索は飛ばしました。"
+                )
             else:
                 # 英語のコーパスなので日本語のままでは当たらず、採否も距離では
                 # 決まらない（PR #41）。チャット側の経路と同じ2つを渡す。
                 english = query_translation.translate_query(question, ask_json)
                 sources.append((
-                    "技術ドキュメント",
+                    CORPUS_DOCS,
                     search(
                         documents,
                         english,
@@ -2622,57 +2631,86 @@ def _generate_document(template_path, names, question, attachments, use_internal
                     ),
                 ))
     except embedder.EmbeddingError as error:
-        st.error(str(error))
+        st.session_state.cowork_result = _cowork_error(str(error))
         return
     except chat.ChatError as error:
         # 英訳もLLMである。落ちたら伝えて止める。
-        st.error(str(error))
+        st.session_state.cowork_result = _cowork_error(str(error))
         return
 
     texts = []
-    with tempfile.TemporaryDirectory() as workspace:
-        for file in attachments:
-            path = Path(workspace) / file.name
-            path.write_bytes(file.getvalue())
-            # 添付はDBに入れない。取り出した本文をその場で使うだけである。
-            units = parse(path)
-            texts.append((file.name, "\n".join(unit.text for unit in units)))
+    if attachments:
+        # アップロード経路（upload_dialog）と同じ判断: VLMが無いことは止める
+        # 理由にしないが、caption_image を渡さずに parse を呼ぶと画面の図や
+        # スクリーンショットに説明が付かず、OCRで拾えた文字だけになる。
+        caption_image, reason = caption_image_or_reason()
+        if reason:
+            result["warnings"].append(reason)
+        with tempfile.TemporaryDirectory() as workspace:
+            for file in attachments:
+                path = Path(workspace) / file.name
+                path.write_bytes(file.getvalue())
+                try:
+                    # 添付はDBに入れない。取り出した本文をその場で使うだけである。
+                    units = parse(path, caption_image=caption_image)
+                except Exception as error:
+                    # register() 同様、拡張子だけでは中身の壊れたファイルを
+                    # 弾けない。壊れたファイルを添付されて素通りさせると
+                    # 生のトレースバックで止まる。
+                    st.session_state.cowork_result = _cowork_error(
+                        f"{file.name} を開けませんでした: {error}"
+                    )
+                    return
+                text = "\n".join(unit.text for unit in units)
+                if not text:
+                    # 説明文もOCR文字も得られなかった画像。空の見出しだけが
+                    # プロンプトに載ると、利用者には何も伝わらない。
+                    result["warnings"].append(
+                        f"{file.name} から本文を取り出せませんでした。"
+                    )
+                texts.append((file.name, text))
 
     try:
         values = docgen_filling.fill_values(names, question, sources, texts, ask)
     except docgen_filling.PromptTooLongError as error:
-        st.error(str(error))
+        st.session_state.cowork_result = _cowork_error(str(error))
         return
     except chat.ChatError as error:
-        st.error(str(error))
+        st.session_state.cowork_result = _cowork_error(str(error))
         return
 
     undrawn = []
-    data = docgen.fill(
-        template_path, values, lambda name, reason: undrawn.append((name, reason))
-    )
+    try:
+        data = docgen.fill(
+            template_path, values, lambda name, reason: undrawn.append((name, reason))
+        )
+    except Exception as error:
+        st.session_state.cowork_result = _cowork_error(
+            f"{template_path.name} を開けませんでした: {error}"
+        )
+        return
     missing = [name for name in names if name not in values]
     if missing:
-        st.warning(f"埋まらなかった欄: {'、'.join(missing)}（雛形の {{{{印}}}} が残ります）")
+        result["warnings"].append(
+            f"埋まらなかった欄: {'、'.join(missing)}（雛形の {{{{印}}}} が残ります）"
+        )
     if undrawn:
         # 図にできなかったことは開く前に伝える。黙って Mermaid のテキストが
         # 入っていると、利用者は成果物を開くまで気づけない。
-        st.warning(
+        result["warnings"].append(
             "図にできなかった欄: "
             + "、".join(f"{name}（{reason}）" for name, reason in undrawn)
         )
     for name, hits in sources:
         if not hits:
-            st.info(f"{name}の検索は0件でした。")
+            result["infos"].append(f"{name}の検索は0件でした。")
     stem = template_path.stem
-    st.download_button(
-        "ダウンロード",
-        data=data,
-        file_name=f"{stem}_{date.today().isoformat()}{template_path.suffix}",
-    )
-    for _, hits in sources:
-        if hits:
-            render_hits(hits)
+    result["download"] = {
+        "data": data,
+        "file_name": f"{stem}_{date.today().isoformat()}{template_path.suffix}",
+    }
+    result["sources"] = sources
+    st.session_state.cowork_result = result
 ```
 
 `from ingest.parsers import parse` と `from datetime import date` の import を足す。`query_translation` / `DOCS_DB_PATH` / `DOCS_RERANK_FLOOR` は既にチャット側の経路が使っており、追加の import は要らない。
