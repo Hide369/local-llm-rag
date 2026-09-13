@@ -679,6 +679,7 @@ def test_the_real_config_file_loads():
         "go",
         "go-spec",
         "csharp-spec",
+        "python-spec",
         "mermaid",
         "markdown",
     ]
@@ -690,6 +691,9 @@ def test_the_real_config_file_loads():
     # 原本の H1 が31個とも章題なので、題名は設定側で決める。
     assert by_name["csharp-spec"].title == "C# 言語仕様書"
     assert by_name["go-spec"].title == ""
+    # 原本の H1 は11個。1つ目が題名で残り10個は章題なので、こちらも設定側で決める。
+    assert by_name["python-spec"].section_level == 4
+    assert by_name["python-spec"].title == "The Python Language Reference"
 
 
 def test_the_local_origin_files_exist():
