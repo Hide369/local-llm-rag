@@ -36,7 +36,9 @@
   `llms-full.txt` を1本取りに行く。`kind = "github"` は `api.github.com` の
   Trees API でリポジトリの木を1回引き、`raw.githubusercontent.com` から各ページの
   本文を取る。どちらも送るのはURLへの要求だけで、社内資料の内容も検索語も
-  含まない。認証もトークンも使わない。
+  含まない。認証もトークンも使わない。3種類目の `kind = "local"` は宛先を
+  持たない（`scripts/local_source.py`）。リポジトリ内のファイルを読んで
+  `docs_source/` へ写すだけで、外部へは1バイトも出ない。
   設定に書かれたURL・リポジトリ・パスしか取りに行かず、ページ内のリンクは
   辿らない。唯一の例外が `resolve_code_refs = true` を書いたソースの `:::code`
   で、これは C# のドキュメントがコード例を外部ファイルに置いているために要る

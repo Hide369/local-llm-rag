@@ -16,7 +16,7 @@ from pathlib import Path
 
 import requests
 
-from scripts import code_references, github_source
+from scripts import code_references, github_source, local_source
 
 _ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = _ROOT / "docs_sources.toml"
@@ -40,10 +40,11 @@ class LlmsSource:
 # 設定を直したつもりの人が直っていないことに気付けない。
 _LLMS_ONLY = ("url",)
 _GITHUB_ONLY = ("repo", "ref", "paths", "resolve_code_refs")
+_LOCAL_ONLY = ("path", "section_level")
 
 
 def load_sources(path: Path = DEFAULT_CONFIG) -> list:
-    """docs_sources.toml を読む。kind で LlmsSource か GitHubSource になる。"""
+    """docs_sources.toml を読む。kind でソースの種類が決まる。"""
     with path.open("rb") as handle:
         config = tomllib.load(handle)
     return [_source_of(entry) for entry in config.get("source", [])]
@@ -54,10 +55,10 @@ def _source_of(entry: dict):
     name = entry["name"]
     version = str(entry["version"])
     if kind == "llms":
-        _reject(entry, _GITHUB_ONLY, name, kind)
+        _reject(entry, _GITHUB_ONLY + _LOCAL_ONLY, name, kind)
         return LlmsSource(name=name, url=entry["url"], version=version)
     if kind == "github":
-        _reject(entry, _LLMS_ONLY, name, kind)
+        _reject(entry, _LLMS_ONLY + _LOCAL_ONLY, name, kind)
         return github_source.GitHubSource(
             name=name,
             repo=entry["repo"],
@@ -66,8 +67,17 @@ def _source_of(entry: dict):
             version=version,
             resolve_code_refs=bool(entry.get("resolve_code_refs", False)),
         )
+    if kind == "local":
+        _reject(entry, _LLMS_ONLY + _GITHUB_ONLY, name, kind)
+        return local_source.LocalSource(
+            name=name,
+            path=entry["path"],
+            version=version,
+            section_level=int(entry.get("section_level", 2)),
+        )
     raise ValueError(
-        f'{name} の kind が不明です: {kind!r}（使えるのは "llms" か "github"）'
+        f'{name} の kind が不明です: {kind!r}'
+        '（使えるのは "llms" か "github" か "local"）'
     )
 
 
@@ -207,21 +217,25 @@ def write_if_changed(
     source: LlmsSource, body: str, out_dir: Path, fetched_at: str
 ) -> bool:
     """本文が変わっていれば書く。書いたら True。"""
-    # name はそのままファイル名に使う。docs_sources.toml の name に
-    # "../../evil" のようなパス区切りや親ディレクトリ参照が書かれていると、
-    # out_dir の外（実測: docs_source/ の2階層上）へ書き出せてしまう。
-    # 設定ファイルはバージョン管理下にあり悪意ある入力の危険は低いが、
-    # 防ぐのに1行で足りるので防ぐ。
-    if "/" in source.name or "\\" in source.name or ".." in source.name:
-        raise ValueError(
-            f"name にパス区切りや親ディレクトリ参照は使えません: {source.name!r}"
-        )
+    _check_name(source.name)
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{source.name}.md"
     if _digest(_body_of(path)) == _digest(body):
         return False
     path.write_text(_frontmatter(source, fetched_at) + body, encoding="utf-8")
     return True
+
+
+def _check_name(name: str) -> None:
+    """name はそのままファイル名に使う。
+
+    docs_sources.toml の name に "../../evil" のようなパス区切りや親ディレクトリ
+    参照が書かれていると、out_dir の外（実測: docs_source/ の2階層上）へ書き出せて
+    しまう。設定ファイルはバージョン管理下にあり悪意ある入力の危険は低いが、
+    防ぐのに1行で足りるので防ぐ。
+    """
+    if "/" in name or "\\" in name or ".." in name:
+        raise ValueError(f"name にパス区切りや親ディレクトリ参照は使えません: {name!r}")
 
 
 def _digest(text: str) -> str:
@@ -247,13 +261,23 @@ class FetchReport:
     unresolved_code_refs: dict[str, int] = field(default_factory=dict)
 
 
-def run(sources, out_dir: Path, fetched_at: str, session=None, notify=None) -> FetchReport:
+def run(
+    sources,
+    out_dir: Path,
+    fetched_at: str,
+    session=None,
+    notify=None,
+    root: Path = _ROOT,
+) -> FetchReport:
+    """root は kind = "local" の path を解決する基点（リポジトリの根）である。"""
     report = FetchReport()
     say = notify or (lambda _message: None)
     for source in sources:
         try:
             if isinstance(source, github_source.GitHubSource):
                 _run_github(source, out_dir, fetched_at, session, say, report)
+            elif isinstance(source, local_source.LocalSource):
+                _run_local(source, out_dir, fetched_at, root, say, report)
             else:
                 _run_llms(source, out_dir, fetched_at, session, say, report)
         except Exception as error:  # 1件の失敗で残りを止めない
@@ -282,6 +306,27 @@ def _run_llms(source, out_dir, fetched_at, session, say, report) -> None:
     if write_if_changed(source, body, out_dir, fetched_at):
         report.updated.append(source.name)
         say(f"更新: {source.name}（{len(body.encode('utf-8'))}バイト）")
+    else:
+        report.unchanged.append(source.name)
+        say(f"変更なし: {source.name}")
+
+
+def _run_local(source, out_dir, fetched_at, root, say, report) -> None:
+    """リポジトリ内の Markdown を1ファイル写す。外部へは出ない。
+
+    原本が無いことは失敗として報告する。バージョン管理下にあるファイルなので、
+    消えていれば設定の書き間違いか消し忘れであり、黙って飛ばすと「取り込んだ
+    つもりのものが入っていない」状態になる。
+    """
+    say(f"読み込み中: {source.name} — {source.path}")
+    _check_name(source.name)
+    body, digest = local_source.read_body(source, root)
+    text = local_source.render_page(
+        source, local_source.normalise(body, source.section_level), fetched_at, digest
+    )
+    if write_page_if_changed(f"{source.name}.md", text, out_dir):
+        report.updated.append(source.name)
+        say(f"更新: {source.name}（{len(text.encode('utf-8'))}バイト）")
     else:
         report.unchanged.append(source.name)
         say(f"変更なし: {source.name}")

@@ -39,7 +39,31 @@ from ingest.models import SECTION, ParsedUnit
 # 扱うのが正しい。streamlit.md には上流のHTMLが貼り付いた閉じフェンス
 # （```</div> など3件）があり、これを閉じ扱いにする案も測ったが、改善は
 # 80件→72件にとどまった。規則が場当たり的になるわりに見合わないので採らない。
-_FENCE_LINE = re.compile(r"^[ \t]*(?P<ticks>`{3,})(?P<info>.*)$")
+FENCE_LINE = re.compile(r"^[ \t]*(?P<ticks>`{3,})(?P<info>.*)$")
+
+
+def scan_fences(lines):
+    """各行に「コードフェンスの中か」を添えて返す。フェンスの行自身は中とみなす。
+
+    規則を1箇所に置くための関数である。取り込み側（parse_md）と取得側
+    （scripts/local_source.py）が別々に同じ状態機械を持つと、上の実測で決めた
+    規則が片方にしか入らない状態が生まれる。
+    """
+    in_fence = False
+    # 開いたフェンスのバッククォートの数。閉じるにはこれ以上が要る。
+    fence_ticks = 0
+    for line in lines:
+        fence = FENCE_LINE.match(line)
+        if fence:
+            ticks = len(fence.group("ticks"))
+            if not in_fence:
+                in_fence, fence_ticks = True, ticks
+            elif ticks >= fence_ticks and not fence.group("info").strip():
+                in_fence = False
+            yield line, True
+            continue
+        yield line, in_fence
+
 
 # ![alt](path) と ![alt](path "title")。altは空でもよい。パスに空白は許さない
 # （Markdownでは <> で囲む記法になるが、この資料群には現れない）。
@@ -223,25 +247,13 @@ def parse_md(path: Path, caption_image=None, on_missing_image=None, ocr_bytes=No
     sections: list[tuple[str, list[str]]] = []
     heading: str = ""
     body: list[str] = []
-    in_fence = False
-    # 開いたフェンスのバッククォートの数。閉じるにはこれ以上が要る。
-    fence_ticks = 0
     # 画像を読む手立てが1つも無いなら走査もしない。従来の取り込み結果と
     # 1バイトも変わらないことを保証するため。
     read_images = caption_image is not None or ocr_bytes is not None
 
-    for line in body_lines:
-        fence = _FENCE_LINE.match(line)
-        if fence:
-            ticks = len(fence.group("ticks"))
-            if not in_fence:
-                in_fence, fence_ticks = True, ticks
-            elif ticks >= fence_ticks and not fence.group("info").strip():
-                in_fence = False
-            # フェンスの行そのものは本文に残す。見出し・タイトル・画像の
-            # いずれの判定にもかけない。
-            body.append(line)
-            continue
+    # フェンスの行そのものは本文に残す。見出し・タイトル・画像のいずれの
+    # 判定にもかけない（scan_fences が中として返す）。
+    for line, in_fence in scan_fences(body_lines):
         if not in_fence:
             if line.startswith("## "):
                 sections.append((heading, body))

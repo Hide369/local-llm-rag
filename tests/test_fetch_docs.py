@@ -8,7 +8,7 @@ import sys
 import pytest
 import requests
 
-from scripts import fetch_docs, github_source
+from scripts import fetch_docs, github_source, local_source
 
 
 class _FakeResponse:
@@ -677,6 +677,7 @@ def test_the_real_config_file_loads():
         "mcp",
         "csharp",
         "go",
+        "go-spec",
         "mermaid",
         "markdown",
     ]
@@ -684,6 +685,19 @@ def test_the_real_config_file_loads():
     assert by_name["csharp"].resolve_code_refs is True
     assert by_name["go"].resolve_code_refs is False
     assert by_name["streamlit"].url == "https://docs.streamlit.io/llms-full.txt"
+    assert by_name["go-spec"].section_level == 3
+
+
+def test_the_local_origin_files_exist():
+    """原本が消えると取得が落ちる。設定と現物のずれをここで掴む。
+
+    kind = "local" だけは、取得の成否がネットワークではなくリポジトリの中身で
+    決まる。ファイルを動かした人がテストで気付けるようにしておく。
+    """
+    root = fetch_docs.DEFAULT_CONFIG.parent
+    for source in fetch_docs.load_sources(fetch_docs.DEFAULT_CONFIG):
+        if isinstance(source, local_source.LocalSource):
+            assert (root / source.path).is_file(), source.path
 
 
 def test_write_page_if_changed_writes_a_page_whose_body_is_empty(tmp_path):
@@ -717,3 +731,121 @@ def test_run_reports_pages_that_carry_no_body(tmp_path):
     assert report.pages_written == {"csharp": 1}
     assert report.pages_empty == {"csharp": 1}
     assert not (tmp_path / "csharp" / "i.md").exists()
+
+
+# --- kind = "local"（リポジトリに置いた Markdown を写す） ---
+
+
+def test_load_sources_reads_a_local_source(tmp_path):
+    config = tmp_path / "docs_sources.toml"
+    config.write_text(
+        '[[source]]\nname = "go-spec"\nkind = "local"\n'
+        'path = "docs/pg_data/go-language-specification.md"\n'
+        'section_level = 3\nversion = "go1.27"\n',
+        encoding="utf-8",
+    )
+    assert fetch_docs.load_sources(config) == [
+        local_source.LocalSource(
+            name="go-spec",
+            path="docs/pg_data/go-language-specification.md",
+            section_level=3,
+            version="go1.27",
+        )
+    ]
+
+
+def test_load_sources_defaults_the_section_level_to_two(tmp_path):
+    """既定は原文の階層のままである。下ろすのは明示したソースだけ。"""
+    config = tmp_path / "docs_sources.toml"
+    config.write_text(
+        '[[source]]\nname = "x"\nkind = "local"\npath = "a.md"\nversion = "0.0.0"\n',
+        encoding="utf-8",
+    )
+    assert fetch_docs.load_sources(config)[0].section_level == 2
+
+
+def test_load_sources_rejects_a_url_on_a_local_source(tmp_path):
+    config = tmp_path / "docs_sources.toml"
+    config.write_text(
+        '[[source]]\nname = "x"\nkind = "local"\npath = "a.md"\n'
+        'url = "https://example.test/llms-full.txt"\nversion = "0.0.0"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError):
+        fetch_docs.load_sources(config)
+
+
+def test_load_sources_rejects_a_path_on_a_github_source(tmp_path):
+    """path は local のキーである。github に書いても効かない。"""
+    config = tmp_path / "docs_sources.toml"
+    config.write_text(
+        '[[source]]\nname = "x"\nkind = "github"\nrepo = "a/b"\nref = "main"\n'
+        'paths = ["docs"]\npath = "a.md"\nversion = "0.0.0"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError):
+        fetch_docs.load_sources(config)
+
+
+def _local(**kwargs):
+    defaults = dict(name="go-spec", path="docs/spec.md", version="go1.27")
+    defaults.update(kwargs)
+    return local_source.LocalSource(**defaults)
+
+
+def _with_origin(root, text="# 題名\n\n## 節\n\n本文\n"):
+    (root / "docs").mkdir(parents=True, exist_ok=True)
+    (root / "docs" / "spec.md").write_text(text, encoding="utf-8")
+
+
+def test_run_writes_a_local_source_next_to_the_other_sources(tmp_path):
+    root, out = tmp_path / "repo", tmp_path / "out"
+    _with_origin(root)
+    session = _FakeSession({})
+    report = fetch_docs.run(
+        [_local()], out, "2026-09-13", session=session, root=root
+    )
+    assert report.updated == ["go-spec"]
+    assert (out / "go-spec.md").is_file()
+    # 外部へは1回も出ない。原本は手元にある。
+    assert session.urls == []
+
+
+def test_run_applies_the_section_level_when_writing_a_local_source(tmp_path):
+    root, out = tmp_path / "repo", tmp_path / "out"
+    _with_origin(root, "# 題名\n\n## 章 {#Ch}\n\n### 節 {#Se}\n\n本文\n")
+    fetch_docs.run([_local(section_level=3)], out, "2026-09-13", root=root)
+    written = (out / "go-spec.md").read_text(encoding="utf-8")
+    assert "## 節\n" in written
+    assert "{#Se}" not in written
+
+
+def test_run_counts_an_unchanged_local_source_as_unchanged(tmp_path):
+    """差分取り込みに乗せる。取得日だけが違うファイルを書き直さない。"""
+    root, out = tmp_path / "repo", tmp_path / "out"
+    _with_origin(root)
+    fetch_docs.run([_local()], out, "2026-09-13", root=root)
+    report = fetch_docs.run([_local()], out, "2026-09-20", root=root)
+    assert report.unchanged == ["go-spec"]
+
+
+def test_run_reports_a_missing_local_file_as_a_failure(tmp_path):
+    """原本はバージョン管理下にある。消えていたら気付けるようにする。"""
+    root, out = tmp_path / "repo", tmp_path / "out"
+    root.mkdir()
+    report = fetch_docs.run([_local()], out, "2026-09-13", root=root)
+    assert "go-spec" in report.failed
+    assert not (out / "go-spec.md").exists()
+
+
+def test_run_continues_to_the_next_source_after_a_local_failure(tmp_path):
+    root, out = tmp_path / "repo", tmp_path / "out"
+    root.mkdir()
+    session = _FakeSession(
+        {"https://example.test/llms-full.txt": _FakeResponse(200, "# 本文\n")}
+    )
+    report = fetch_docs.run(
+        [_local(), _source()], out, "2026-09-13", session=session, root=root
+    )
+    assert list(report.failed) == ["go-spec"]
+    assert report.updated == ["streamlit"]
