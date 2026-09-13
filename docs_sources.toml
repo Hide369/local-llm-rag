@@ -79,7 +79,8 @@ paths = [
 resolve_code_refs = true
 version = "0.0.0"
 
-# Go の言語仕様（spec.html）と Effective Go は HTML であり、ここでは取れない。
+# Go の言語仕様（spec.html）と Effective Go は HTML であり、この経路では取れない。
+# 仕様は下の go-spec（kind = "local"）が受け持つ。
 # 取れるのは各版のリリースノート（go1.1.md〜）・FAQ・modules リファレンス等の
 # 96ファイルである。_content/blog（339ファイル）と _content/solutions（42ファイル）は
 # 読み物と事例なので入れない。
@@ -90,6 +91,25 @@ repo = "golang/website"
 ref = "master"
 paths = ["_content/doc", "_content/ref"]
 version = "0.0.0"
+
+# ここから下は kind = "local"。公開されている Markdown が無い資料を、人が md 化
+# してリポジトリへ置いたものから取る。path はリポジトリの根からの相対パス。
+#
+# 言語仕様は go.dev/ref/spec の HTML しか無く、golang/website のリポジトリにも
+# spec.html しか置かれていない（上の go は仕様を含まない）。原本は
+# docs/pg_data/ にあり、バージョン管理下なので docs_source/ を作り直しても
+# 復元できる。
+#
+# section_level = 3 は「H3 までを節の境界にする」。取り込み側は `## ` だけを
+# 境界にするため、原文のままだと H2 が20個しかなく1節が最大82,825バイトになる。
+# H3（108個）まで下ろすと中央値1,076バイトになり、`For statements` のように
+# 質問の単位と揃う（実測 2026-09-13）。
+[[source]]
+name = "go-spec"
+kind = "local"
+path = "docs/pg_data/go-language-specification.md"
+section_level = 3
+version = "go1.27"
 
 [[source]]
 name = "mermaid"
