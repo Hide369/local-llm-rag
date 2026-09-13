@@ -1562,7 +1562,7 @@ def fill_values(placeholders, question, sources, attachments, ask) -> dict[str, 
 - [ ] **Step 4: テストが通ることを確認する**
 
 Run: `pytest tests/test_docgen_filling.py -v`
-Expected: PASS（12件）
+Expected: PASS（13件）
 
 - [ ] **Step 5: コミットする**
 
