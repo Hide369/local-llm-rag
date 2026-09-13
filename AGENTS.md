@@ -57,4 +57,9 @@
   持ち込んだものではない。回答生成・条件抽出・埋め込みは以前から同じ経路を
   使っており、`ingest/query_translation.py` の `translate_query()` も
   `ask_json` を呼ぶだけで、新しい経路を増やすものではない。
+  雛形からの文書生成（`docgen/`）もこの経路を使う。新しい宛先は増えないが、
+  画面で添付したファイルの本文が `ingest/chat.py` の `ask_json` に渡り、この
+  経路へ乗る。添付はDBに入れない（`docs/superpowers/specs/2026-09-13-document-generation-design.md`）
+  が、DBに残らないことと外へ出ないことは別である。オフラインの資料を扱うときは
+  `OLLAMA_HOST` がローカルを指していることを確かめること。
 
