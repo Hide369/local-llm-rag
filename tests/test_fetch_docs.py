@@ -684,3 +684,36 @@ def test_the_real_config_file_loads():
     assert by_name["csharp"].resolve_code_refs is True
     assert by_name["go"].resolve_code_refs is False
     assert by_name["streamlit"].url == "https://docs.streamlit.io/llms-full.txt"
+
+
+def test_write_page_if_changed_writes_a_page_whose_body_is_empty(tmp_path):
+    """「ファイルが無い」と「本文が空」は違う。
+
+    どちらも空文字のダイジェストになるため、区別しないと本文の無いページが
+    黙って書かれないまま残る。実測 2026-09-13: go の96ページ中8件、mermaid と
+    markdown の index.md がこれで、報告には出ないまま消えていた。
+    """
+    written = fetch_docs.write_page_if_changed(
+        "go/doc/copyright.md", "---\nname: go\n---\n", tmp_path
+    )
+    assert written is True
+    assert (tmp_path / "go" / "doc" / "copyright.md").is_file()
+
+
+def test_run_reports_pages_that_carry_no_body(tmp_path):
+    """本文の無いページは取り込んでも0チャンクにしかならないので書かない。
+
+    ただし黙って落とさず数える。選別したページ数と書き出したページ数が
+    説明なく食い違うと、取りこぼしと区別が付かない。
+    """
+    session = _FakeSession(
+        {
+            _TREE: _tree_response(["docs/csharp/linq/a.md", "docs/csharp/linq/i.md"]),
+            f"{_RAW}/docs/csharp/linq/a.md": _FakeResponse(200, "# A\n"),
+            f"{_RAW}/docs/csharp/linq/i.md": _FakeResponse(200, "---\nredirect: /x\n---\n"),
+        }
+    )
+    report = fetch_docs.run([_CSHARP], tmp_path, "2026-09-13", session=session)
+    assert report.pages_written == {"csharp": 1}
+    assert report.pages_empty == {"csharp": 1}
+    assert not (tmp_path / "csharp" / "i.md").exists()

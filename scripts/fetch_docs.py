@@ -194,7 +194,9 @@ def write_page_if_changed(relative_path: str, text: str, out_dir: Path) -> bool:
     if ".." in relative_path.split("/") or relative_path.startswith("/"):
         raise ValueError(f"ページのパスが不正です: {relative_path!r}")
     path = out_dir / relative_path
-    if _digest(_body_of(path)) == _digest(_without_frontmatter(text)):
+    # 「ファイルが無い」と「本文が空」を区別する。どちらも空文字のダイジェストに
+    # なるため、存在を先に見ないと本文の無いページが黙って書かれないまま残る。
+    if path.is_file() and _digest(_body_of(path)) == _digest(_without_frontmatter(text)):
         return False
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
@@ -237,6 +239,9 @@ class FetchReport:
     # うち何ページが書かれたか・落ちたかが分からない。
     pages_written: dict[str, int] = field(default_factory=dict)
     pages_failed: dict[str, int] = field(default_factory=dict)
+    # フロントマターだけで本文の無いページ。取り込んでも0チャンクにしかならない
+    # ので書かないが、黙って落とすと選別数と書き出し数が説明なく食い違う。
+    pages_empty: dict[str, int] = field(default_factory=dict)
     # 解決できなかった :::code。黙って落とすと、コードの入っていないページが
     # 混ざったことに気付けない。
     unresolved_code_refs: dict[str, int] = field(default_factory=dict)
@@ -296,7 +301,7 @@ def _run_github(source, out_dir, fetched_at, session, say, report) -> None:
     say(f"{source.name}: {len(pages)}ページ（commit {tree.commit[:10]}）")
 
     blob_paths = set(tree.paths)
-    written = failed = unresolved = 0
+    written = failed = unresolved = empty = 0
     for page_path in pages:
         try:
             body = github_source.fetch_blob(source.repo, source.ref, page_path, active)
@@ -315,6 +320,12 @@ def _run_github(source, out_dir, fetched_at, session, say, report) -> None:
                 ),
             )
             unresolved += missed
+        if not github_source.without_frontmatter(body).strip():
+            # リダイレクト指定や目次だけのページがある（実測 2026-09-13:
+            # golang/website の _content/doc/copyright.md、mermaid と
+            # github/docs の index.md）。取り込んでも0チャンクにしかならない。
+            empty += 1
+            continue
         text = github_source.render_page(source, tree.commit, page_path, body, fetched_at)
         # フロントマターの source_path はリポジトリ内の完全なパスを残すが、
         # 置き場所は共通部分を落とした相対パスにする（github_source.local_path）。
@@ -324,6 +335,7 @@ def _run_github(source, out_dir, fetched_at, session, say, report) -> None:
 
     report.pages_written[source.name] = written
     report.pages_failed[source.name] = failed
+    report.pages_empty[source.name] = empty
     report.unresolved_code_refs[source.name] = unresolved
     if written:
         report.updated.append(source.name)
@@ -371,7 +383,10 @@ def main() -> int:
     print(f"更新: {len(report.updated)}件")
     print(f"変更なし: {len(report.unchanged)}件")
     for name, count in report.pages_written.items():
-        print(f"  {name}: {count}ページ書き出し / 取得失敗{report.pages_failed[name]}件")
+        print(
+            f"  {name}: {count}ページ書き出し / 取得失敗{report.pages_failed[name]}件"
+            f" / 本文なし{report.pages_empty[name]}件"
+        )
     for name, count in report.unresolved_code_refs.items():
         if count:
             print(f"  {name}: 解決できなかった :::code が{count}件")
