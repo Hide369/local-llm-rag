@@ -136,6 +136,32 @@ section_level = 4
 title = "C# 言語仕様書"
 version = "ECMA-334:2026"
 
+# Python の言語リファレンス。公式が出しているのは HTML（docs.python.org）で、
+# cpython のリポジトリにあるのも reStructuredText であり、どちらもこの取得経路
+# （Markdown が前提）では扱えない。go-spec / csharp-spec と同じ理由で local である。
+#
+# title を書くのは、原本の H1 が11個あるためである。1つ目が資料の題名で、残る
+# 10個は章題（`1. Introduction` 〜 `10. Full Grammar specification`）である。
+# csharp-spec と同じ形で、title があると normalise が H1 を節の境界へ下ろし、
+# 題名はこの文字列から1行だけ作られる。
+#
+# section_level = 4 は実測で決めた（2026-09-13）。既定の2では境界が H2 の72個
+# だけになり1節が最大86,159バイト残る。H3 まで下ろすと197節・中央値1,555バイト・
+# 8,000バイト超が15個、H4 まで下ろすと265節・中央値1,263バイト・8,000バイト超が
+# 9個になる。H5 まで下ろしても中央値は1,254バイトでほぼ動かないので4で止める。
+# 残る最大は `10. Full Grammar specification`（25,545バイト）で、csharp-spec の
+# 文法付録と同じく割れない1つのコード塊である。
+#
+# 見出しが「3.2.13.1. Code objects」のように番号で階層を持つため、`#` の数を
+# 失ってもどの節かは見出し文字列だけで分かる（local_source.normalise の但し書き）。
+[[source]]
+name = "python-spec"
+kind = "local"
+path = "docs/pg_data/python-language-reference-unified.md"
+section_level = 4
+title = "The Python Language Reference"
+version = "3.14"
+
 [[source]]
 name = "mermaid"
 kind = "github"
