@@ -46,10 +46,10 @@ def placeholders(path: Path) -> list[str]:
     return _module(path)[0](path)
 
 
-def fill(path: Path, values: dict[str, str]) -> bytes:
+def fill(path: Path, values: dict[str, str], on_diagram_error=None) -> bytes:
     """印を値で埋めた結果をバイト列で返す。
 
     バイト列を返すのは st.download_button がそれを受け取るためで、中間ファイルを
     作らずに済む。
     """
-    return _module(path)[1](path, values)
+    return _module(path)[1](path, values, on_diagram_error)

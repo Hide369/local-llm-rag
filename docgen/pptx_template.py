@@ -11,7 +11,7 @@ from pathlib import Path
 
 from pptx import Presentation
 
-from docgen import marks
+from docgen import marks, mermaid
 
 
 def _paragraphs(presentation):
@@ -50,14 +50,52 @@ def placeholders(path: Path) -> list[str]:
     return found
 
 
-def fill(path: Path, values: dict[str, str]) -> bytes:
+def fill(path: Path, values: dict[str, str], on_diagram_error=None) -> bytes:
     """印を値で埋めた結果をバイト列で返す。"""
+    texts, images = mermaid.rendered(values, on_diagram_error)
     presentation = Presentation(path)
+    placed: set[str] = set()
+    for slide in presentation.slides:
+        placed |= _place_diagrams(slide, images)
+    for name in images:
+        if name in placed:
+            continue
+        # 貼る先が決まらなかった図は、Mermaid のテキストとして入れる。印が
+        # 空のまま残ると、利用者は図が消えたことに気づけない。
+        texts[name] = values[name]
+        if on_diagram_error is not None:
+            on_diagram_error(name, "グループ図形の中の印は図にできません")
     for paragraph in _paragraphs(presentation):
-        _fill_paragraph(paragraph, values)
+        _fill_paragraph(paragraph, texts)
     buffer = io.BytesIO()
     presentation.save(buffer)
     return buffer.getvalue()
+
+
+def _place_diagrams(slide, images: dict[str, bytes]) -> set[str]:
+    """図の印を持つ図形の位置に画像を置き、印の文字を消す。置けた印を返す。
+
+    ここだけグループの中へ入らない。グループの中の図形の left/top はグループ
+    からの相対値であり、slide.shapes.add_picture にそのまま渡すと見当違いの
+    場所へ貼られる。黙ってずれるより、置かずに呼び出し元へ返す。
+    """
+    placed: set[str] = set()
+    # 走査の途中で図形が増えるため、先に並びを固定する。
+    for shape in list(slide.shapes):
+        if not shape.has_text_frame:
+            continue
+        here = [name for name in marks.names(shape.text_frame.text) if name in images]
+        if not here:
+            continue
+        for name in here:
+            # 幅は図形に合わせ、高さは比を保って python-pptx に決めさせる。
+            slide.shapes.add_picture(
+                io.BytesIO(images[name]), shape.left, shape.top, width=shape.width
+            )
+            placed.add(name)
+        for paragraph in shape.text_frame.paragraphs:
+            _fill_paragraph(paragraph, {name: "" for name in here})
+    return placed
 
 
 def _fill_paragraph(paragraph, values: dict[str, str]) -> None:

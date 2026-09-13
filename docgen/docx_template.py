@@ -12,8 +12,13 @@ import io
 from pathlib import Path
 
 import docx
+from docx.shared import Inches
 
-from docgen import marks
+from docgen import marks, mermaid
+
+# mmdc の既定の PNG は幅800px（約8.3インチ）で、A4縦の段幅（約6.5インチ）より
+# 広い。そのまま入れると右へはみ出すので、幅を決めて高さは比で追従させる。
+DIAGRAM_WIDTH = Inches(6.0)
 
 
 def _paragraphs(document):
@@ -51,20 +56,25 @@ def placeholders(path: Path) -> list[str]:
     return found
 
 
-def fill(path: Path, values: dict[str, str]) -> bytes:
+def fill(path: Path, values: dict[str, str], on_diagram_error=None) -> bytes:
+    texts, images = mermaid.rendered(values, on_diagram_error)
     document = docx.Document(path)
     for paragraph in _paragraphs(document):
-        _fill_paragraph(paragraph, values)
+        _fill_paragraph(paragraph, texts, images)
     buffer = io.BytesIO()
     document.save(buffer)
     return buffer.getvalue()
 
 
-def _fill_paragraph(paragraph, values: dict[str, str]) -> None:
+def _fill_paragraph(paragraph, values: dict[str, str], images=None) -> None:
     if not paragraph.runs:
         return
+    images = images or {}
     original = "".join(run.text for run in paragraph.runs)
-    replaced = marks.replace(original, values)
+    here = [name for name in marks.names(original) if name in images]
+    # 図にする印はいったん空文字にしてから画像を足す。消さないと、画像の脇に
+    # {{シーケンス図}} の文字が残る。
+    replaced = marks.replace(original, {**values, **{name: "" for name in here}})
     if replaced == original:
         # 印が無い、あるいは値が1つも当たらなかった段落。触らない。
         # 触ると、書式の違う run が先頭 run のものに潰れる。
@@ -78,3 +88,5 @@ def _fill_paragraph(paragraph, values: dict[str, str]) -> None:
         # 一緒に消える。文字が無い run は original にも現れておらず、消す必要もない。
         if run.text:
             run.text = ""
+    for name in here:
+        paragraph.runs[0].add_picture(io.BytesIO(images[name]), width=DIAGRAM_WIDTH)
