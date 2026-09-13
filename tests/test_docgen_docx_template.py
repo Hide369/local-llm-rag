@@ -4,10 +4,10 @@
 `['会議名：{{会議', '名}}']` のようになるため、run 単位で置換すると印が
 見つからない。このファイルのテストはその形を必ず含める。
 """
+import base64
 import io
 
 import docx
-import pytest
 
 import docgen
 
@@ -101,3 +101,44 @@ def test_a_template_without_marks_has_no_placeholders(tmp_path):
     document = docx.Document()
     document.add_paragraph("ただの本文")
     assert docgen.placeholders(_save(tmp_path, document)) == []
+
+
+def test_a_placeholder_with_an_image_in_another_run_is_filled_and_image_is_preserved(tmp_path):
+    """run.text の setter が w:rPr 以外の子を消さないことを確認。
+
+    画像が含まれる run を触らないことで、ロゴや埋め込み図が雛形に残る。
+    """
+    PNG = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+    )
+    document = docx.Document()
+    paragraph = document.add_paragraph()
+    paragraph.add_run("{{名前}}")
+    image_run = paragraph.add_run()
+    image_run.add_picture(io.BytesIO(PNG))
+    path = _save(tmp_path, document)
+    filled = docx.Document(io.BytesIO(docgen.fill(path, {"名前": "太郎"})))
+    assert filled.paragraphs[0].text == "太郎"
+    assert len(filled.inline_shapes) == 1
+
+
+def test_a_placeholder_in_the_footer_is_found_and_filled(tmp_path):
+    """フッターの印も対象にする。"""
+    document = docx.Document()
+    document.sections[0].footer.paragraphs[0].text = "{{ページ}}"
+    path = _save(tmp_path, document)
+    assert docgen.placeholders(path) == ["ページ"]
+    filled = docx.Document(io.BytesIO(docgen.fill(path, {"ページ": "1"})))
+    assert filled.sections[0].footer.paragraphs[0].text == "1"
+
+
+def test_a_placeholder_in_a_nested_table_cell_is_found_and_filled(tmp_path):
+    """表の中に表が入る場合も対象にする。"""
+    document = docx.Document()
+    table = document.add_table(rows=1, cols=1)
+    nested = table.cell(0, 0).add_table(rows=1, cols=1)
+    nested.cell(0, 0).text = "{{nested}}"
+    path = _save(tmp_path, document)
+    assert docgen.placeholders(path) == ["nested"]
+    filled = docx.Document(io.BytesIO(docgen.fill(path, {"nested": "値"})))
+    assert filled.tables[0].cell(0, 0).tables[0].cell(0, 0).text == "値"

@@ -70,6 +70,11 @@ def _fill_paragraph(paragraph, values: dict[str, str]) -> None:
         # 触ると、書式の違う run が先頭 run のものに潰れる。
         return
     # 改行は run.text の setter が <w:br/> に変換する（実測 2026-09-13）。
+    # タブも同じで、run.text は w:tab を \t として往復する。
     paragraph.runs[0].text = replaced
     for run in paragraph.runs[1:]:
-        run.text = ""
+        # 文字を持たない run は触らない。run.text の setter（CT_R.clear_content）は
+        # w:rPr 以外の子を全部消すため、段落の中に差し込まれたロゴ（w:drawing）が
+        # 一緒に消える。文字が無い run は original にも現れておらず、消す必要もない。
+        if run.text:
+            run.text = ""
