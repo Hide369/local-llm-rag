@@ -10,6 +10,8 @@
 """
 from pathlib import Path
 
+from docgen.docx_template import fill as _fill_docx
+from docgen.docx_template import placeholders as _placeholders_docx
 from docgen.md_template import fill as _fill_md
 from docgen.md_template import placeholders as _placeholders_md
 
@@ -20,6 +22,7 @@ class UnsupportedTemplateError(Exception):
 
 _TEMPLATES = {
     ".md": (_placeholders_md, _fill_md),
+    ".docx": (_placeholders_docx, _fill_docx),
 }
 
 SUPPORTED_SUFFIXES = {".docx", ".xlsx", ".pptx", ".md"}
