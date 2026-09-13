@@ -258,6 +258,10 @@ BM25に床（フロア）を設けない判断（`ingest/retrieval.py`）が以�
 ライブラリとその理由は [docs/コーディング対応ライブラリ.md](docs/コーディング対応ライブラリ.md)
 にまとめてある。
 
+別のマシンでこのDBを用意する手順は
+[docs/技術ドキュメントDBの移植手順.md](docs/技術ドキュメントDBの移植手順.md)
+にある（作り直す方法と、できたDBを運ぶ方法の2通り）。
+
 ```powershell
 # 1. 取得（外部通信あり。docs_sources.toml に書かれたURLだけ）
 .\myvenv313\Scripts\python.exe -m scripts.fetch_docs
@@ -289,7 +293,11 @@ BM25に床（フロア）を設けない判断（`ingest/retrieval.py`）が以�
 社内資料の取り込みでは `--keep-code-blocks` を指定しない（結果が変わる）。
 
 `docs_source/` と `docs_store.sqlite3` は追跡しない。`source/` と
-`vector_store.sqlite3` と同じく、いつでも取り直せるためである。
+`vector_store.sqlite3` と同じく、いつでも取り直せるためである。**例外は
+`kind = "local"` の原本で、これは `docs/pg_data/` に置いて追跡する。** 公開されて
+いる Markdown がどこにも無い資料（Go の言語仕様など。公式は HTML だけ）を人が
+md 化したもので、取り直す先が無いためである。`docs_source/` へ直接置くと、
+作り直した瞬間に黙って消える。
 
 **実測した完了条件（2026-09-12）:**
 
@@ -407,7 +415,9 @@ Colabの `gpt-oss:20b` をVS Codeのコーディングエージェントとし�
 | `ingest/retrieval.py` | ベクトル検索とBM25をRRFで融合し、圏内ゲートで採否を決める |
 | `ingest/reranker.py` | RRF上位8件をbge-reranker-v2-m3で測り直す（外部サービスに依存しない） |
 | `scripts/check_retrieval.py` | 関連度しきい値の距離実測、BM25側の回帰確認、リランカーの効果比較（`--with-reranker`） |
-| `scripts/fetch_docs.py` | 公式ドキュメント（`llms-full.txt`）の取得CLI。外部通信はここだけ |
+| `scripts/fetch_docs.py` | 公式ドキュメントの取得CLI。外部通信はここだけ |
+| `scripts/github_source.py` | `kind = "github"` — 公式リポジトリの生 Markdown を取る |
+| `scripts/local_source.py` | `kind = "local"` — リポジトリに置いた原本（`docs/pg_data/`）を写す。外部通信なし |
 | `ingest/query_translation.py` | 技術ドキュメント検索用に質問を英語へ翻訳する（生成には使わない） |
 | `rag_chat_app.py` | Streamlit UI |
 | `infra/gitlab/` | ローカルGitLab CEのDocker定義（アプリ本体には非依存） |
