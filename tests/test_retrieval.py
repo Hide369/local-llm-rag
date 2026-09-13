@@ -450,3 +450,102 @@ def test_all_citations_lists_every_occurrence():
         ]
     )
     assert hit.all_citations() == ["A.pptx スライド25", "B.pptx スライド23"]
+
+
+def test_the_rerank_floor_drops_the_hits_that_scored_below_it():
+    """技術ドキュメントでは、圏内と判定されてもBM25のヒットを信じてはいけない。
+
+    47,525チャンク・10製品が同居するコーパスでは、Streamlitの質問として圏内でも
+    それはGoやMermaidのチャンクを信じてよい理由にならない。発端となった
+    Snowflakeの質問では、BM25の1位 `streamlit.md ＞ secrets.toml` が画面の
+    「参考にした情報」に並んだ（ingest/retrieval.py の DOCS_RERANK_FLOOR）。
+    """
+    collection = _FakeCollection(
+        ["あ" * 20, "い" * 20, "う" * 20],
+        [0.10, 0.20, 0.30],
+        [_meta(location=1), _meta(location=2), _meta(location=3)],
+    )
+
+    def fake_rerank(query, texts):
+        return [5.0, 0.5, 2.0]
+
+    hits = search(collection, "質問", rerank=fake_rerank, rerank_floor=1.0)
+    assert [hit.metadata["location"] for hit in hits] == [1, 3]
+
+
+def test_a_question_whose_every_hit_is_below_the_floor_returns_nothing():
+    """床は関門も兼ねる。全件が届かなければ、その質問には資料が無い。"""
+    collection = _FakeCollection(
+        ["あ" * 20, "い" * 20],
+        [0.10, 0.20],
+        [_meta(location=1), _meta(location=2)],
+    )
+
+    def fake_rerank(query, texts):
+        return [-1.38, -3.87]
+
+    assert search(collection, "質問", rerank=fake_rerank, rerank_floor=1.0) == []
+
+
+def test_without_a_floor_nothing_is_dropped():
+    """社内資料は床を渡さない。距離が分離しており、床の実測もしていない。"""
+    collection = _FakeCollection(
+        ["あ" * 20, "い" * 20],
+        [0.10, 0.20],
+        [_meta(location=1), _meta(location=2)],
+    )
+
+    def fake_rerank(query, texts):
+        return [5.0, -9.0]
+
+    hits = search(collection, "質問", rerank=fake_rerank)
+    assert [hit.metadata["location"] for hit in hits] == [1, 2]
+
+
+def test_a_reranker_failure_does_not_empty_the_results_when_a_floor_is_set():
+    """測れなかった値で落とさない。
+
+    失敗時は全件の rerank_score が None になる。これを「全件が床に届かなかった」
+    と読み違えると、リランカーの不調がそのまま検索結果0件になり、利用者には
+    「資料に無い」と区別がつかない。リランカーは増幅器であって関門ではない、
+    という原則はここでも保つ。
+    """
+    collection = _FakeCollection(
+        ["あ" * 20, "い" * 20],
+        [0.10, 0.20],
+        [_meta(location=1), _meta(location=2)],
+    )
+
+    def broken_rerank(query, texts):
+        raise RerankError("模擬失敗")
+
+    hits = search(collection, "質問", rerank=broken_rerank, rerank_floor=1.0)
+    assert [hit.metadata["location"] for hit in hits] == [1, 2]
+    assert all(hit.rerank_score is None for hit in hits)
+
+
+def test_the_floor_drops_candidates_that_were_never_scored():
+    """RERANK_CANDIDATE_COUNT の外に残った分はスコアを持たない。
+
+    床を越えたと言えない以上、通さない。n_results で切られて表に出ないのが
+    通常だが、「測っていないものを通す」経路は作らない。
+    """
+    count = RERANK_CANDIDATE_COUNT + 3
+    collection = _FakeCollection(
+        [f"本文{n}" * 10 for n in range(count)],
+        [0.10 + n * 0.01 for n in range(count)],
+        [_meta(location=n) for n in range(count)],
+    )
+
+    def fake_rerank(query, texts):
+        return [9.0] * len(texts)
+
+    hits = search(
+        collection,
+        "質問",
+        rerank=fake_rerank,
+        rerank_floor=1.0,
+        n_results=count,
+    )
+    assert len(hits) == RERANK_CANDIDATE_COUNT
+    assert all(hit.rerank_score == 9.0 for hit in hits)

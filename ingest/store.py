@@ -19,6 +19,16 @@ DB_FILENAME = "vector_store.sqlite3"
 # なるだけで、テストも緑のまま通ってしまう。
 DB_PATH = Path(__file__).resolve().parent.parent / DB_FILENAME
 
+# 技術ドキュメントの取り込み先。社内資料とはファイルごと分ける。同じDBに入れると、
+# 社内規程の質問にライブラリのドキュメントが混ざり、「社内資料に無ければ答えない」
+# という歯止めが効かなくなる。
+# こちらも単一の情報源をここに置く。画面（rag_chat_app.py）と実測スクリプト
+# （scripts/check_retrieval.py）が各自で組み立てると、片方だけ綴りを間違えても
+# open_store は空のDBを新規作成するだけで、しきい値の実測が「0件のDB」に対して
+# 走ったことに気づけない。
+DOCS_DB_FILENAME = "docs_store.sqlite3"
+DOCS_DB_PATH = Path(__file__).resolve().parent.parent / DOCS_DB_FILENAME
+
 
 def stored_file_hash(collection, source: str) -> str | None:
     """登録済みならそのファイルのハッシュを返す。未登録ならNone。"""

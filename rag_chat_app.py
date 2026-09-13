@@ -39,7 +39,12 @@ from ingest.prompting import (
     format_hit_caption,
     format_report,
 )
-from ingest.retrieval import build_index, contextual_query, search
+from ingest.retrieval import (
+    DOCS_RERANK_FLOOR,
+    build_index,
+    contextual_query,
+    search,
+)
 from scripts.ingest_source import (
     DEFAULT_SOURCE_DIR,
     UPLOAD_PREFIX,
@@ -49,10 +54,10 @@ from scripts.ingest_source import (
 
 DB_PATH = str(store.DB_PATH)
 
-# 技術ドキュメントの取り込み先。社内資料とはファイルごと分ける。
-# 同じDBに入れると、社内規程の質問にライブラリのドキュメントが混ざり、
-# 「社内資料に無ければ答えない」という歯止めが効かなくなる。
-DOCS_DB_PATH = str(store.DB_PATH.parent / "docs_store.sqlite3")
+# 技術ドキュメントの取り込み先。パスの組み立ては ingest/store.py に置いてある
+# （社内資料と分ける理由もそちら）。ここで綴り直すと、実測スクリプトと画面で
+# 別のDBを開いても例外が出ないまま食い違う。
+DOCS_DB_PATH = str(store.DOCS_DB_PATH)
 
 CORPUS_INTERNAL = "社内資料"
 CORPUS_DOCS = "技術ドキュメント"
@@ -535,7 +540,17 @@ if st.session_state.generating:
             # question のまま行う（build_docs_prompt）。詳細は
             # ingest/query_translation.py のモジュールdocstring参照。
             query = query_translation.translate_query(query, ask_json)
-            hits = search(collection, query, index=index, rerank=rerank_callable)
+            # 技術ドキュメントだけ、1件ごとの採否をリランカーのスコアで決める。
+            # このコーパスでは距離のしきい値が関門にならない（実測は
+            # ingest/retrieval.py の DOCS_RERANK_FLOOR）。社内資料側（下の経路）
+            # には渡さない。あちらは距離が分離しており、床の実測もしていない。
+            hits = search(
+                collection,
+                query,
+                index=index,
+                rerank=rerank_callable,
+                rerank_floor=DOCS_RERANK_FLOOR,
+            )
             user_content = build_docs_prompt(question, hits)
         elif extraction.conditions:
             # 「最大の洗濯容量は」に答えるための並べ替え。最大・最小を尋ねる語が

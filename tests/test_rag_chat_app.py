@@ -30,6 +30,7 @@ from ingest import reranker as reranker_module
 from ingest import store as store_module
 from ingest import vlm as vlm_module
 from ingest.embedder import EmbeddingError
+from ingest.retrieval import DOCS_RERANK_FLOOR
 from ingest.vector_store import open_store as open_real_store
 from scripts import ingest_source
 
@@ -94,15 +95,24 @@ def _reranker_check_and_rerank_stubbed_by_default():
     distance=0で圏内判定を通り、_reranked() の head が空にならず本物の rerank()
     （実ONNXセッション構築・hf_hub_download）が呼ばれてしまう。ネットワークにも
     実モデルにも触れさせないよう、check_reranker と rerank の両方を既定で
-    スタブする。rerank側は [0.0]*len(texts) を返す。全件同スコアなら
-    _reranked() のsortは安定ソートなので元のRRF順のまま返り、既存テストの
-    並び順に関するアサーションには影響しない。
+    スタブする。rerank側は全件に同じ値を返す。同スコアなら _reranked() のsortは
+    安定ソートなので元のRRF順のまま返り、既存テストの並び順に関するアサーション
+    には影響しない。
     リランカー自体の疎通確認や配線を検証するテストは、この既定をネストした
     patch.objectで上書きする。
+
+    その値を DOCS_RERANK_FLOOR ちょうどにしてあるのは、技術ドキュメント側が
+    1件ごとの採否をこのスコアで決めるようになったためである。床に届かない値を
+    返すと、リランカーと無関係なテストまで「検索結果0件」になる。床は
+    「これ以上なら採用」なので、ちょうどの値は通る。
     """
     with (
         patch.object(reranker_module, "check_reranker", lambda: None),
-        patch.object(reranker_module, "rerank", lambda query, texts: [0.0] * len(texts)),
+        patch.object(
+            reranker_module,
+            "rerank",
+            lambda query, texts: [DOCS_RERANK_FLOOR] * len(texts),
+        ),
     ):
         yield
 
@@ -460,7 +470,14 @@ def test_the_reranker_is_always_wired_into_search(app):
     calls = []
 
     def fake_search(
-        collection, query, index=None, session=None, threshold=None, n_results=4, rerank=None
+        collection,
+        query,
+        index=None,
+        session=None,
+        threshold=None,
+        n_results=4,
+        rerank=None,
+        rerank_floor=None,
     ):
         calls.append(rerank)
         return []
@@ -487,7 +504,14 @@ def test_a_missing_reranker_model_does_not_stop_the_search(app):
     calls = []
 
     def fake_search(
-        collection, query, index=None, session=None, threshold=None, n_results=4, rerank=None
+        collection,
+        query,
+        index=None,
+        session=None,
+        threshold=None,
+        n_results=4,
+        rerank=None,
+        rerank_floor=None,
     ):
         calls.append(rerank)
         return []
@@ -1086,7 +1110,14 @@ def test_the_documentation_corpus_searches_with_the_translated_query(app):
     search_calls = []
 
     def fake_search(
-        collection, query, index=None, session=None, threshold=None, n_results=4, rerank=None
+        collection,
+        query,
+        index=None,
+        session=None,
+        threshold=None,
+        n_results=4,
+        rerank=None,
+        rerank_floor=None,
     ):
         search_calls.append(query)
         return []
@@ -1336,7 +1367,16 @@ def test_switching_corpus_mid_generation_does_not_reprocess_the_stale_question(a
     """
     search_calls = []
 
-    def fake_search(collection, query, index=None, session=None, threshold=None, n_results=4, rerank=None):
+    def fake_search(
+        collection,
+        query,
+        index=None,
+        session=None,
+        threshold=None,
+        n_results=4,
+        rerank=None,
+        rerank_floor=None,
+    ):
         search_calls.append(query)
         return []
 
@@ -1367,3 +1407,42 @@ def test_switching_corpus_mid_generation_does_not_reprocess_the_stale_question(a
     assert app.session_state.messages == []
     assert app.session_state.generating is False
     assert app.session_state.pending_question is None
+
+
+def test_only_the_documentation_corpus_applies_the_rerank_floor(app):
+    """床は技術ドキュメントだけに効かせる。
+
+    社内資料は距離が分離しており（0.407 / 0.540）、床の実測もしていない。
+    測っていない値を効かせると、社内規程の質問が黙って0件になりうる。
+    どちらのコーパスでも search() は呼ばれるので、渡した値まで見ないと
+    「配線した」と言えない。
+    """
+    floors = []
+
+    def fake_search(
+        collection,
+        query,
+        index=None,
+        session=None,
+        threshold=None,
+        n_results=4,
+        rerank=None,
+        rerank_floor=None,
+    ):
+        floors.append(rerank_floor)
+        return []
+
+    with (
+        patch.object(store_module, "open_store", _stub_open_store_per_path({})),
+        patch.object(retrieval, "search", fake_search),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+        patch.object(chat, "stream_chat", _fake_stream_chat("回答")),
+        patch.object(chat, "ask_json", _fake_ask_json_returning_query("dialog")),
+    ):
+        app.run()
+        app.chat_input[0].set_value("運転音は？").run()
+        app.sidebar.radio[0].set_value("技術ドキュメント").run()
+        app.chat_input[0].set_value("ダイアログの出し方は").run()
+
+    assert not app.exception
+    assert floors == [None, DOCS_RERANK_FLOOR]
