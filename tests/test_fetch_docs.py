@@ -662,3 +662,25 @@ def test_run_counts_a_github_source_as_unchanged_when_no_page_changed(tmp_path):
     report = fetch_docs.run([_CSHARP], tmp_path, "2026-09-20", session=session)
     assert report.unchanged == ["csharp"]
     assert report.pages_written == {"csharp": 0}
+
+
+def test_the_real_config_file_loads():
+    """docs_sources.toml は手で編集するファイルである。壊れたまま気付かないと、
+    取得を走らせたときに初めて分かる。"""
+    sources = fetch_docs.load_sources(fetch_docs.DEFAULT_CONFIG)
+    assert [source.name for source in sources] == [
+        "streamlit",
+        "langchain-text-splitters",
+        "ollama",
+        "huggingface_hub",
+        "pymupdf",
+        "mcp",
+        "csharp",
+        "go",
+        "mermaid",
+        "markdown",
+    ]
+    by_name = {source.name: source for source in sources}
+    assert by_name["csharp"].resolve_code_refs is True
+    assert by_name["go"].resolve_code_refs is False
+    assert by_name["streamlit"].url == "https://docs.streamlit.io/llms-full.txt"
