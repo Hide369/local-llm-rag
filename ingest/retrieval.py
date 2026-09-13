@@ -46,6 +46,29 @@ CANDIDATE_COUNT = 30
 # RRFの定数。順位の逆数を足し合わせるときに上位の影響を和らげる。60は慣用値。
 RRF_K = 60
 
+# 技術ドキュメントで1件ずつの採否に使うリランカースコアの下限。
+#
+# こちらのコーパスでは距離のしきい値が関門として働かない。scripts/check_retrieval.py
+# の実測（2026-09-13、47,525チャンク・10ソース、実行時と同じく英訳してから検索）:
+#   関連18問の距離   0.140 〜 0.344
+#   圏外14問の距離   0.233 〜 0.516   ← 重なっている
+# 圏外の最小0.233は関連18問のうち15問より近い。しきい値をどこに置いても分離できない。
+# 当たっている本文を見ると理由がはっきりする。`bash\nkubectl get deployments\n` で
+# チャンク1件の全文であり、100文字未満のチャンクが5,568件ある。45,170文書・10製品が
+# 同居するコーパスでは、どんな質問にも語が一致するだけの断片が必ず存在する。
+# 「最近傍が近い＝この資料で答えられる」という前提そのものが成り立たない。
+#
+# 同じ質問をリランカー（bge-reranker-v2-m3）で測ると分離する。床1.0での実測:
+#   関連18問  全問で根拠が残る（上位4件中 平均3.83件が通過。0件になる質問は無い）
+#   圏外14問  12問が完全に空になる
+#   発端となった「Snowflakeのロール権限＋Goのサンプル」は最良でも-1.38で全件却下
+# 漏れる2問は Kubernetes（LangSmithのself-hosted資料に kubectl の行が実在する）と
+# Java（1件だけ2.36で残る）。同じ14問を距離のゲートは0問しか落とせていない。
+#
+# 社内資料には設けない。あちらは距離が分離しており（0.407 / 0.540）、床の実測も
+# していない。測っていない値を効かせないこと。
+DOCS_RERANK_FLOOR = 1.0
+
 # リランカーへ渡す候補数。i5-1240Pでの実測は8件1.34秒・10件2.43秒
 # （spec 3.4節）。RRFが上位を絞る役目を果たしているため、これ以上増やしても
 # 伸びしろは小さい。CPUを変えたら測り直すこと。
@@ -176,6 +199,7 @@ def search(
     threshold=None,
     n_results=SEARCH_RESULT_COUNT,
     rerank=None,
+    rerank_floor=None,
 ):
     """ベクトル検索とBM25を融合して検索する。
 
@@ -204,10 +228,23 @@ def search(
     rerank を渡すと、RRFで並べた上位 RERANK_CANDIDATE_COUNT 件だけをクロス
     エンコーダで測り直して並べ替える。渡さなければRRF順のまま返る。
 
-    リランカーは増幅器であって関門ではない。埋め込みが失敗すれば検索そのものが
-    成立しないが、リランカーが失敗してもRRF順の妥当な結果は残る。したがって
-    RerankError はここで捕まえてRRF順のまま返す。ただし失敗は隠さない。
-    そのヒットの rerank_score は None のままになり、画面に「未計測」と出る。
+    rerank_floor を渡すと、測り直したスコアがその値に満たないヒットを落とす。
+    技術ドキュメントのためにある（DOCS_RERANK_FLOOR に実測を記した）。上の
+    「BM25に下限を設けない」判断は、コーパスが1つの話題でまとまっていて
+    「圏内と判定された質問のBM25ヒットは信じてよい」が成り立つことに拠っている。
+    47,525チャンク・10製品が同居する技術ドキュメントではこれが成り立たない。
+    Streamlitの質問として圏内でも、それはGoやMermaidのチャンクを信じてよい理由に
+    ならない。発端となったSnowflakeの質問では、BM25の1位が
+    `streamlit.md ＞ secrets.toml`（46.37）で、これが画面の「参考にした情報」に
+    並んだ。床は距離やBM25と違い、質問と本文の関係を直接測った値なので、
+    この状況でも意味を持つ。
+
+    リランカーは増幅器であって関門ではない——という原則は保つ。埋め込みが失敗
+    すれば検索そのものが成立しないが、リランカーが失敗してもRRF順の妥当な結果は
+    残る。したがって RerankError はここで捕まえてRRF順のまま返し、そのときは
+    床も適用しない。測れなかった値で落とすことはしない（rerank_score の None は
+    「低い」ではなく「測っていない」を意味する）。床が効くのはスコアが実際に
+    取れたときだけで、失敗時の動作は床を渡さない場合と同じである。
     """
     if collection.count() == 0:
         return []
@@ -282,12 +319,26 @@ def search(
     )
     ranked = [hit for _, hit in pairs]
     if rerank is not None:
-        ranked = _reranked(ranked, query, rerank)
+        ranked, measured = _reranked(ranked, query, rerank)
+        if measured and rerank_floor is not None:
+            # 測れなかったヒットも落とす。RERANK_CANDIDATE_COUNT の外に残った分は
+            # スコアを持たないため、床を越えたと言えない。n_results で切られて
+            # 表に出ないのが通常だが、「測っていないものを通す」経路は作らない。
+            ranked = [
+                hit
+                for hit in ranked
+                if hit.rerank_score is not None and hit.rerank_score >= rerank_floor
+            ]
     return ranked[:n_results]
 
 
 def _reranked(hits, query, rerank):
     """上位 RERANK_CANDIDATE_COUNT 件を測り直して並べ替える。
+
+    (並べ替えたヒット, 実際に測れたか) を返す。測れたかを返すのは、呼び出し側が
+    床を適用してよいかを判断するためである。失敗したことを戻り値に持たせないと、
+    「全件が None」という状態を「全件が床に届かなかった」と読み違え、リランカーの
+    不調がそのまま検索結果0件になる。
 
     並べ替えはリランカースコア単独で行う。RRFスコアとの加重和は取らない。
     異なる尺度の合成が意味を持たないのは、cosine距離とBM25スコアを足せない
@@ -299,7 +350,7 @@ def _reranked(hits, query, rerank):
     """
     head, tail = hits[:RERANK_CANDIDATE_COUNT], hits[RERANK_CANDIDATE_COUNT:]
     if not head:
-        return hits
+        return hits, False
     try:
         scores = rerank(query, [hit.text for hit in head])
     except RerankError as error:
@@ -307,7 +358,7 @@ def _reranked(hits, query, rerank):
         # 残す（ingest/parsers/pdf_parser.py が1枚の画像の失敗を報告するのと
         # 同じ方針）。画面側は rerank_score が None のままであることで気づける。
         print(f"警告: リランカーを使えませんでした（RRF順で返します）: {error}", file=sys.stderr)
-        return hits
+        return hits, False
     scored = [
         replace(hit, rerank_score=score) for hit, score in zip(head, scores)
     ]
@@ -315,7 +366,7 @@ def _reranked(hits, query, rerank):
     # リランカーに渡さなかった分は後ろにそのまま残す。n_results で切られて
     # 表に出ないのが通常だが、n_results を大きくした呼び出しでも件数が
     # 減らないようにしておく。
-    return scored + tail
+    return scored + tail, True
 
 
 def build_index(collection):

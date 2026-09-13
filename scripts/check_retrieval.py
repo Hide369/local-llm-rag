@@ -35,6 +35,7 @@ from pathlib import Path
 
 from ingest import chat, embedder, lexical, query_translation, reranker, store
 from ingest.retrieval import (
+    DOCS_RERANK_FLOOR,
     RELEVANCE_THRESHOLD,
     RERANK_CANDIDATE_COUNT,
     SEARCH_RESULT_COUNT,
@@ -159,20 +160,39 @@ DOCS_OUT_OF_DOMAIN = (
     # 無いのに、話題としては技術ドキュメントそのものなので距離が近くなる。
     # Snowflakeの件はまさにこれで、LangSmith の権限表が0.402で通った。
     # 雑談や社内規程の質問より、こちらのほうが実際に起きる。
-    "Kubernetesでデプロイメントをスケールするコマンドを教えてください",
+    # Kubernetes と Java はこの仲間だが、断片が実在するため DOCS_INCIDENTAL へ
+    # 分けてある。
     "ReactのuseEffectフックの使い方を教えてください",
     "PostgreSQLでインデックスを作成するSQLを教えてください",
-    # Java と Rust は「取り込まない」と決めた言語である（Java は公式の
-    # Markdown が存在せず、Rust は404。docs/コーディング対応ライブラリ.md）。
-    # ここが通ると、Javaの質問にC#の資料で答えることになる。取り違えとしては
-    # 天気やラーメンより遥かに起こりやすく、間違いにも気づきにくい。
-    "Javaでストリームapiを使う例を教えてください",
+    # Rust は「取り込まない」と決めた言語である（公式リポジトリの Markdown が
+    # 404。docs/コーディング対応ライブラリ.md）。
     "Rustで所有権と借用はどう動きますか",
     # Go の入門的な解説（effective_go など）はHTMLで書かれており取り込み対象外
     # である。リリースノートのランタイムの節が0.432で最良という状態なので、
     # 例を書かせるには足りない。「Goの資料はあるのに、この質問には答えられない」
     # という、コーパスの中で最も判断の難しい位置にある1問として置いている。
     "Goでゴルーチンとチャネルを使う例を教えてください",
+)
+
+# 断片だけが資料に紛れ込んでいる話題。記録するだけで、合否判定には使わない。
+# 挨拶（GREETINGS）と同じ扱いである。
+#
+# 床1.0での実測（2026-09-13）:
+#   Kubernetes  3.77 / 3.43 / 1.78 / 1.63 で4件とも残る。取り込んだ LangSmith の
+#               self-hosted の資料に `kubectl get deployments` などの行が実在する
+#               ためで、リランカーの誤りではない。ただし「スケールするコマンド」に
+#               答えられる記述は無い。
+#   Java        2.36 が1件だけ残る。中身は huggingface_hub の
+#               `\n\nExample using streaming:\n` で、これはリランカーの誤り。
+#               床を2.5まで上げれば落ちるが、そのときは関連質問の1問が0件になる
+#               （床2.0で既に発生）。根拠が1件だけなら ingest/prompting.py の
+#               「根拠がなければ答えない」が受け持つ側に倒す。
+#
+# 合否から外すのは、これらが「コーパスが部分的に触れている話題」であり、
+# 圏内・圏外の二分に収まらないためである。隠すためではないので、実測値は毎回出す。
+DOCS_INCIDENTAL = (
+    "Kubernetesでデプロイメントをスケールするコマンドを教えてください",
+    "Javaでストリームapiを使う例を教えてください",
 )
 
 DOCS_GREETINGS = GREETINGS
@@ -210,6 +230,12 @@ class Corpus:
     # 呼ぶ。訳さずに測ると、実行時には存在しないクエリでしきい値を決めることに
     # なる。
     translate: bool = False
+    # 1件ごとの採否に使うリランカースコアの下限。渡すコーパスでは、合否判定も
+    # これで行う。距離のしきい値で測り続けると、実際には効いていない機構を
+    # 検査することになる。
+    rerank_floor: float | None = None
+    # 断片だけが資料に紛れ込んでいる話題。測って表示するが合否には使わない。
+    incidental: tuple[str, ...] = ()
 
 
 INTERNAL = Corpus(
@@ -227,10 +253,13 @@ INTERNAL = Corpus(
 DOCS = Corpus(
     name="技術ドキュメント",
     db_path=store.DOCS_DB_PATH,
-    # 現在このしきい値は両方のコーパスで共有されている。それ自体が2026-09-13の
-    # 不具合の原因であり、まず「共有したままだと分離しない」ことを測れるように
-    # する。技術ドキュメント専用の値はこの実測の結果から決める。
+    # 距離のしきい値は共有のまま残す。このコーパスでは分離できないことが実測で
+    # 分かっており（下の rerank_floor の理由）、採否はリランカーの床が決める。
+    # それでも値を持たせるのは、リランカーが使えないときにここまで退避するため
+    # である。そのときは今日までと同じ動作になる。
     threshold=RELEVANCE_THRESHOLD,
+    rerank_floor=DOCS_RERANK_FLOOR,
+    incidental=DOCS_INCIDENTAL,
     relevant=DOCS_RELEVANT,
     out_of_domain=DOCS_OUT_OF_DOMAIN,
     greetings=DOCS_GREETINGS,
@@ -337,6 +366,37 @@ def translation_worked(corpus, query_of) -> bool:
         query_of(question) != question
         for question in tuple(corpus.relevant) + tuple(corpus.out_of_domain)
     )
+
+
+def _floor_report(collection, index, session, corpus, title, questions, query_of):
+    """床を効かせた search() を実際に呼び、残った件数とスコアを出す。
+
+    しきい値の実測と違い、こちらは本番と同じ経路をそのまま通す。採否を決めて
+    いる機構が何であれ、その機構で測らないと検査にならない。
+
+    質問ごとの残り件数の並びを返す。
+    """
+    print(f"\n=== {title} ===")
+    kept = []
+    for question in questions:
+        hits = search(
+            collection,
+            query_of(question),
+            index=index,
+            session=session,
+            threshold=corpus.threshold,
+            rerank=reranker.rerank,
+            rerank_floor=corpus.rerank_floor,
+        )
+        kept.append(len(hits))
+        scores = " ".join(
+            f"{hit.rerank_score:6.2f}" if hit.rerank_score is not None else " 未計測"
+            for hit in hits
+        )
+        print(f"  {len(hits)}件 [{scores}]  {question}")
+        for hit in hits:
+            print(f"        {hit.citation}")
+    return kept
 
 
 def _report(collection, index, session, title, questions, query_of, translate=False):
@@ -486,6 +546,52 @@ def _rerank_comparison(collection, index, session, questions, query_of, threshol
             print(f"      Rank {rank}. {rrf_label}  {score}  {hit.citation}")
 
 
+def _floor_verdict(collection, index, corpus, args) -> int:
+    """リランカーの床で採否を決めるコーパスの合否。
+
+    関連する質問は根拠が1件以上残り、圏外の質問は1件も残らないこと。距離の
+    しきい値と違い「境界の値」ではなく「本番と同じ呼び出しの結果」で判定する。
+    """
+    reranker.check_reranker()
+    session = embedder.new_session()
+    try:
+
+        def ask(prompt: str) -> str:
+            return chat.ask_json(args.model, prompt, session=session)
+
+        query_of = translator(corpus, ask)
+        print(f"\n採否はリランカーの床 {corpus.rerank_floor} で決めます。")
+        relevant = _floor_report(
+            collection, index, session, corpus, "関連する質問（1件以上残ること）",
+            corpus.relevant, query_of,
+        )
+        out_of_domain = _floor_report(
+            collection, index, session, corpus, "圏外の質問（0件になること）",
+            corpus.out_of_domain, query_of,
+        )
+        if corpus.incidental:
+            _floor_report(
+                collection, index, session, corpus,
+                "断片だけ資料にある話題（記録のみ。合否には使わない）",
+                corpus.incidental, query_of,
+            )
+    finally:
+        session.close()
+
+    lost = sum(1 for count in relevant if count == 0)
+    leaked = sum(1 for count in out_of_domain if count > 0)
+    print(f"\n根拠が残らなかった関連質問: {lost} / {len(relevant)}")
+    print(f"根拠が残ってしまった圏外質問: {leaked} / {len(out_of_domain)}")
+    if lost or leaked:
+        print(
+            f"床 {corpus.rerank_floor} では分けられていません。床の値か、"
+            "コーパス側（短すぎるチャンク・見出し）の見直しが必要です。"
+        )
+        return 1
+    print(f"床 {corpus.rerank_floor} で分けられています。")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="検索のしきい値と回帰ケースを実測する")
     parser.add_argument(
@@ -621,12 +727,26 @@ def main() -> int:
     # 実測が分離しているだけでは足りない。実際のゲートはこのコーパスのしきい値で
     # 切るので、その値が実測値の間に収まっていることまで確かめる。
     separated = relevant_max_distance <= corpus.threshold < out_of_domain_min_distance
-    if separated:
+    if corpus.rerank_floor is not None:
+        # 採否を決めているのは床のほうなので、距離の分離は合否にしない。
+        # それでも測って出すのは、床が使えないとき（リランカーの失敗）に退避する
+        # 先がここであり、退避先がどれだけ弱いかを見えるようにしておくため。
+        print(
+            f"（距離の分離: 関連の最大 {relevant_max_distance:.3f} / "
+            f"圏外の最小 {out_of_domain_min_distance:.3f}。"
+            f"{'分離できています' if separated else '分離できていません'}。"
+            "このコーパスの採否はリランカーの床で決めるため合否には使いません。"
+            "リランカーが使えないときはここまで退避します）"
+        )
+        accepted = _floor_verdict(collection, index, corpus, args) == 0
+    elif separated:
+        accepted = True
         print(
             f"ゲートは分離できています: {relevant_max_distance:.3f} ≤ "
             f"{corpus.threshold} < {out_of_domain_min_distance:.3f}"
         )
     else:
+        accepted = False
         print(
             f"ゲートが分離できていません（しきい値={corpus.threshold}）。"
             "しきい値の再調整か、チャンクサイズ・埋め込みモデルの見直しが必要です。"
@@ -667,7 +787,7 @@ def main() -> int:
         finally:
             session.close()
 
-    return 0 if separated and regression_ok else 1
+    return 0 if accepted and regression_ok else 1
 
 
 if __name__ == "__main__":
