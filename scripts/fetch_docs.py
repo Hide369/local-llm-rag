@@ -16,7 +16,7 @@ from pathlib import Path
 
 import requests
 
-from scripts import github_source
+from scripts import code_references, github_source
 
 _ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = _ROOT / "docs_sources.toml"
@@ -233,36 +233,106 @@ class FetchReport:
     failed: dict[str, str] = field(default_factory=dict)
     # llms-full.txt が無く llms.txt に落ちたもの。取り込んでも目次しか入らない。
     index_only: list[str] = field(default_factory=list)
+    # GitHub ソースの内訳。ソース単位の updated/unchanged では、1,000ページの
+    # うち何ページが書かれたか・落ちたかが分からない。
+    pages_written: dict[str, int] = field(default_factory=dict)
+    pages_failed: dict[str, int] = field(default_factory=dict)
+    # 解決できなかった :::code。黙って落とすと、コードの入っていないページが
+    # 混ざったことに気付けない。
+    unresolved_code_refs: dict[str, int] = field(default_factory=dict)
 
 
 def run(sources, out_dir: Path, fetched_at: str, session=None, notify=None) -> FetchReport:
     report = FetchReport()
     say = notify or (lambda _message: None)
     for source in sources:
-        say(f"取得中: {source.name} — {source.url}")
         try:
-            # fetch と write_if_changed の両方をここに含める。書き込み側だけ
-            # 外に出すと、ディスク満杯や権限エラーがここで拾われずに run() の
-            # 外へ抜けてしまい、残りのソースが一切試されなくなる
-            # （仕様書5.2節「1件が失敗しても残りを続ける」はfetchに限定していない）。
-            body, fell_back = fetch(source, session=session)
-            if fell_back:
-                report.index_only.append(source.name)
-                say(
-                    f"警告: {source.name} は llms-full.txt が無く llms.txt に落ちました。"
-                    "取り込めるのはリンクの目次だけで、記法の質問には答えられません"
-                )
-            if write_if_changed(source, body, out_dir, fetched_at):
-                report.updated.append(source.name)
-                say(f"更新: {source.name}（{len(body.encode('utf-8'))}バイト）")
+            if isinstance(source, github_source.GitHubSource):
+                _run_github(source, out_dir, fetched_at, session, say, report)
             else:
-                report.unchanged.append(source.name)
-                say(f"変更なし: {source.name}")
+                _run_llms(source, out_dir, fetched_at, session, say, report)
         except Exception as error:  # 1件の失敗で残りを止めない
             report.failed[source.name] = str(error)
             say(f"失敗: {source.name} — {error}")
             continue
     return report
+
+
+def _run_llms(source, out_dir, fetched_at, session, say, report) -> None:
+    """`llms-full.txt` を1本取って1ファイルに書く。
+
+    fetch と write_if_changed の両方を呼び出し元の try の中に置く。書き込み側
+    だけ外に出すと、ディスク満杯や権限エラーが拾われずに run() の外へ抜けて
+    しまい、残りのソースが一切試されなくなる（設計書5.2節「1件が失敗しても
+    残りを続ける」は fetch に限定していない）。
+    """
+    say(f"取得中: {source.name} — {source.url}")
+    body, fell_back = fetch(source, session=session)
+    if fell_back:
+        report.index_only.append(source.name)
+        say(
+            f"警告: {source.name} は llms-full.txt が無く llms.txt に落ちました。"
+            "取り込めるのはリンクの目次だけで、記法の質問には答えられません"
+        )
+    if write_if_changed(source, body, out_dir, fetched_at):
+        report.updated.append(source.name)
+        say(f"更新: {source.name}（{len(body.encode('utf-8'))}バイト）")
+    else:
+        report.unchanged.append(source.name)
+        say(f"変更なし: {source.name}")
+
+
+def _run_github(source, out_dir, fetched_at, session, say, report) -> None:
+    """1ソース分のページを取って書く。
+
+    木の取得の失敗と truncated は呼び出し元へ抜けさせ、ソース全体の失敗に
+    する。土台が無ければ、どのページが抜けたかも分からないためである。
+    1ページの取得失敗はここで飲み込み、残りのページを続ける。
+    """
+    say(f"取得中: {source.name} — {source.repo}@{source.ref}")
+    active = session or requests
+    tree = github_source.fetch_tree(source.repo, source.ref, active)
+    pages = github_source.select_pages(tree, source.paths)
+    say(f"{source.name}: {len(pages)}ページ（commit {tree.commit[:10]}）")
+
+    blob_paths = set(tree.paths)
+    written = failed = unresolved = 0
+    for page_path in pages:
+        try:
+            body = github_source.fetch_blob(source.repo, source.ref, page_path, active)
+        except Exception as error:
+            failed += 1
+            say(f"警告: {source.name} の {page_path} を取得できません — {error}")
+            continue
+        body = github_source.strip_liquid(body)
+        if source.resolve_code_refs:
+            body, missed = code_references.resolve_code_references(
+                body,
+                page_path,
+                blob_paths,
+                lambda path: github_source.fetch_blob(
+                    source.repo, source.ref, path, active
+                ),
+            )
+            unresolved += missed
+        text = github_source.render_page(source, tree.commit, page_path, body, fetched_at)
+        # フロントマターの source_path はリポジトリ内の完全なパスを残すが、
+        # 置き場所は共通部分を落とした相対パスにする（github_source.local_path）。
+        local = github_source.local_path(page_path, source.paths)
+        if write_page_if_changed(f"{source.name}/{local}", text, out_dir):
+            written += 1
+
+    report.pages_written[source.name] = written
+    report.pages_failed[source.name] = failed
+    report.unresolved_code_refs[source.name] = unresolved
+    if written:
+        report.updated.append(source.name)
+        say(f"更新: {source.name}（{written}ページ、失敗{failed}件）")
+    else:
+        report.unchanged.append(source.name)
+        say(f"変更なし: {source.name}（{len(pages)}ページ）")
+    if unresolved:
+        say(f"警告: {source.name} で解決できなかった :::code が{unresolved}件あります")
 
 
 def main() -> int:
@@ -300,6 +370,11 @@ def main() -> int:
     print("\n--- 結果 ---")
     print(f"更新: {len(report.updated)}件")
     print(f"変更なし: {len(report.unchanged)}件")
+    for name, count in report.pages_written.items():
+        print(f"  {name}: {count}ページ書き出し / 取得失敗{report.pages_failed[name]}件")
+    for name, count in report.unresolved_code_refs.items():
+        if count:
+            print(f"  {name}: 解決できなかった :::code が{count}件")
     if report.index_only:
         print(f"目次のみ（本文が取れていません）: {'、'.join(report.index_only)}")
     for name, message in report.failed.items():

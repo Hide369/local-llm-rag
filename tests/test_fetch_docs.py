@@ -12,10 +12,14 @@ from scripts import fetch_docs, github_source
 
 
 class _FakeResponse:
-    def __init__(self, status_code, text="", content_type="text/plain"):
+    def __init__(self, status_code, text="", content_type="text/plain", payload=None):
         self.status_code = status_code
         self.text = text
         self.headers = {"Content-Type": content_type}
+        self._payload = payload
+
+    def json(self):
+        return self._payload
 
     def raise_for_status(self):
         if self.status_code >= 400:
@@ -515,3 +519,146 @@ def test_write_page_if_changed_rejects_a_parent_directory_reference(tmp_path):
     """
     with pytest.raises(ValueError):
         fetch_docs.write_page_if_changed("csharp/../../evil.md", "x", tmp_path)
+
+
+_CSHARP = github_source.GitHubSource(
+    name="csharp",
+    repo="dotnet/docs",
+    ref="main",
+    paths=("docs/csharp/linq",),
+    version="0.0.0",
+    resolve_code_refs=True,
+)
+
+_TREE = "https://api.github.com/repos/dotnet/docs/git/trees/main?recursive=1"
+_RAW = "https://raw.githubusercontent.com/dotnet/docs/main"
+
+
+def _tree_response(paths, sha="abc", truncated=False):
+    return _FakeResponse(
+        200,
+        payload={
+            "sha": sha,
+            "truncated": truncated,
+            "tree": [{"path": path, "type": "blob"} for path in paths],
+        },
+    )
+
+
+def test_run_writes_one_file_per_page_under_the_source_name(tmp_path):
+    session = _FakeSession(
+        {
+            _TREE: _tree_response(["docs/csharp/linq/a.md", "docs/csharp/linq/b.md"]),
+            f"{_RAW}/docs/csharp/linq/a.md": _FakeResponse(200, "# A\n"),
+            f"{_RAW}/docs/csharp/linq/b.md": _FakeResponse(200, "# B\n"),
+        }
+    )
+    report = fetch_docs.run([_CSHARP], tmp_path, "2026-09-13", session=session)
+    assert report.pages_written == {"csharp": 2}
+    # _CSHARP の paths は ("docs/csharp/linq",) の1つだけなので、共通部分は
+    # それ自身になる。置き場所は docs_source/csharp/a.md である。
+    assert (tmp_path / "csharp" / "a.md").is_file()
+
+
+def test_run_resolves_code_references_when_the_source_enables_it(tmp_path):
+    session = _FakeSession(
+        {
+            _TREE: _tree_response(
+                ["docs/csharp/linq/a.md", "docs/csharp/linq/snippets/P.cs"]
+            ),
+            f"{_RAW}/docs/csharp/linq/a.md": _FakeResponse(
+                200, ':::code language="csharp" source="snippets/P.cs":::\n'
+            ),
+            f"{_RAW}/docs/csharp/linq/snippets/P.cs": _FakeResponse(200, "int x = 1;\n"),
+        }
+    )
+    fetch_docs.run([_CSHARP], tmp_path, "2026-09-13", session=session)
+    written = (tmp_path / "csharp" / "a.md").read_text(encoding="utf-8")
+    assert "```csharp\nint x = 1;\n```" in written
+    assert ":::code" not in written
+
+
+def test_run_does_not_resolve_code_references_when_the_source_disables_it(tmp_path):
+    """既定は無効である。設定に書いていないソースで参照を辿ってはいけない。"""
+    source = github_source.GitHubSource(
+        name="go",
+        repo="golang/website",
+        ref="master",
+        paths=("_content/doc",),
+        version="0.0.0",
+    )
+    tree = "https://api.github.com/repos/golang/website/git/trees/master?recursive=1"
+    raw = "https://raw.githubusercontent.com/golang/website/master"
+    directive = ':::code language="csharp" source="snippets/P.cs":::\n'
+    session = _FakeSession(
+        {
+            tree: _tree_response(["_content/doc/a.md", "_content/doc/snippets/P.cs"]),
+            f"{raw}/_content/doc/a.md": _FakeResponse(200, directive),
+            f"{raw}/_content/doc/snippets/P.cs": _FakeResponse(200, "int x = 1;\n"),
+        }
+    )
+    fetch_docs.run([source], tmp_path, "2026-09-13", session=session)
+    written = (tmp_path / "go" / "a.md").read_text(encoding="utf-8")
+    assert ":::code" in written
+    assert f"{raw}/_content/doc/snippets/P.cs" not in session.urls
+
+
+def test_run_reports_unresolved_code_references(tmp_path):
+    session = _FakeSession(
+        {
+            _TREE: _tree_response(["docs/csharp/linq/a.md"]),
+            f"{_RAW}/docs/csharp/linq/a.md": _FakeResponse(
+                200, ':::code language="csharp" source="snippets/Missing.cs":::\n'
+            ),
+        }
+    )
+    report = fetch_docs.run([_CSHARP], tmp_path, "2026-09-13", session=session)
+    assert report.unresolved_code_refs == {"csharp": 1}
+
+
+def test_run_continues_after_a_single_page_fails(tmp_path):
+    """土台（木）は取れているので、残りのページは使える（設計書5.2節）。"""
+    session = _FakeSession(
+        {
+            _TREE: _tree_response(["docs/csharp/linq/a.md", "docs/csharp/linq/b.md"]),
+            f"{_RAW}/docs/csharp/linq/a.md": _FakeResponse(500),
+            f"{_RAW}/docs/csharp/linq/b.md": _FakeResponse(200, "# B\n"),
+        }
+    )
+    report = fetch_docs.run([_CSHARP], tmp_path, "2026-09-13", session=session)
+    assert report.pages_written == {"csharp": 1}
+    assert report.pages_failed == {"csharp": 1}
+    assert "csharp" not in report.failed
+
+
+def test_run_fails_the_whole_source_when_the_tree_is_truncated(tmp_path):
+    """木が欠けていれば、どのページが抜けたかも分からない。"""
+    session = _FakeSession({_TREE: _tree_response(["docs/csharp/linq/a.md"], truncated=True)})
+    report = fetch_docs.run([_CSHARP], tmp_path, "2026-09-13", session=session)
+    assert "csharp" in report.failed
+    assert report.pages_written == {}
+
+
+def test_run_continues_to_the_next_source_after_a_tree_failure(tmp_path):
+    llms = fetch_docs.LlmsSource("a", "https://a.test/llms-full.txt", "1")
+    session = _FakeSession(
+        {
+            "https://a.test/llms-full.txt": _FakeResponse(200, "# A\n"),
+        }
+    )
+    report = fetch_docs.run([_CSHARP, llms], tmp_path, "2026-09-13", session=session)
+    assert "csharp" in report.failed
+    assert report.updated == ["a"]
+
+
+def test_run_counts_a_github_source_as_unchanged_when_no_page_changed(tmp_path):
+    session = _FakeSession(
+        {
+            _TREE: _tree_response(["docs/csharp/linq/a.md"]),
+            f"{_RAW}/docs/csharp/linq/a.md": _FakeResponse(200, "# A\n"),
+        }
+    )
+    fetch_docs.run([_CSHARP], tmp_path, "2026-09-13", session=session)
+    report = fetch_docs.run([_CSHARP], tmp_path, "2026-09-20", session=session)
+    assert report.unchanged == ["csharp"]
+    assert report.pages_written == {"csharp": 0}
