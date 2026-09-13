@@ -8,7 +8,7 @@ source/ はサーバー側にあり、ブラウザーから使う利用者は資
 「資料をアップロード」ダイアログがクライアントから資料を入れる唯一の経路である。
 """
 import tempfile
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 import streamlit as st
@@ -19,6 +19,9 @@ from dotenv import load_dotenv
 # OLLAMA_HOST（ngrokのURL）と OLLAMA_API_KEY を上書きする。
 load_dotenv()
 
+import docgen
+from docgen import filling as docgen_filling
+from docgen import templates as docgen_templates
 from ingest import (
     answer_text,
     catalog,
@@ -31,7 +34,7 @@ from ingest import (
     store,
     vlm,
 )
-from ingest.parsers import SUPPORTED_SUFFIXES
+from ingest.parsers import SUPPORTED_SUFFIXES, parse
 from ingest.prompting import (
     build_catalog_prompt,
     build_docs_prompt,
@@ -61,6 +64,9 @@ DOCS_DB_PATH = str(store.DOCS_DB_PATH)
 
 CORPUS_INTERNAL = "社内資料"
 CORPUS_DOCS = "技術ドキュメント"
+
+MODE_CHAT = "チャット"
+MODE_COWORK = "Cowork"
 
 # 技術ドキュメントの取り込み・更新に使う2コマンド。空のときの警告と、空でない
 # ときのキャプションの両方で使うため、ここ一箇所にまとめる（二重管理を避ける）。
@@ -254,6 +260,178 @@ def upload_dialog(collection):
                     # 空のチャンク列を渡すとその資料はDBから消える（ingest/store.py）。
                     store.replace_source(collection, source, [], [])
                     st.rerun()
+
+
+@st.dialog("雛形を登録・削除する")
+def template_dialog():
+    st.caption(
+        "雛形の空欄は {{会議名}} のように書いてください。"
+        "登録した雛形はこのマシンの templates/ に残ります。"
+    )
+    uploaded = st.file_uploader(
+        "雛形のファイル",
+        type=sorted(suffix.lstrip(".") for suffix in docgen.SUPPORTED_SUFFIXES),
+        accept_multiple_files=True,
+        key="template_files",
+    )
+    if st.button("登録する", key="run_template_register"):
+        if not uploaded:
+            st.warning("先にファイルを選んでください。")
+        else:
+            with tempfile.TemporaryDirectory() as workspace:
+                for file in uploaded:
+                    path = Path(workspace) / file.name
+                    path.write_bytes(file.getvalue())
+                    docgen_templates.register(path)
+            st.success(f"{len(uploaded)}件を登録しました。")
+
+    if st.button("閉じる", key="close_template_dialog"):
+        st.session_state.template_dialog_open = False
+        st.rerun()
+
+    for path in docgen_templates.templates():
+        left, right = st.columns([4, 1])
+        # 印を添えるのは、登録した雛形に印が1つも無いことをこの場で気づける
+        # ようにするため。生成してから空の結果を見るより早い。
+        names = docgen.placeholders(path)
+        left.write(f"{path.name} — 印 {len(names)}個: {'、'.join(names) or 'なし'}")
+        if right.button("削除", key=f"remove_{path.name}"):
+            docgen_templates.remove(path.name)
+            st.rerun()
+
+
+def render_cowork_result(result):
+    """前の実行で ためた Cowork の結果を描く。
+
+    generating を戻すための下の st.rerun()（チャットの入力欄再有効化と同じ
+    理由）は、_generate_document がその場で st.error 等を呼んでも同じ実行の
+    描画ごと消してしまう。チャットの回答を messages に積んで次の実行で
+    読み直すのと同じやり方で、結果は st.session_state.cowork_result に積み、
+    ここで次の実行として描き直す。
+    """
+    for message in result["errors"]:
+        st.error(message)
+    for message in result["warnings"]:
+        st.warning(message)
+    for message in result["infos"]:
+        st.info(message)
+    download = result["download"]
+    if download:
+        st.download_button(
+            "ダウンロード", data=download["data"], file_name=download["file_name"]
+        )
+    for _, hits in result["sources"]:
+        if hits:
+            render_hits(hits)
+
+
+def _cowork_error(message):
+    return {"errors": [message], "warnings": [], "infos": [], "download": None, "sources": []}
+
+
+def _generate_document(template_path, names, question, attachments, use_internal, use_docs):
+    """雛形を埋め、結果を st.session_state.cowork_result に積む。
+
+    ここで直接 st.error や st.download_button を呼ばないのは、generating を
+    戻すための下の st.rerun() が同じ実行の描画ごと消してしまうためである。
+    render_cowork_result が次の実行でこれを描く。
+
+    どのコーパスを引くかは画面が決め、filling.py へは (種類の名前, ヒット) の
+    並びで渡す。filling.py にコーパスの知識を持たせない（設計書6節）。
+    """
+    result = {"errors": [], "warnings": [], "infos": [], "download": None, "sources": []}
+
+    def ask(prompt):
+        return chat.ask_json(
+            model, prompt, num_ctx=docgen_filling.GENERATION_NUM_CTX
+        )
+
+    sources = []
+    try:
+        if use_internal:
+            internal = get_collection(DB_PATH)
+            sources.append((
+                CORPUS_INTERNAL,
+                search(
+                    internal,
+                    question,
+                    index=get_index(internal, DB_PATH, internal.revision()),
+                    rerank=rerank_callable,
+                ),
+            ))
+        if use_docs:
+            documents = get_collection(DOCS_DB_PATH)
+            if documents.count() == 0:
+                # 取り込み前でも生成は止めない。社内資料と添付だけで埋める。
+                result["infos"].append(
+                    "技術ドキュメントが取り込まれていません。この検索は飛ばしました。"
+                )
+            else:
+                # 英語のコーパスなので日本語のままでは当たらず、採否も距離では
+                # 決まらない（PR #41）。チャット側の経路と同じ2つを渡す。
+                english = query_translation.translate_query(question, ask_json)
+                sources.append((
+                    CORPUS_DOCS,
+                    search(
+                        documents,
+                        english,
+                        index=get_index(documents, DOCS_DB_PATH, documents.revision()),
+                        rerank=rerank_callable,
+                        rerank_floor=DOCS_RERANK_FLOOR,
+                    ),
+                ))
+    except embedder.EmbeddingError as error:
+        st.session_state.cowork_result = _cowork_error(str(error))
+        return
+    except chat.ChatError as error:
+        # 英訳もLLMである。落ちたら伝えて止める。
+        st.session_state.cowork_result = _cowork_error(str(error))
+        return
+
+    texts = []
+    with tempfile.TemporaryDirectory() as workspace:
+        for file in attachments:
+            path = Path(workspace) / file.name
+            path.write_bytes(file.getvalue())
+            # 添付はDBに入れない。取り出した本文をその場で使うだけである。
+            units = parse(path)
+            texts.append((file.name, "\n".join(unit.text for unit in units)))
+
+    try:
+        values = docgen_filling.fill_values(names, question, sources, texts, ask)
+    except docgen_filling.PromptTooLongError as error:
+        st.session_state.cowork_result = _cowork_error(str(error))
+        return
+    except chat.ChatError as error:
+        st.session_state.cowork_result = _cowork_error(str(error))
+        return
+
+    undrawn = []
+    data = docgen.fill(
+        template_path, values, lambda name, reason: undrawn.append((name, reason))
+    )
+    missing = [name for name in names if name not in values]
+    if missing:
+        result["warnings"].append(
+            f"埋まらなかった欄: {'、'.join(missing)}（雛形の {{{{印}}}} が残ります）"
+        )
+    if undrawn:
+        # 図にできなかったことは開く前に伝える。黙って Mermaid のテキストが
+        # 入っていると、利用者は成果物を開くまで気づけない。
+        result["warnings"].append(
+            "図にできなかった欄: "
+            + "、".join(f"{name}（{reason}）" for name, reason in undrawn)
+        )
+    for name, hits in sources:
+        if not hits:
+            result["infos"].append(f"{name}の検索は0件でした。")
+    stem = template_path.stem
+    result["download"] = {
+        "data": data,
+        "file_name": f"{stem}_{date.today().isoformat()}{template_path.suffix}",
+    }
+    result["sources"] = sources
+    st.session_state.cowork_result = result
 
 
 def render_diagrams(text):
@@ -498,6 +676,63 @@ if "generating" not in st.session_state:
 # 理由も同じ打ち切りだが、あちらは打ち切り後に messages だけが空になり、
 # generating と pending_question は次の初期化まで前回値のまま残るため、消した
 # はずの質問を新しいコーパスへ再送してしまう食い違いが起きる。
+#
+# st.chat_input の中にウィジェットは置けないため、トグルは入力欄のすぐ上に置く。
+mode = st.segmented_control(
+    "モード",
+    [MODE_CHAT, MODE_COWORK],
+    default=MODE_CHAT,
+    key="mode",
+    label_visibility="collapsed",
+    disabled=st.session_state.generating,
+)
+
+template_path = None
+attachments = []
+# 既定は社内資料だけ。議事録や報告書はそれで足りる。
+use_internal, use_docs = True, False
+if mode == MODE_COWORK:
+    available = docgen_templates.templates()
+    if not available:
+        st.warning(
+            "雛形が登録されていません。下のボタンから登録してください。"
+            "空欄は {{会議名}} のように書きます。"
+        )
+    else:
+        left, right = st.columns([3, 1])
+        template_path = left.selectbox(
+            "雛形", available, format_func=lambda path: path.name, key="template"
+        )
+        if right.button("雛形を登録・削除"):
+            st.session_state.template_dialog_open = True
+        # どの資料を引くかは雛形と依頼で決まるので、利用者に選ばせる。
+        # 技術ドキュメントを入れると英訳のLLM呼び出しが1回と検索が1本増え、
+        # 生成が30〜60秒遅くなる。要らない回に払う理由がない。
+        corpora = st.columns(2)
+        use_internal = corpora[0].checkbox(
+            "社内資料を参照", value=True, key="cowork_internal"
+        )
+        use_docs = corpora[1].checkbox(
+            "技術ドキュメントを参照", value=False, key="cowork_docs"
+        )
+        attached = st.file_uploader(
+            "添付（この回だけ使い、DBには入れません）",
+            type=sorted(suffix.lstrip(".") for suffix in SUPPORTED_SUFFIXES),
+            accept_multiple_files=True,
+            key="cowork_files",
+        )
+        attachments = attached or []
+
+    # 生成の結果は st.session_state に積んで次の実行で描く。generating を戻す
+    # ための下の st.rerun()（チャットの入力欄再有効化と同じ理由）が、ここで
+    # 直接 st.error 等を呼んでも同じ実行の描画ごと消してしまうため。
+    cowork_result = st.session_state.pop("cowork_result", None)
+    if cowork_result:
+        render_cowork_result(cowork_result)
+
+if st.session_state.get("template_dialog_open"):
+    template_dialog()
+
 question = st.chat_input("メッセージを入力", disabled=st.session_state.generating)
 
 if question and not st.session_state.generating:
@@ -509,154 +744,175 @@ if question and not st.session_state.generating:
 if st.session_state.generating:
     question = st.session_state.pending_question
 
-    # 「マークダウンで表示して」と頼まれたら、描画せず記法のまま出す。
-    # 判定は質問1つごとに閉じる（ingest/display_mode.py）。前のターンの指定を
-    # 持ち越すと、利用者が何も言っていないのにコードブロックで返り続ける。
-    display = display_mode.detect(question)
-
-    # 技術ドキュメントでは条件抽出を走らせない。型番の絞り込みは社内の
-    # 製品仕様書に固有の仕組みであり、ここではLLM呼び出しが1回無駄に増えるだけ。
-    extraction = (
-        conditions.Extraction()
-        if searching_docs
-        else conditions.extract(question, schema, ask_json)
-    )
-
-    table = None
-    hits = []
-    user_content = None
-    # ベクトル検索は埋め込みAPIを呼ぶ。Ollamaが止まっていればここで
-    # EmbeddingError になるため、生成時（下のchat.ChatError）と同じ見せ方に揃える。
-    # 捕まえずにいると生のトレースバックが画面に出る。
-    search_error = None
-    try:
-        if searching_docs:
-            # 検索には直前の質問を継ぎ足す（追質問は単独では引けない）。社内資料側の
-            # 検索経路（下の else 節）と同じ判断である。
-            query = contextual_query(question, st.session_state.messages[:-1])
-            # 技術ドキュメントは英語、質問は日本語のことが多い。継ぎ足した文字列
-            # ごと英語の検索クエリへ翻訳する（前の質問だけ訳して繋ぐより1回の
-            # LLM呼び出しで済み、追質問の文脈も一緒に訳せる）。生成は原文の
-            # question のまま行う（build_docs_prompt）。詳細は
-            # ingest/query_translation.py のモジュールdocstring参照。
-            query = query_translation.translate_query(query, ask_json)
-            # 技術ドキュメントだけ、1件ごとの採否をリランカーのスコアで決める。
-            # このコーパスでは距離のしきい値が関門にならない（実測は
-            # ingest/retrieval.py の DOCS_RERANK_FLOOR）。社内資料側（下の経路）
-            # には渡さない。あちらは距離が分離しており、床の実測もしていない。
-            hits = search(
-                collection,
-                query,
-                index=index,
-                rerank=rerank_callable,
-                rerank_floor=DOCS_RERANK_FLOOR,
+    if mode == MODE_COWORK and template_path is not None:
+        names = docgen.placeholders(template_path)
+        if not names:
+            # ここで直接 st.error を呼ばないのは、generating を戻すための下の
+            # st.rerun() が同じ実行の描画ごと消してしまうためである
+            # （render_cowork_result 参照）。
+            st.session_state.cowork_result = _cowork_error(
+                f"{template_path.name} に {{{{印}}}} がありません。"
+                "埋める欄が無いため生成しません。"
             )
-            user_content = build_docs_prompt(question, hits)
-        elif extraction.conditions:
-            # 「最大の洗濯容量は」に答えるための並べ替え。最大・最小を尋ねる語が
-            # 無ければLLMは呼ばれない（ingest/conditions.py の _SUPERLATIVES）。
-            ranking = conditions.extract_ranking(question, schema, ask_json)
-            matched = catalog.select(collection, extraction.conditions)
-            relaxed = catalog.relaxations(collection, extraction.conditions)
-            # 条件から外れるが上位の機種（「もっと大容量が欲しいが設置できない」）は
-            # 画面にだけ出す。モデルに渡すと、設置できない機種を答えとして挙げる。
-            # 実測（8回）では、最大値の要約行を添えた表で5回、UD-1400X（545mm必要）を
-            # 「条件に合う機種」として答えた。渡さなければ起こらない。
-            beyond = catalog.exceeding(collection, extraction.conditions, ranking, matched)
-            prompt_table = catalog.format_table(
-                extraction.conditions, matched, relaxed, ranking
+        elif not use_internal and not use_docs and not attachments:
+            # 両方外して添付も無ければ、根拠が1つも無い。呼んでも全欄が
+            # 埋まらないので、LLMを呼ぶ前に止める。
+            st.session_state.cowork_result = _cowork_error(
+                "参照する資料も添付ファイルもありません。根拠が無いため生成しません。"
             )
-            # 画面（絞り込んだ一覧）には beyond も含めて見せる。
-            table = catalog.format_table(
-                extraction.conditions, matched, relaxed, ranking, beyond
-            )
-            user_content = build_catalog_prompt(question, prompt_table)
         else:
-            # 検索には直前の質問を継ぎ足す（追質問は単独では引けない）。
-            # モデルへ渡す質問は生のままにする。会話履歴は history で渡しており、
-            # 継ぎ足した文字列まで質問として見せると同じ問いが二重になる。
-            query = contextual_query(question, st.session_state.messages[:-1])
-            hits = search(collection, query, index=index, rerank=rerank_callable)
-            user_content = build_prompt(question, hits)
-    except embedder.EmbeddingError as error:
-        search_error = error
-
-    # 条件抽出の失敗を伝えるのは、その先の検索が成立したときだけにする。
-    # Ollamaが止まっていれば条件抽出（LLM）も検索（埋め込み）も同じ理由で失敗し、
-    # 「通常の検索で回答します」と告げた直後にその検索が落ちることになるため。
-    # 履歴のnoteとして残すのは、エラー文と同じ理由（直後のst.rerun()で
-    # このままでは画面から消えるため）。
-    note = None
-    if extraction.failed and search_error is None:
-        note = "条件を解釈できませんでした。通常の検索で回答します。"
-        st.warning(note)
-
-    answer = None
-    # 履歴へ残すときの表示形式。エラー文は記法ではないので、書式を頼まれていても
-    # 普通に読める形で出す。生成が最後まで通った経路だけが display を受け取る。
-    answer_display = None
-    with st.chat_message("assistant"):
-        # 疎通確認をしないため、Ollama未起動やモデル名の誤りは生成時に初めて
-        # わかる。ingestボタンのエラー表示（st.sidebar.error）と同じ見せ方で、
-        # 生のトレースバックの代わりにチャット欄へ短いメッセージを出す。
-        #
-        # エラー文もanswerに入れて履歴へ残す。入力欄を再有効化するための
-        # 直後のst.rerun()でこのブロックの描画は消えるため、ここでst.error()を
-        # 呼ぶだけでは再実行後に画面から跡形もなく消えてしまう。
-        if search_error is not None:
-            answer = f"検索できませんでした: {search_error}"
-            st.error(answer)
-        else:
-            history = (
-                [{"role": "system", "content": SYSTEM_PROMPT}]
-                + [
-                    {"role": m["role"], "content": m["content"]}
-                    for m in st.session_state.messages[:-1]
-                ]
-                + [{"role": "user", "content": user_content}]
+            _generate_document(
+                template_path, names, question, attachments, use_internal, use_docs
             )
-            try:
-                # 「答え：」の言い直しはラベルだけ落とす（ingest/answer_text.py）。
-                # 口癖であって記法ではないので、生表示でも落とす。
-                stream = answer_text.without_label(
-                    chat.stream_chat(model, history, temperature)
-                )
-                if display:
-                    # st.write_stream は中身をMarkdownとして描画してしまうので
-                    # 使えない。自前で溜めながらコードブロックを書き換える。
-                    # 1行ずつまとめて出さないのは、8トークン毎秒では1行あたり
-                    # 数秒待たされるためで、without_label が行頭でだけ文字を
-                    # 溜めているのと同じ判断である。
-                    placeholder = st.empty()
-                    received = []
-                    for chunk in stream:
-                        received.append(chunk)
-                        placeholder.code("".join(received), language=display)
-                    answer = "".join(received)
-                    if display == "mermaid":
-                        # 図は生成が終わってから描く。途中の定義は必ず
-                        # 構文エラーになり、描き直すたびにエラーの枠が出る。
-                        render_diagrams(answer)
-                else:
-                    # 表のセル内の <br>・<ul>・<li> は、描画する場合にだけ落とす。
-                    answer = st.write_stream(answer_text.strip_html_tags_stream(stream))
-                answer_display = display
-                render_evidence({"hits": hits, "table": table})
-            except chat.ChatError as error:
-                answer = f"回答を生成できませんでした: {error}"
-                st.error(answer)
+    else:
+        # 「マークダウンで表示して」と頼まれたら、描画せず記法のまま出す。
+        # 判定は質問1つごとに閉じる（ingest/display_mode.py）。前のターンの指定を
+        # 持ち越すと、利用者が何も言っていないのにコードブロックで返り続ける。
+        display = display_mode.detect(question)
 
-    if answer is not None:
-        st.session_state.messages.append(
-            {
-                "role": "assistant",
-                "content": answer,
-                "hits": hits,
-                "table": table,
-                "note": note,
-                "display": answer_display,
-            }
+        # 技術ドキュメントでは条件抽出を走らせない。型番の絞り込みは社内の
+        # 製品仕様書に固有の仕組みであり、ここではLLM呼び出しが1回無駄に増えるだけ。
+        extraction = (
+            conditions.Extraction()
+            if searching_docs
+            else conditions.extract(question, schema, ask_json)
         )
+
+        table = None
+        hits = []
+        user_content = None
+        # ベクトル検索は埋め込みAPIを呼ぶ。Ollamaが止まっていればここで
+        # EmbeddingError になるため、生成時（下のchat.ChatError）と同じ見せ方に揃える。
+        # 捕まえずにいると生のトレースバックが画面に出る。
+        search_error = None
+        try:
+            if searching_docs:
+                # 検索には直前の質問を継ぎ足す（追質問は単独では引けない）。社内資料側の
+                # 検索経路（下の else 節）と同じ判断である。
+                query = contextual_query(question, st.session_state.messages[:-1])
+                # 技術ドキュメントは英語、質問は日本語のことが多い。継ぎ足した文字列
+                # ごと英語の検索クエリへ翻訳する（前の質問だけ訳して繋ぐより1回の
+                # LLM呼び出しで済み、追質問の文脈も一緒に訳せる）。生成は原文の
+                # question のまま行う（build_docs_prompt）。詳細は
+                # ingest/query_translation.py のモジュールdocstring参照。
+                query = query_translation.translate_query(query, ask_json)
+                # 技術ドキュメントだけ、1件ごとの採否をリランカーのスコアで決める。
+                # このコーパスでは距離のしきい値が関門にならない（実測は
+                # ingest/retrieval.py の DOCS_RERANK_FLOOR）。社内資料側（下の経路）
+                # には渡さない。あちらは距離が分離しており、床の実測もしていない。
+                hits = search(
+                    collection,
+                    query,
+                    index=index,
+                    rerank=rerank_callable,
+                    rerank_floor=DOCS_RERANK_FLOOR,
+                )
+                user_content = build_docs_prompt(question, hits)
+            elif extraction.conditions:
+                # 「最大の洗濯容量は」に答えるための並べ替え。最大・最小を尋ねる語が
+                # 無ければLLMは呼ばれない（ingest/conditions.py の _SUPERLATIVES）。
+                ranking = conditions.extract_ranking(question, schema, ask_json)
+                matched = catalog.select(collection, extraction.conditions)
+                relaxed = catalog.relaxations(collection, extraction.conditions)
+                # 条件から外れるが上位の機種（「もっと大容量が欲しいが設置できない」）は
+                # 画面にだけ出す。モデルに渡すと、設置できない機種を答えとして挙げる。
+                # 実測（8回）では、最大値の要約行を添えた表で5回、UD-1400X（545mm必要）を
+                # 「条件に合う機種」として答えた。渡さなければ起こらない。
+                beyond = catalog.exceeding(collection, extraction.conditions, ranking, matched)
+                prompt_table = catalog.format_table(
+                    extraction.conditions, matched, relaxed, ranking
+                )
+                # 画面（絞り込んだ一覧）には beyond も含めて見せる。
+                table = catalog.format_table(
+                    extraction.conditions, matched, relaxed, ranking, beyond
+                )
+                user_content = build_catalog_prompt(question, prompt_table)
+            else:
+                # 検索には直前の質問を継ぎ足す（追質問は単独では引けない）。
+                # モデルへ渡す質問は生のままにする。会話履歴は history で渡しており、
+                # 継ぎ足した文字列まで質問として見せると同じ問いが二重になる。
+                query = contextual_query(question, st.session_state.messages[:-1])
+                hits = search(collection, query, index=index, rerank=rerank_callable)
+                user_content = build_prompt(question, hits)
+        except embedder.EmbeddingError as error:
+            search_error = error
+
+        # 条件抽出の失敗を伝えるのは、その先の検索が成立したときだけにする。
+        # Ollamaが止まっていれば条件抽出（LLM）も検索（埋め込み）も同じ理由で失敗し、
+        # 「通常の検索で回答します」と告げた直後にその検索が落ちることになるため。
+        # 履歴のnoteとして残すのは、エラー文と同じ理由（直後のst.rerun()で
+        # このままでは画面から消えるため）。
+        note = None
+        if extraction.failed and search_error is None:
+            note = "条件を解釈できませんでした。通常の検索で回答します。"
+            st.warning(note)
+
+        answer = None
+        # 履歴へ残すときの表示形式。エラー文は記法ではないので、書式を頼まれていても
+        # 普通に読める形で出す。生成が最後まで通った経路だけが display を受け取る。
+        answer_display = None
+        with st.chat_message("assistant"):
+            # 疎通確認をしないため、Ollama未起動やモデル名の誤りは生成時に初めて
+            # わかる。ingestボタンのエラー表示（st.sidebar.error）と同じ見せ方で、
+            # 生のトレースバックの代わりにチャット欄へ短いメッセージを出す。
+            #
+            # エラー文もanswerに入れて履歴へ残す。入力欄を再有効化するための
+            # 直後のst.rerun()でこのブロックの描画は消えるため、ここでst.error()を
+            # 呼ぶだけでは再実行後に画面から跡形もなく消えてしまう。
+            if search_error is not None:
+                answer = f"検索できませんでした: {search_error}"
+                st.error(answer)
+            else:
+                history = (
+                    [{"role": "system", "content": SYSTEM_PROMPT}]
+                    + [
+                        {"role": m["role"], "content": m["content"]}
+                        for m in st.session_state.messages[:-1]
+                    ]
+                    + [{"role": "user", "content": user_content}]
+                )
+                try:
+                    # 「答え：」の言い直しはラベルだけ落とす（ingest/answer_text.py）。
+                    # 口癖であって記法ではないので、生表示でも落とす。
+                    stream = answer_text.without_label(
+                        chat.stream_chat(model, history, temperature)
+                    )
+                    if display:
+                        # st.write_stream は中身をMarkdownとして描画してしまうので
+                        # 使えない。自前で溜めながらコードブロックを書き換える。
+                        # 1行ずつまとめて出さないのは、8トークン毎秒では1行あたり
+                        # 数秒待たされるためで、without_label が行頭でだけ文字を
+                        # 溜めているのと同じ判断である。
+                        placeholder = st.empty()
+                        received = []
+                        for chunk in stream:
+                            received.append(chunk)
+                            placeholder.code("".join(received), language=display)
+                        answer = "".join(received)
+                        if display == "mermaid":
+                            # 図は生成が終わってから描く。途中の定義は必ず
+                            # 構文エラーになり、描き直すたびにエラーの枠が出る。
+                            render_diagrams(answer)
+                    else:
+                        # 表のセル内の <br>・<ul>・<li> は、描画する場合にだけ落とす。
+                        answer = st.write_stream(answer_text.strip_html_tags_stream(stream))
+                    answer_display = display
+                    render_evidence({"hits": hits, "table": table})
+                except chat.ChatError as error:
+                    answer = f"回答を生成できませんでした: {error}"
+                    st.error(answer)
+
+        if answer is not None:
+            st.session_state.messages.append(
+                {
+                    "role": "assistant",
+                    "content": answer,
+                    "hits": hits,
+                    "table": table,
+                    "note": note,
+                    "display": answer_display,
+                }
+            )
 
     # 入力欄を再度有効化する。ここで再実行しないと、次に利用者が何か操作する
     # まで画面上は無効化されたままになる。
