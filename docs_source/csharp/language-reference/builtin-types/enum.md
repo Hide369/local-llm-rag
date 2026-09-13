@@ -1,0 +1,206 @@
+---
+name: csharp
+repo: dotnet/docs
+ref: main
+commit: 434d5f080534909ba985053aec2f2ba2e73f4c1c
+source_path: docs/csharp/language-reference/builtin-types/enum.md
+title: Enumeration types
+version: 0.0.0
+fetched_at: 2026-09-13
+---
+# Enumeration types (C# reference)
+
+An *enumeration type* (or *enum type*) is a [value type](value-types.md) defined by a set of named constants of the underlying [integral numeric](integral-numeric-types.md) type. To define an enumeration type, use the `enum` keyword and specify the names of *enum members*:
+
+```csharp
+enum Season
+{
+    Spring,
+    Summer,
+    Autumn,
+    Winter
+}
+```
+
+By default, the associated constant values of enum members are of type `int`. They start with zero and increase by one following the definition text order. You can explicitly specify any other [integral numeric](integral-numeric-types.md) type as an underlying type of an enumeration type. You can also explicitly specify the associated constant values, as the following example shows:
+
+```csharp
+enum ErrorCode : ushort
+{
+    None = 0,
+    Unknown = 1,
+    ConnectionLost = 100,
+    OutlierReading = 200
+}
+```
+
+You can't define a method inside the definition of an enumeration type. To add functionality to an enumeration type, create an [extension member](../../programming-guide/classes-and-structs/extension-methods.md).
+
+The default value of an enumeration type `E` is the value produced by expression `(E)0`, even if zero doesn't have the corresponding enum member.
+
+## Implicit conversions from zero
+
+C# allows implicit conversions from the literal value `0` to any enum type, and from `const` values equal to zero. This behavior can lead to unexpected results when an enum doesn't include a member with the value zero:
+
+```csharp
+public enum GpioPort
+{
+    GpioA = 1,
+    GpioB,
+    GpioC,
+    GpioD
+}
+
+public class ZeroConversionExample
+{
+    public static void Main()
+    {
+        // This compiles without warning but creates an invalid enum value
+        GpioPort port1 = (GpioPort)0;
+        Console.WriteLine($"port1: {port1}"); // Output: port1: 0
+
+        // This also compiles due to implicit conversion from zero
+        GpioPort port2 = GetPort(0);
+        Console.WriteLine($"port2: {port2}"); // Output: port2: 0
+
+        // Check if the enum value is valid
+        bool isValid1 = Enum.IsDefined(typeof(GpioPort), port1);
+        bool isValid2 = Enum.IsDefined(typeof(GpioPort), port2);
+        Console.WriteLine($"port1 is valid: {isValid1}"); // Output: port1 is valid: False
+        Console.WriteLine($"port2 is valid: {isValid2}"); // Output: port2 is valid: False
+
+        // Safer approach - validate enum values
+        if (Enum.IsDefined(typeof(GpioPort), 0))
+        {
+            GpioPort safePort = (GpioPort)0;
+        }
+        else
+        {
+            Console.WriteLine("Value 0 is not a valid GpioPort");
+            // Handle the invalid case appropriately
+        }
+    }
+
+    public static GpioPort GetPort(GpioPort port)
+    {
+        return port;
+    }
+}
+```
+
+In the preceding example, both `port1` and `port2` are assigned the value `0`, but `GpioPort` has no member with that value. The <xref:System.Enum.IsDefined*?displayProperty=nameWithType> method confirms these are invalid enum values.
+
+This implicit conversion exists because the 0-bit pattern is the default for all struct types, including all enum types. However, it can introduce bugs in your code. To avoid these problems:
+
+- Almost always define a member with value `0` in your enums.
+- Use <xref:System.Enum.IsDefined*?displayProperty=nameWithType> to validate enum values when converting from numeric types.
+- Be cautious when using numeric parameters that might be implicitly converted to enum types.
+
+Use an enumeration type to represent a choice from a set of mutually exclusive values or a combination of choices. To represent a combination of choices, define an enumeration type as bit flags.
+
+## Enumeration types as bit flags
+
+If you want an enumeration type to represent a combination of choices, define enum members for those choices so that an individual choice is a bit field. That is, use the associated values of those enum members as the powers of two. Then, use the [bitwise logical operators `|` or `&`](../operators/bitwise-and-shift-operators.md#enumeration-logical-operators) to combine choices or intersect combinations of choices, respectively. To indicate that an enumeration type declares bit fields, apply the [Flags](xref:System.FlagsAttribute) attribute to it. As the following example shows, you can also include some typical combinations in the definition of an enumeration type.
+
+```csharp
+[Flags]
+public enum Days
+{
+    None      = 0b_0000_0000,  // 0
+    Monday    = 0b_0000_0001,  // 1
+    Tuesday   = 0b_0000_0010,  // 2
+    Wednesday = 0b_0000_0100,  // 4
+    Thursday  = 0b_0000_1000,  // 8
+    Friday    = 0b_0001_0000,  // 16
+    Saturday  = 0b_0010_0000,  // 32
+    Sunday    = 0b_0100_0000,  // 64
+    Weekend   = Saturday | Sunday
+}
+
+public class FlagsEnumExample
+{
+    public static void Main()
+    {
+        Days meetingDays = Days.Monday | Days.Wednesday | Days.Friday;
+        Console.WriteLine(meetingDays);
+        // Output:
+        // Monday, Wednesday, Friday
+
+        Days workingFromHomeDays = Days.Thursday | Days.Friday;
+        Console.WriteLine($"Join a meeting by phone on {meetingDays & workingFromHomeDays}");
+        // Output:
+        // Join a meeting by phone on Friday
+
+        bool isMeetingOnTuesday = (meetingDays & Days.Tuesday) == Days.Tuesday;
+        Console.WriteLine($"Is there a meeting on Tuesday: {isMeetingOnTuesday}");
+        // Output:
+        // Is there a meeting on Tuesday: False
+
+        var a = (Days)37;
+        Console.WriteLine(a);
+        // Output:
+        // Monday, Wednesday, Saturday
+    }
+}
+```
+
+For more information and examples, see <xref:System.FlagsAttribute?displayProperty=nameWithType> and [Non-exclusive members and the Flags attribute](xref:System.Enum#non-exclusive-members-and-the-flags-attribute).
+
+## The System.Enum type and enum constraint
+
+The <xref:System.Enum?displayProperty=nameWithType> type is the abstract base class of all enumeration types. It provides many methods to get information about an enumeration type and its values. For more information and examples, see the <xref:System.Enum?displayProperty=nameWithType> API reference page.
+
+You can use `System.Enum` in a base class constraint (that is known as the [enum constraint](../../programming-guide/generics/constraints-on-type-parameters.md#enum-constraints)) to specify that a type parameter is an enumeration type. Any enumeration type also satisfies the `struct` constraint, which is used to specify that a type parameter is a non-nullable value type.
+
+## Conversions
+
+For any enumeration type, explicit conversions exist between the enumeration type and its underlying integral type. If you [cast](../operators/type-testing-and-cast.md#cast-expression) an enum value to its underlying type, the result is the associated integral value of an enum member.
+
+```csharp
+public enum Season
+{
+    Spring,
+    Summer,
+    Autumn,
+    Winter
+}
+
+public class EnumConversionExample
+{
+    public static void Main()
+    {
+        Season a = Season.Autumn;
+        Console.WriteLine($"Integral value of {a} is {(int)a}");  // output: Integral value of Autumn is 2
+
+        var b = (Season)1;
+        Console.WriteLine(b);  // output: Summer
+
+        var c = (Season)4;
+        Console.WriteLine(c);  // output: 4
+    }
+}
+```
+
+Use the <xref:System.Enum.IsDefined*?displayProperty=nameWithType> method to determine whether an enumeration type contains an enum member with a certain associated value.
+
+For any enumeration type, [boxing and unboxing](../../programming-guide/types/boxing-and-unboxing.md) conversions to and from the <xref:System.Enum?displayProperty=nameWithType> type exist, respectively.
+
+## C# language specification
+
+For more information, see the following sections of the [C# language specification](~/_csharpstandard/standard/README.md):
+
+- [Enums](~/_csharpstandard/standard/enums.md)
+- [Enum values and operations](~/_csharpstandard/standard/enums.md#206-enum-values-and-operations)
+- [Enumeration logical operators](~/_csharpstandard/standard/expressions.md#12163-enumeration-logical-operators)
+- [Enumeration comparison operators](~/_csharpstandard/standard/expressions.md#12156-enumeration-comparison-operators)
+- [Explicit enumeration conversions](~/_csharpstandard/standard/conversions.md#1033-explicit-enumeration-conversions)
+- [Implicit enumeration conversions](~/_csharpstandard/standard/conversions.md#1024-implicit-enumeration-conversions)
+
+## See also
+
+- [Enumeration format strings](../../../standard/base-types/enumeration-format-strings.md)
+- [Design guidelines - Enum design](../../../standard/design-guidelines/enum.md)
+- [Design guidelines - Enum naming conventions](../../../standard/design-guidelines/names-of-classes-structs-and-interfaces.md#naming-enumerations)
+- [C# programming guide - Enum extension members](../../programming-guide/classes-and-structs/how-to-create-a-new-method-for-an-enumeration.md)
+- [`switch` expression](../operators/switch-expression.md)
+- [`switch` statement](../statements/selection-statements.md#the-switch-statement)

@@ -678,6 +678,7 @@ def test_the_real_config_file_loads():
         "csharp",
         "go",
         "go-spec",
+        "csharp-spec",
         "mermaid",
         "markdown",
     ]
@@ -686,6 +687,9 @@ def test_the_real_config_file_loads():
     assert by_name["go"].resolve_code_refs is False
     assert by_name["streamlit"].url == "https://docs.streamlit.io/llms-full.txt"
     assert by_name["go-spec"].section_level == 3
+    # 原本の H1 が31個とも章題なので、題名は設定側で決める。
+    assert by_name["csharp-spec"].title == "C# 言語仕様書"
+    assert by_name["go-spec"].title == ""
 
 
 def test_the_local_origin_files_exist():
@@ -764,6 +768,39 @@ def test_load_sources_defaults_the_section_level_to_two(tmp_path):
     assert fetch_docs.load_sources(config)[0].section_level == 2
 
 
+def test_load_sources_reads_the_title_of_a_local_source(tmp_path):
+    """原本の H1 が章題である資料は、題名を設定側で決める。"""
+    config = tmp_path / "docs_sources.toml"
+    config.write_text(
+        '[[source]]\nname = "x"\nkind = "local"\npath = "a.md"\n'
+        'title = "C# 言語仕様書"\nversion = "0.0.0"\n',
+        encoding="utf-8",
+    )
+    assert fetch_docs.load_sources(config)[0].title == "C# 言語仕様書"
+
+
+def test_load_sources_defaults_the_title_to_empty(tmp_path):
+    """既定は原本の H1 を題名に使う。go-spec がこちらである。"""
+    config = tmp_path / "docs_sources.toml"
+    config.write_text(
+        '[[source]]\nname = "x"\nkind = "local"\npath = "a.md"\nversion = "0.0.0"\n',
+        encoding="utf-8",
+    )
+    assert fetch_docs.load_sources(config)[0].title == ""
+
+
+def test_load_sources_rejects_a_title_on_a_github_source(tmp_path):
+    """title は local のキーである。github 側の題名は各ページが持っている。"""
+    config = tmp_path / "docs_sources.toml"
+    config.write_text(
+        '[[source]]\nname = "x"\nkind = "github"\nrepo = "a/b"\nref = "main"\n'
+        'paths = ["docs"]\ntitle = "題名"\nversion = "0.0.0"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError):
+        fetch_docs.load_sources(config)
+
+
 def test_load_sources_rejects_a_url_on_a_local_source(tmp_path):
     config = tmp_path / "docs_sources.toml"
     config.write_text(
@@ -818,6 +855,25 @@ def test_run_applies_the_section_level_when_writing_a_local_source(tmp_path):
     written = (out / "go-spec.md").read_text(encoding="utf-8")
     assert "## 節\n" in written
     assert "{#Se}" not in written
+
+
+def test_run_turns_chapter_h1s_into_sections_when_a_title_is_configured(tmp_path):
+    """題名を設定に書いた資料は、原本の H1 が節の境界になる。
+
+    書き出したファイルには H1 が1つだけ（設定の題名）残る。取り込み側はそれを
+    資料名として各節の先頭に付ける。
+    """
+    root, out = tmp_path / "repo", tmp_path / "out"
+    _with_origin(root, "# 6 字句構造 {#c6}\n\n本文\n\n# 7 基本的な概念\n\n本文\n")
+    fetch_docs.run([_local(title="C# 言語仕様書")], out, "2026-09-13", root=root)
+    written = (out / "go-spec.md").read_text(encoding="utf-8")
+    body = written.partition("\n---\n")[2]
+    assert body.startswith("# C# 言語仕様書\n")
+    assert "## 6 字句構造\n" in body
+    assert "## 7 基本的な概念\n" in body
+    assert [line for line in body.split("\n") if line.startswith("# ")] == [
+        "# C# 言語仕様書"
+    ]
 
 
 def test_run_counts_an_unchanged_local_source_as_unchanged(tmp_path):

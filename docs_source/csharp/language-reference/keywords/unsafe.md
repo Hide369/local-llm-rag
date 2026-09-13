@@ -1,0 +1,62 @@
+---
+name: csharp
+repo: dotnet/docs
+ref: main
+commit: 434d5f080534909ba985053aec2f2ba2e73f4c1c
+source_path: docs/csharp/language-reference/keywords/unsafe.md
+title: unsafe keyword
+version: 0.0.0
+fetched_at: 2026-09-13
+---
+# unsafe (C# Reference)
+
+The `unsafe` keyword denotes an unsafe context, which is required for any operation involving pointers. For more information, see [Unsafe Code and Pointers](../unsafe-code.md).
+
+[!INCLUDE[csharp-version-note](../includes/initial-version.md)]
+
+Use the `unsafe` modifier in the declaration of a type or a member. The entire textual extent of the type or member is an unsafe context. For example, the following method is declared with the `unsafe` modifier:
+
+```csharp
+unsafe static void FastCopy(byte[] src, byte[] dst, int count)
+{
+    // Unsafe context: can use pointers here.
+}
+```
+
+The scope of the unsafe context extends from the parameter list to the end of the method, so you can also use pointers in the parameter list:
+
+```csharp
+unsafe static void FastCopy ( byte* ps, byte* pd, int count ) {...}
+```
+
+You can also use an unsafe block to enable the use of unsafe code inside this block. For example:
+
+```csharp
+unsafe
+{
+    // Unsafe context: can use pointers here.
+}
+```
+
+To compile unsafe code, you must specify the [**AllowUnsafeBlocks**](../compiler-options/language.md#allowunsafeblocks) compiler option. The common language runtime can't verify unsafe code.
+
+> [!NOTE]
+> The [memory safety](../unsafe-code.md#the-updated-memory-safety-model-preview) preview feature available in C# 15 narrows the operations that require an `unsafe` context.
+> An `unsafe` context is no longer required for creating a pointer, the `fixed` statement, converting a `stackalloc` expression to a pointer, and using `sizeof` on an unmanaged type.
+> Only operations that access the pointed-to memory, such as pointer indirection, still require an `unsafe` context. The same preview also adds an `unsafe(expression)` form that establishes an unsafe context for a single expression, for positions where an `unsafe` block can't appear, such as a field initializer or a `catch` filter. For more information, see [Unsafe expressions](../unsafe-code.md#unsafe-expressions). The preview also gives the `unsafe` modifier on a member a new meaning: it marks the member *requires-unsafe*. Set `LangVersion` to `preview` for the new syntax and pointer relaxations. To also enforce requires-unsafe caller obligations, enable the `updated-memory-safety-rules` compiler feature. For activation details, see [Enable the updated memory safety rules](../compiler-options/language.md#enable-the-updated-memory-safety-rules).
+
+## Example
+
+:::code language="csharp" source="./snippets/csrefKeywordsModifiers.cs" id="22":::
+
+## C# language specification
+
+For more information, see [Unsafe code](~/_csharpstandard/standard/unsafe-code.md) in the [C# Language Specification](~/_csharpstandard/standard/README.md). The language specification is the definitive source for C# syntax and usage.
+
+## See also
+
+- [C# keywords](index.md)
+- [`safe` modifier](safe.md)
+- [`fixed` statement](../statements/fixed.md)
+- [Unsafe code, pointer types, and function pointers](../unsafe-code.md)
+- [Pointer related operators](../operators/pointer-related-operators.md)

@@ -1,0 +1,195 @@
+---
+name: csharp
+repo: dotnet/docs
+ref: main
+commit: 434d5f080534909ba985053aec2f2ba2e73f4c1c
+source_path: docs/csharp/language-reference/keywords/abstract.md
+title: abstract keyword
+version: 0.0.0
+fetched_at: 2026-09-13
+---
+# abstract (C# Reference)
+
+The `abstract` modifier indicates that its target has a missing or incomplete implementation. Use the abstract modifier with classes, methods, properties, indexers, and events. Use the `abstract` modifier in a class declaration to indicate that a class is intended only to be a base class of other classes, not instantiated on its own. Non-abstract classes that derive from the abstract class must implement members marked as abstract.
+
+[!INCLUDE[csharp-version-note](../includes/initial-version.md)]
+
+Abstract classes can contain both abstract members (which have no implementation and must be overridden in derived classes) and fully implemented members (such as regular methods, properties, and constructors). This feature allows abstract classes to provide common functionality while still requiring derived classes to implement specific abstract members.
+
+> [!NOTE]
+> Interface members are `abstract` by default.
+
+## Abstract class with mixed members
+
+The following example demonstrates an abstract class that contains both implemented methods and abstract members:
+
+```csharp
+namespace LanguageKeywords;
+
+public abstract class Vehicle
+{
+    protected string _brand;
+
+    // Constructor - implemented method in abstract class
+    public Vehicle(string brand) => _brand = brand;
+
+    // Implemented method - provides functionality that all vehicles share
+    public string GetInfo() => $"This is a {_brand} vehicle.";
+
+    // Another implemented method
+    public virtual void StartEngine() => Console.WriteLine($"{_brand} engine is starting...");
+
+    // Abstract method - must be implemented by derived classes
+    public abstract void Move();
+
+    // Abstract property - must be implemented by derived classes  
+    public abstract int MaxSpeed { get; }
+}
+
+public class Car : Vehicle
+{
+    public Car(string brand) : base(brand) { }
+
+    // Implementation of abstract method
+    public override void Move() => Console.WriteLine($"{_brand} car is driving on the road.");
+
+    // Implementation of abstract property
+    public override int MaxSpeed => 200;
+}
+
+public class Boat : Vehicle
+{
+    public Boat(string brand) : base(brand) { }
+
+    // Implementation of abstract method
+    public override void Move() => Console.WriteLine($"{_brand} boat is sailing on the water.");
+
+    // Implementation of abstract property
+    public override int MaxSpeed => 50;
+}
+
+public class AbstractExample
+{
+    public static void Examples()
+    {
+        // Cannot instantiate abstract class: Vehicle v = new Vehicle("Generic"); // Error!
+
+        Car car = new Car("Toyota");
+        Boat boat = new Boat("Yamaha");
+
+        // Using implemented methods from abstract class
+        Console.WriteLine(car.GetInfo());
+        car.StartEngine();
+
+        // Using abstract methods implemented in derived class
+        car.Move();
+        Console.WriteLine($"Max speed: {car.MaxSpeed} km/h");
+
+        Console.WriteLine();
+
+        Console.WriteLine(boat.GetInfo());
+        boat.StartEngine();
+        boat.Move();
+        Console.WriteLine($"Max speed: {boat.MaxSpeed} km/h");
+    }
+}
+
+class Program
+{
+    static void Main()
+    {
+        AbstractExample.Examples();
+    }
+}
+/* Output:
+This is a Toyota vehicle.
+Toyota engine is starting...
+Toyota car is driving on the road.
+Max speed: 200 km/h
+
+This is a Yamaha vehicle.
+Yamaha engine is starting...
+Yamaha boat is sailing on the water.
+Max speed: 50 km/h
+*/
+```
+
+In this example, the `Vehicle` abstract class provides:
+
+- **Implemented members**: `GetInfo()` method, `StartEngine()` method, and constructor - these members provide common functionality for all vehicles.
+- **Abstract members**: `Move()` method and `MaxSpeed` property - these members must be implemented by each specific vehicle type.
+
+This design allows the abstract class to provide shared functionality while ensuring that derived classes implement vehicle-specific behavior.
+
+## Concrete class derived from an abstract class
+
+In this example, the class `Square` must provide an implementation of `GetArea` because it derives from `Shape`:
+
+:::code language="csharp" source="snippets/csrefKeywordsModifiers.cs" id="1":::
+
+Abstract classes have the following features:
+
+- You can't create an instance of an abstract class.
+- An abstract class can contain abstract methods and accessors.
+- An abstract class can also contain implemented methods, properties, fields, and other members that provide functionality to derived classes.
+- You can't use the [`sealed`](./sealed.md) modifier on an abstract class because the two modifiers have opposite meanings. The `sealed` modifier prevents a class from being inherited and the `abstract` modifier requires a class to be inherited.
+- A non-abstract class derived from an abstract class must include actual implementations of all inherited abstract methods and accessors.
+
+Use the `abstract` modifier in a method or property declaration to indicate that the method or property doesn't contain implementation.
+
+Abstract methods have the following features:
+
+- An abstract method is implicitly a virtual method.
+- Abstract method declarations are only permitted in abstract classes.
+- Because an abstract method declaration provides no actual implementation, there's no method body. The method declaration simply ends with a semicolon. For example:
+
+  ```csharp
+  public abstract void MyMethod();
+  ```
+
+  The implementation is provided by a method [`override`](./override.md), which is a member of a non-abstract class.
+
+- It's an error to use the [`static`](./static.md) or [`virtual`](./virtual.md) modifiers in an abstract method declaration in a `class` type. You can declare `static abstract` and `static virtual` methods in interfaces.
+
+  Abstract properties behave like abstract methods, except for the differences in declaration and invocation syntax.
+
+- It's an error to use the `abstract` modifier on a static property in a `class` type. You can declare `static abstract` or `static virtual` properties in interface declarations.
+- An abstract inherited property can be overridden in a derived class by including a property declaration that uses the [`override`](./override.md) modifier.
+
+For more information about abstract classes, see [Abstract and Sealed Classes and Class Members](../../programming-guide/classes-and-structs/abstract-and-sealed-classes-and-class-members.md).
+
+An abstract class must provide implementation for all interface members. An abstract class that implements an interface might map the interface methods onto abstract methods. For example:
+
+:::code language="csharp" source="snippets/csrefKeywordsModifiers.cs" id="2":::
+
+In the following example, the class `DerivedClass` derives from an abstract class `BaseClass`. The abstract class contains an abstract method, `AbstractMethod`, and two abstract properties, `X` and `Y`.
+
+:::code language="csharp" source="snippets/csrefKeywordsModifiers.cs" id="3":::
+
+In the preceding example, if you attempt to instantiate the abstract class by using a statement like this:
+
+```csharp
+BaseClass bc = new BaseClass();   // Error
+```
+
+You get an error saying that the compiler can't create an instance of the abstract class 'BaseClass'. Nonetheless, you can use an abstract class constructor, as shown in the following example.
+
+:::code language="csharp" source="snippets/csrefKeywordsModifiers.cs" id="27":::
+
+The `Shape` class is declared `abstract`, which means you can't instantiate it directly. Instead, it serves as a blueprint for other classes.
+
+- Even though you can't create objects of an abstract class, it can still have a constructor. This constructor is typically `protected`, meaning only derived classes can access it.
+  In this case, the `Shape` constructor takes a `color` parameter and initializes the `Color` property. It also prints a message to the console.
+  The `public Square(string color, double side) : base(color)` part calls the base class's constructor (`Shape`) and passes the `color` argument to it.
+- In the `Shape` class, the defined constructor takes a color as a parameter `protected Shape(string color)`. This means C# no longer provides a default parameterless constructor automatically. Derived classes must use the `: base(color)` expression to invoke the base constructor. Setting the default value to color `protected Shape(string color="green")` allows omitting the `: base(color)` expression in derived classes. The constructor `protected Shape(string color="green")` sets the color to green.
+
+## C# Language Specification
+
+[!INCLUDE[CSharplangspec](~/includes/csharplangspec-md.md)]
+
+## See also
+
+- [virtual](./virtual.md)
+- [override](./override.md)
+- [closed](./closed.md)
+- [C# Keywords](./index.md)

@@ -40,7 +40,7 @@ class LlmsSource:
 # 設定を直したつもりの人が直っていないことに気付けない。
 _LLMS_ONLY = ("url",)
 _GITHUB_ONLY = ("repo", "ref", "paths", "resolve_code_refs")
-_LOCAL_ONLY = ("path", "section_level")
+_LOCAL_ONLY = ("path", "section_level", "title")
 
 
 def load_sources(path: Path = DEFAULT_CONFIG) -> list:
@@ -74,6 +74,7 @@ def _source_of(entry: dict):
             path=entry["path"],
             version=version,
             section_level=int(entry.get("section_level", 2)),
+            title=str(entry.get("title", "")),
         )
     raise ValueError(
         f'{name} の kind が不明です: {kind!r}'
@@ -322,7 +323,12 @@ def _run_local(source, out_dir, fetched_at, root, say, report) -> None:
     _check_name(source.name)
     body, digest = local_source.read_body(source, root)
     text = local_source.render_page(
-        source, local_source.normalise(body, source.section_level), fetched_at, digest
+        source,
+        local_source.normalise(
+            body, source.section_level, demote_h1=bool(source.title)
+        ),
+        fetched_at,
+        digest,
     )
     if write_page_if_changed(f"{source.name}.md", text, out_dir):
         report.updated.append(source.name)

@@ -6,10 +6,14 @@ Go の言語仕様で、公式は HTML（go.dev/ref/spec）しか出しておら
 のリポジトリにも `spec.html` しか無い（docs/コーディング対応ライブラリ.md 1節）。
 人が md 化した原本をリポジトリに置き、ここから写す。
 
-`docs_source/` は .gitignore 済みで「いつでも取り直せる」ことが前提の場所である。
-手で置いたファイルはその前提を破り、`docs_source/` を作り直した瞬間に黙って
-消える。原本をバージョン管理下に置き、写す側を `docs_sources.toml` に書いて
-おけば、他のソースと同じ1コマンドで復元できる。
+`docs_source/` は `fetch_docs` の出力であって入力ではない。2026-09-13 に移植先の
+都合で追跡対象にしたが（`.gitignore`）、中身は取り直せば同じものが再現する前提の
+ままである。手で置いたファイルはその前提を破る。`docs_sources.toml` に記録が残らず
+どの版を入れたのか追えなくなり、`docs_source/` を作り直せば黙って消える。実測
+2026-09-13: 未登録のまま置かれた Go 仕様書の生コピーが `go/doc/` に紛れており、
+取り込めば go-spec.md と重複した劣化版（pandoc属性が残り1節が最大82,825バイト）が
+入るところだった。原本をバージョン管理下（`docs/pg_data/`）に置き、写す側を
+`docs_sources.toml` に書いておけば、他のソースと同じ1コマンドで復元できる。
 
 写すときに2つだけ本文を直す（normalise）。どちらも取り込み側の都合であって
 内容の書き換えではない。原本 `docs/pg_data/` は1バイトも触らない。
@@ -29,12 +33,20 @@ class LocalSource:
 
     path はリポジトリの根からの相対パスである。section_level は「どの階層までを
     節の境界にするか」で、既定の2は原文の階層をそのまま使う。
+
+    title は「原本の H1 は章題であって資料の題名ではない」と言うための欄である。
+    取り込み側の約束は「H1 が1つだけあり、それが資料の題名。`## ` が節の境界」
+    （ingest/parsers/md_parser.py の parse_md）で、H1 が複数ある原本はこれを
+    破る。2つ目以降の H1 は題名として拾われず、本文の中に `# 章題` という行の
+    まま、直前の章の最後の節に紛れ込む。ここに題名を書くと、原本の H1 は章題
+    として節の境界（`## `）へ下ろし、資料の題名はこの文字列から1行だけ作る。
     """
 
     name: str
     path: str
     version: str
     section_level: int = 2
+    title: str = ""
 
 
 # 見出しの行。取り込み側（md_parser）が見るのは `## ` だけだが、階層を動かす
@@ -48,7 +60,7 @@ _HEADING = re.compile(r"^(?P<hashes>#{1,6})(?P<space>[ \t]+)(?P<title>.*)$")
 _ATTRIBUTES = re.compile(r"[ \t]*\{[#.][^{}]*\}[ \t]*$")
 
 
-def normalise(body: str, section_level: int = 2) -> str:
+def normalise(body: str, section_level: int = 2, demote_h1: bool = False) -> str:
     """取り込み側が読める形へ整える。
 
     1. 見出しの末尾の pandoc 属性を落とす。`{#Introduction}` は HTML の id から
@@ -59,9 +71,17 @@ def normalise(body: str, section_level: int = 2) -> str:
        節の境界にする（ingest/parsers/md_parser.py 冒頭）。Go の仕様書は H2 が
        20個しかなく、1節が最大82,825バイトになる。H3（108個）まで境界にすると
        中央値1,076バイトになり、`For statements` のように質問の単位と揃う。
+    3. demote_h1 なら H1 も `## ` へ下ろす。原本の H1 が章題であって資料の題名では
+       ない場合で、題名は LocalSource.title から別に作る（render_page）。
 
-    H1 と H2 は動かさない。H1 は資料の題名で、取り込み側が各節の先頭へ1行付ける
-    ためのものである。増やすとどれが題名なのか決まらなくなる。
+    demote_h1 でないかぎり H1 と H2 は動かさない。H1 は資料の題名で、取り込み側が
+    各節の先頭へ1行付けるためのものである。増やすとどれが題名なのか決まらなくなる。
+
+    階層が潰れることは許容している。C# の仕様書を section_level=4 で写すと
+    H1〜H4 がすべて `## ` になるが、この資料の見出しは「9.4.4.15 Try-finally
+    ステートメント」のように番号が階層を持っているため、`#` の数を失っても
+    どこの節かは見出し文字列だけで分かる。番号の無い資料にこの設定を使うと
+    分からなくなる。
 
     コードフェンスの中は本文ではないので触らない。規則は取り込み側と同じものを
     使う（scan_fences）。シェルの `### コメント` や Markdown の例が見出しとして
@@ -75,7 +95,9 @@ def normalise(body: str, section_level: int = 2) -> str:
             out.append(line)
             continue
         level = len(heading.group("hashes"))
-        if level > 2:
+        if level == 1:
+            level = 2 if demote_h1 else 1
+        elif level > 2:
             level = max(level - shift, 2)
         title = _ATTRIBUTES.sub("", heading.group("title"))
         out.append(f"{'#' * level}{heading.group('space')}{title}")
@@ -117,15 +139,25 @@ def render_page(
     github ソースが commit を持つのと同じ理由で、原本のパスと SHA-256 を残す。
     書き出した本文は normalise を通っており原本と同じではないので、何をしたかも
     残す（section_level）。
+
+    source.title があるなら、本文の先頭へ `# 題名` を1行足す。原本の H1 は
+    normalise が章題として `## ` へ下ろしているので、この1行を足さないと題名が
+    1つも無い本文になり、取り込み側が各節の先頭に付ける資料名が空になる
+    （parse_md の title）。フロントマターの title はどちらの経路でも同じ文字列に
+    なるが、取り込み側が読むのは本文の H1 のほうである。
     """
+    title = source.title or title_of(body)
+    text = without_frontmatter(body)
+    if source.title:
+        text = f"# {source.title}\n\n{text.lstrip()}"
     return (
         "---\n"
         f"name: {source.name}\n"
         f"source_path: {source.path}\n"
         f"sha256: {digest}\n"
-        f"title: {title_of(body)}\n"
+        f"title: {title}\n"
         f"section_level: {source.section_level}\n"
         f"version: {source.version}\n"
         f"fetched_at: {fetched_at}\n"
         "---\n"
-    ) + without_frontmatter(body)
+    ) + text

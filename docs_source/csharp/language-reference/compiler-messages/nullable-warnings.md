@@ -1,0 +1,521 @@
+---
+name: csharp
+repo: dotnet/docs
+ref: main
+commit: 434d5f080534909ba985053aec2f2ba2e73f4c1c
+source_path: docs/csharp/language-reference/compiler-messages/nullable-warnings.md
+title: Nullable reference type warnings
+version: 0.0.0
+fetched_at: 2026-09-13
+---
+# Nullable reference type warnings
+
+The purpose of nullable warnings is to minimize the chance that your application throws a <xref:System.NullReferenceException?displayProperty=nameWithType> when run. To achieve this goal, the compiler uses static analysis and issues warnings when your code has constructs that might lead to null reference exceptions. You provide the compiler with information for its static analysis by applying type annotations and attributes. These annotations and attributes describe the nullability of arguments, parameters, and members of your types. In this article, you learn different techniques to address the nullable warnings the compiler generates from its static analysis. The techniques described here are for general C# code. Learn to work with nullable reference types and Entity Framework core in [Working with nullable reference types](/ef/core/miscellaneous/nullable-reference-types).
+
+Nullable reference types, including the operators `?` and `!` are allowed only when the nullable context is set to `enable` or `annotations`. You can set the nullable context using the `Nullable` [compiler option](../compiler-options/language.md#nullable) in your project file, or using the [`#nullable`](../preprocessor-directives.md#nullable-context) pragma in your source code.
+
+This article covers the following compiler warnings:
+
+- [**CS8597**](#possible-null-assigned-to-a-nonnullable-reference) - *Thrown value may be null.*
+- [**CS8598**](#incorrect-annotation-syntax) - *The suppression operator is not allowed in this context*
+- [**CS8600**](#possible-null-assigned-to-a-nonnullable-reference) - *Converting null literal or possible null value to non-nullable type.*
+- [**CS8601**](#possible-null-assigned-to-a-nonnullable-reference) - *Possible null reference assignment.*
+- [**CS8602**](#possible-dereference-of-null) - *Dereference of a possibly null reference.*
+- [**CS8603**](#possible-null-assigned-to-a-nonnullable-reference) - *Possible null reference return.*
+- [**CS8604**](#possible-null-assigned-to-a-nonnullable-reference) - *Possible null reference argument for parameter.*
+- [**CS8605**](#possible-null-assigned-to-a-nonnullable-reference) - *Unboxing a possibly null value.*
+- [**CS8607**](#code-doesnt-match-attribute-declaration) - *A possible null value may not be used for a type marked with `[NotNull]` or `[DisallowNull]`*
+- [**CS8608**](#mismatch-in-nullability-declaration) - *Nullability of reference types in type doesn't match overridden member.*
+- [**CS8609**](#mismatch-in-nullability-declaration) - *Nullability of reference types in return type doesn't match overridden member.*
+- [**CS8610**](#mismatch-in-nullability-declaration) - *Nullability of reference types in type parameter doesn't match overridden member.*
+- [**CS8611**](#mismatch-in-nullability-declaration) - *Nullability of reference types in type parameter doesn't match partial method declaration.*
+- [**CS8612**](#mismatch-in-nullability-declaration) - *Nullability of reference types in type doesn't match implicitly implemented member.*
+- [**CS8613**](#mismatch-in-nullability-declaration) - *Nullability of reference types in return type doesn't match implicitly implemented member.*
+- [**CS8614**](#mismatch-in-nullability-declaration) - *Nullability of reference types in type of parameter doesn't match implicitly implemented member.*
+- [**CS8615**](#mismatch-in-nullability-declaration) - *Nullability of reference types in type doesn't match implemented member.*
+- [**CS8616**](#mismatch-in-nullability-declaration) - *Nullability of reference types in return type doesn't match implemented member.*
+- [**CS8617**](#mismatch-in-nullability-declaration) - *Nullability of reference types in type of parameter doesn't match implemented member.*
+- [**CS8618**](#nonnullable-reference-not-initialized) - *Non-nullable variable must contain a non-null value when exiting constructor. Consider declaring it as nullable.*
+- [**CS8619**](#mismatch-in-nullability-declaration) - *Nullability of reference types in value doesn't match target type.*
+- [**CS8620**](#mismatch-in-nullability-declaration) - *Argument cannot be used for parameter due to differences in the nullability of reference types.*
+- [**CS8621**](#mismatch-in-nullability-declaration) - *Nullability of reference types in return type doesn't match the target delegate (possibly because of nullability attributes).*
+- [**CS8622**](#mismatch-in-nullability-declaration) - *Nullability of reference types in type of parameter doesn't match the target delegate (possibly because of nullability attributes).*
+- [**CS8623**](#incorrect-annotation-syntax) - *Explicit application of `System.Runtime.CompilerServices.NullableAttribute` is not allowed.*
+- [**CS8624**](#mismatch-in-nullability-declaration) - *Argument cannot be used as an output due to differences in the nullability of reference types.*
+- [**CS8625**](#possible-null-assigned-to-a-nonnullable-reference) - *Cannot convert null literal to non-nullable reference type.*
+- [**CS8628**](#incorrect-annotation-syntax) - *Cannot use a nullable reference type in object creation.*
+- [**CS8629**](#possible-null-assigned-to-a-nonnullable-reference) - *Nullable value type may be null.*
+- [**CS8631**](#mismatch-in-nullability-declaration) - *The type cannot be used as type parameter in the generic type or method. Nullability of type argument doesn't match constraint type.*
+- [**CS8632**](#configure-nullable-context) - *The annotation for nullable reference types should only be used in code within a `#nullable` annotations context.*
+- [**CS8633**](#mismatch-in-nullability-declaration) - *Nullability in constraints for type parameter of method doesn't match the constraints for type parameter of interface method. Consider using an explicit interface implementation instead.*
+- [**CS8634**](#mismatch-in-nullability-declaration) - *The type cannot be used as type parameter in the generic type or method. Nullability of type argument doesn't match 'class' constraint.*
+- [**CS8636**](#configure-nullable-context) - *Invalid option for `/nullable`; must be `disable`, `enable`, `warnings` or `annotations`*
+- [**CS8637**](#configure-nullable-context) - *Expected `enable`, `disable`, or `restore`*
+- [**CS8639**](#incorrect-annotation-syntax) - *The typeof operator cannot be used on a nullable reference type*
+- [**CS8643**](#mismatch-in-nullability-declaration) - *Nullability of reference types in explicit interface specifier doesn't match interface implemented by the type.*
+- [**CS8644**](#mismatch-in-nullability-declaration) - *Type does not implement interface member. Nullability of reference types in interface implemented by the base type doesn't match.*
+- [**CS8645**](#mismatch-in-nullability-declaration) - *Member is already listed in the interface list on type with different nullability of reference types.*
+- [**CS8650**](#incorrect-annotation-syntax) - *It is not legal to use nullable reference type 'type?' in an is-type expression; use the underlying type 'type' instead.*
+- [**CS8651**](#incorrect-annotation-syntax) - *It is not legal to use nullable reference type 'type?' in an as expression; use the underlying type 'type' instead.*
+- [**CS8655**](#exhaustive-switch-expression) - *The switch expression does not handle some null inputs (it is not exhaustive).*
+- [**CS8667**](#mismatch-in-nullability-declaration) - *Partial method declarations have inconsistent nullability in constraints for type parameter.*
+- [**CS8669**](#configure-nullable-context) - *The annotation for nullable reference types should only be used in code within a '#nullable' annotations context. Auto-generated code requires an explicit '#nullable' directive in source.*
+- [**CS8670**](#possible-dereference-of-null) - *Object or collection initializer implicitly dereferences possibly null member.*
+- [**CS8714**](#mismatch-in-nullability-declaration) - *The type cannot be used as type parameter in the generic type or method. Nullability of type argument doesn't match 'notnull' constraint.*
+- [**CS8762**](#nonnullable-reference-not-initialized) - *Parameter  must have a non-null value when exiting.*
+- [**CS8763**](#code-doesnt-match-attribute-declaration) - *A method marked `[DoesNotReturn]` should not return.*
+- [**CS8764**](#mismatch-in-nullability-declaration) - *Nullability of return type doesn't match overridden member (possibly because of nullability attributes).*
+- [**CS8765**](#mismatch-in-nullability-declaration) - *Nullability of type of parameter doesn't match overridden member (possibly because of nullability attributes).*
+- [**CS8766**](#mismatch-in-nullability-declaration) - *Nullability of reference types in return type of doesn't match implicitly implemented member (possibly because of nullability attributes).*
+- [**CS8767**](#mismatch-in-nullability-declaration) - *Nullability of reference types in type of parameter of doesn't match implicitly implemented member (possibly because of nullability attributes).*
+- [**CS8768**](#mismatch-in-nullability-declaration) - *Nullability of reference types in return type doesn't match implemented member (possibly because of nullability attributes).*
+- [**CS8769**](#mismatch-in-nullability-declaration) - *Nullability of reference types in type of parameter doesn't match implemented member (possibly because of nullability attributes).*
+- [**CS8770**](#code-doesnt-match-attribute-declaration) - *Method lacks `[DoesNotReturn]` annotation to match implemented or overridden member.*
+- [**CS8774**](#code-doesnt-match-attribute-declaration) - *Member must have a non-null value when exiting.*
+- [**CS8776**](#code-doesnt-match-attribute-declaration) - *Member cannot be used in this attribute.*
+- [**CS8775**](#code-doesnt-match-attribute-declaration) - *Member must have a non-null value when exiting.*
+- [**CS8777**](#code-doesnt-match-attribute-declaration) - *Parameter must have a non-null value when exiting.*
+- [**CS8819**](#mismatch-in-nullability-declaration) - *Nullability of reference types in return type doesn't match partial method declaration.*
+- [**CS8824**](#code-doesnt-match-attribute-declaration) - *Parameter must have a non-null value when exiting because parameter is non-null.*
+- [**CS8825**](#code-doesnt-match-attribute-declaration) - *Return value must be non-null because parameter is non-null.*
+- [**CS8847**](#exhaustive-switch-expression) - *The switch expression does not handle some null inputs (it is not exhaustive). However, a pattern with a 'when' clause might successfully match this value.*
+
+> [!NOTE]
+> The static analysis can't always deduce in what order, in a specific scenario, methods are accessed, and whether the method completes successfully without throwing an exception. Those known pitfalls are well described in [Known pitfalls](../../fundamentals/null-safety/nullable-reference-types.md#known-pitfalls) section.
+
+You address almost all warnings using one of five techniques:
+
+- Configuring the nullable context.
+- Adding necessary null checks.
+- Adding or removing `?` or `!` nullable annotations.
+- Adding attributes that describe null semantics.
+- Initializing variables correctly.
+
+If you're new to using nullable reference types, the [overview of nullable reference types](../../fundamentals/null-safety/nullable-reference-types.md) provides a background on what nullable reference types solve and how they work to provide warnings to possible mistakes in your code. You can also check the guidance on [migrating to nullable reference types](../../advanced-topics/update-applications/nullable-migration-strategies.md) to learn more about enabling nullable reference types in an existing project.
+
+## Configure nullable context
+
+The following warnings indicate that you haven't set the nullable context correctly:
+
+- **CS8632** - *The annotation for nullable reference types should only be used in code within a `#nullable` annotations context.*
+- **CS8636** - *Invalid option for `/nullable`; must be `disable`, `enable`, `warnings` or `annotations`*
+- **CS8637** - *Expected `enable`, `disable`, or `restore`*
+- **CS8668** - *Expected `warnings`, `annotations`, or end of directive*
+- **CS8669** - *The annotation for nullable reference types should only be used in code within a '#nullable' annotations context. Auto-generated code requires an explicit '#nullable' directive in source.*
+
+To set the nullable context correctly, you have two options:
+
+1. **Project-level configuration**: Add the [`<Nullable>`](../compiler-options/language.md#nullable) element to your project file:
+
+      ```xml
+   <PropertyGroup>
+       <Nullable>enable</Nullable>
+   </PropertyGroup>
+   ```
+
+2. **File-level configuration**: Use [`#nullable`](../preprocessor-directives.md#nullable-context) preprocessor directives in your source code:
+
+   ```csharp
+   #nullable enable
+   ```
+
+The nullable context has two independent flags that control different aspects:
+
+- **Annotation flag**: Controls whether you can use `?` to declare nullable reference types and `!` to suppress individual warnings.
+- **Warning flag**: Controls whether the compiler emits nullability warnings
+
+In generated code, add an explicit `#nullable` directive to the generated source before you use nullable annotations (**CS8669**). Project-level nullable settings might not apply to generated source files.
+
+For detailed information about nullable contexts and migration strategies, see:
+
+- [Nullable reference types](../builtin-types/nullable-reference-types.md)
+- [Update a codebase with nullable reference types](../../advanced-topics/update-applications/nullable-migration-strategies.md)
+
+## Incorrect annotation syntax
+
+These errors and warnings indicate that usage of the `!` or `?` annotation is incorrect.
+
+- **CS8598** - *The suppression operator is not allowed in this context*
+- **CS8623** - *Explicit application of `System.Runtime.CompilerServices.NullableAttribute` is not allowed.*
+- **CS8628** - *Cannot use a nullable reference type in object creation.*
+- **CS8639** - *The typeof operator cannot be used on a nullable reference type*
+- **CS8650** - *It is not legal to use nullable reference type 'type?' in an is-type expression; use the underlying type 'type' instead.*
+- **CS8651** - *It is not legal to use nullable reference type 'type?' in an as expression; use the underlying type 'type' instead.*
+
+The `?` annotation in a declaration indicates that the variable might be null. It doesn't indicate a different runtime type. Both the following declarations are the same runtime type:
+
+```csharp
+string s1 = "a string";
+string? s2 = "another string";
+```
+
+The `?` is a hint to the compiler on the expectation for null values.
+
+The `!` annotation on an expression indicates that you know the expression is safe and should be assumed to be not null.
+
+- You must use these annotations, not the <xref:System.Runtime.CompilerServices.NullableAttribute?displayProperty=nameWithType> in your code.
+- Because the `?` is an annotation, not a type, you can't use it with [`typeof`](../operators/type-testing-and-cast.md#the-typeof-operator), [`new`](../operators/new-operator.md), [`is`](../operators/type-testing-and-cast.md#the-is-operator), or [`as`](../operators/type-testing-and-cast.md#the-as-operator) expressions. Use the underlying nonnullable reference type in `is` and `as` expressions because nullable annotations have no runtime representation (**CS8650**, **CS8651**).
+- The `!` operator can't be applied to a variable expression or a method group.
+- The `!` operator can't be applied to the left of a member access operator, such as `obj.Field!.Method()`.
+
+## Possible dereference of null
+
+This set of warnings alerts you that you're dereferencing a variable whose *null-state* is *maybe-null*. These warnings are:
+
+- **CS8602** - *Dereference of a possibly null reference.*
+- **CS8670** - *Object or collection initializer implicitly dereferences possibly null member.*
+
+The following code demonstrates one example of each of the preceding warnings:
+
+```csharp
+class Container
+{
+    public List<string>? States { get; set; }
+}
+
+internal void PossibleDereferenceNullExamples(string? message)
+{
+    Console.WriteLine(message.Length); // CS8602
+
+    var c = new Container { States = { "Red", "Yellow", "Green" } }; // CS8670
+}
+```
+
+In the preceding example, the warning is because the `Container`, `c`, might have a null value for the `States` property. Assigning new states to a collection that might be null causes the warning.
+
+To remove these warnings, you need to add code to change that variable's *null-state* to *not-null* before dereferencing it. The collection initializer warning can be harder to spot. The compiler detects that the collection *maybe-null* when the initializer adds elements to it.
+
+In many instances, you can fix these warnings by checking that a variable isn't null before dereferencing it. Consider the following example that adds a null check before dereferencing the `message` parameter:
+
+```csharp
+void WriteMessageLength(string? message)
+{
+    if (message is not null)
+    {
+        Console.WriteLine(message.Length);
+    }
+
+}
+```
+
+The following example initializes the backing storage for the `States` and removes the `set` accessor. Consumers of the class can modify the contents of the collection, and the storage for the collection is never `null`:
+
+```csharp
+class Container
+{
+    public List<string> States { get; } = new();
+}
+```
+
+Other instances when you get these warnings might be false positive. You might have a private utility method that tests for null. The compiler doesn't know that the method provides a null check. Consider the following example that uses a private utility method, `IsNotNull`:
+
+```csharp
+public void WriteMessage(string? message)
+{
+    if (IsNotNull(message))
+        Console.WriteLine(message.Length);
+}
+```
+
+The compiler warns that you might be dereferencing null when you write the property `message.Length` because its static analysis determines that `message` might be `null`. You know that `IsNotNull` provides a null check, and when it returns `true`, the *null-state* of `message` should be *not-null*. You must tell the compiler those facts. One way is to use the null forgiving operator, `!`. You can change the `WriteLine` statement to match the following code:
+
+```csharp
+Console.WriteLine(message!.Length);
+```
+
+The null forgiving operator makes the expression *not-null* even if it was *maybe-null* without the `!` applied. In this example, a better solution is to add an attribute to the signature of `IsNotNull`:
+
+```csharp
+private static bool IsNotNull([NotNullWhen(true)] object? obj) => obj != null;
+```
+
+The <xref:System.Diagnostics.CodeAnalysis.NotNullWhenAttribute?displayProperty=nameWithType> informs the compiler that the argument used for the `obj` parameter is *not-null* when the method returns `true`. When the method returns `false`, the argument has the same *null-state* it had before the method was called.
+
+> [!TIP]
+> There's a rich set of attributes you can use to describe how your methods and properties affect *null-state*. You can learn about them in the language reference article on [Nullable static analysis attributes](../attributes/nullable-analysis.md).
+
+Fixing a warning for dereferencing a *maybe-null* variable involves one of three techniques:
+
+- Add a missing null check.
+- Add null analysis attributes on APIs to affect the compiler's *null-state* static analysis. These attributes inform the compiler when a return value or argument should be *maybe-null* or *not-null* after calling the method.
+- Apply the null forgiving operator `!` to the expression which forces the state to *not-null*.
+
+## Possible null assigned to a nonnullable reference
+
+This set of warnings alerts you that you're assigning a variable whose type is nonnullable to an expression whose *null-state* is *maybe-null*. These warnings are:
+
+- **CS8597** - *Thrown value may be null.*
+- **CS8600** - *Converting null literal or possible null value to non-nullable type.*
+- **CS8601** - *Possible null reference assignment.*
+- **CS8603** - *Possible null reference return.*
+- **CS8604** - *Possible null reference argument for parameter.*
+- **CS8605** - *Unboxing a possibly null value.*
+- **CS8625** - *Cannot convert null literal to non-nullable reference type.*
+- **CS8629** - *Nullable value type may be null.*
+
+The compiler emits these warnings when you attempt to assign an expression that is *maybe-null* to a variable that is nonnullable. For example:
+
+```csharp
+string? TryGetMessage(int id) => "";
+
+string msg = TryGetMessage(42);  // Possible null assignment.
+```
+
+The different warnings indicate provide details about the code, such as assignment, unboxing assignment, return statements, arguments to methods, and throw expressions.
+
+You can take one of three actions to address these warnings. One is to add the `?` annotation to make the variable a nullable reference type. That change can cause other warnings. Changing a variable from a non-nullable reference to a nullable reference changes its default *null-state* from *not-null* to *maybe-null*. The compiler's static analysis finds instances where you dereference a variable that is *maybe-null*.
+
+The other actions instruct the compiler that the right-hand-side of the assignment is *not-null*. The expression on the right-hand-side could be null-checked before assignment, as shown in the following example:
+
+```csharp
+string notNullMsg = TryGetMessage(42) ?? "Unknown message id: 42";
+```
+
+The previous examples demonstrate assignment of the return value of a method. You annotate the method (or property) to indicate when a method returns a not-null value. The <xref:System.Diagnostics.CodeAnalysis.NotNullIfNotNullAttribute?displayProperty=nameWithType> often specifies that a return value is *not-null* when an input argument is *not-null*. Another alternative is to add the null forgiving operator, `!` to the right-hand side:
+
+```csharp
+string msg = TryGetMessage(42)!;
+```
+
+Fixing a warning for assigning a *maybe-null* expression to a *not-null* variable involves one of four techniques:
+
+- Change the left side of the assignment to a nullable type. This action can introduce new warnings when you dereference that variable.
+- Provide a null-check before the assignment.
+- Annotate the API that produces the right-hand side of the assignment.
+- Add the null forgiving operator to the right-hand side of the assignment.
+
+## Nonnullable reference not initialized
+
+This set of warnings alerts you that you're assigning a variable whose type is non-nullable to an expression whose *null-state* is *maybe-null*. These warnings are:
+
+- **CS8618** - *Non-nullable variable must contain a non-null value when exiting constructor. Consider declaring it as nullable.*
+- **CS8762** - *Parameter  must have a non-null value when exiting.*
+
+Consider the following class as an example:
+
+```csharp
+public class Person
+{
+    public string FirstName { get; set; }
+    public string LastName { get; set; }
+}
+```
+
+Neither `FirstName` nor `LastName` are guaranteed initialized. If this code is new, consider changing the public interface. The preceding example could be updated as follows:
+
+```csharp
+public class Person
+{
+    public Person(string first, string last)
+    {
+        FirstName = first;
+        LastName = last;
+    }
+
+    public string FirstName { get; set; }
+    public string LastName { get; set; }
+}
+```
+
+If you require creating a `Person` object before setting the name, you can initialize the properties using a default non-null value:
+
+```csharp
+public class Person
+{
+    public string FirstName { get; set; } = string.Empty;
+    public string LastName { get; set; } = string.Empty;
+}
+```
+
+Another alternative is to change those members to nullable reference types. The `Person` class could be defined as follows if `null` should be allowed for the name:
+
+```csharp
+public class Person
+{
+    public string? FirstName { get; set; }
+    public string? LastName { get; set; }
+}
+```
+
+Existing code sometimes require other changes to inform the compiler about the null semantics for those members. It might have multiple constructors, and your class has a private helper method that initializes one or more members. You can move the initialization code into a single constructor and ensure all constructors call the one with the common initialization code. Or, you can use the <xref:System.Diagnostics.CodeAnalysis.MemberNotNullAttribute?displayProperty=nameWithType> and <xref:System.Diagnostics.CodeAnalysis.MemberNotNullWhenAttribute?displayProperty=nameWithType> attributes. These attributes inform the compiler that a member is *not-null* after the method returns. The following code shows an example of each. The `Person` class uses a common constructor called by all other constructors. The `Student` class has a helper method annotated with the <xref:System.Diagnostics.CodeAnalysis.MemberNotNullAttribute?displayProperty=nameWithType> attribute:
+
+```csharp
+using System.Diagnostics.CodeAnalysis;
+
+public class Person
+{
+    public string FirstName { get; set; }
+    public string LastName { get; set; }
+
+    public Person(string firstName, string lastName)
+    {
+        FirstName = firstName;
+        LastName = lastName;
+    }
+
+    public Person() : this("John", "Doe") { }
+}
+
+public class Student : Person
+{
+    public string Major { get; set; }
+
+    public Student(string firstName, string lastName, string major)
+        : base(firstName, lastName)
+    {
+        SetMajor(major);
+    }
+
+    public Student(string firstName, string lastName) :
+        base(firstName, lastName)
+    {
+        SetMajor();
+    }
+
+    public Student()
+    {
+        SetMajor();
+    }
+
+    [MemberNotNull(nameof(Major))]
+    private void SetMajor(string? major = default)
+    {
+        Major = major ?? "Undeclared";
+    }
+}
+```
+
+Finally, you can use the null forgiving operator to indicate that a member is initialized in other code. For another example, consider the following classes representing an Entity Framework Core model:
+
+```csharp
+public class TodoItem
+{
+    public long Id { get; set; }
+    public string? Name { get; set; }
+    public bool IsComplete { get; set; }
+}
+
+public class TodoContext : DbContext
+{
+    public TodoContext(DbContextOptions<TodoContext> options)
+        : base(options)
+    {
+    }
+
+    public DbSet<TodoItem> TodoItems { get; set; } = null!;
+}
+```
+
+The `DbSet` property is initialized to `null!`. That tells the compiler that the property is set to a *not-null* value. In fact, the base `DbContext` performs the initialization of the set. The compiler's static analysis doesn't pick that up. For more information on working with nullable reference types and Entity Framework Core, see the article on [Working with Nullable Reference Types in EF Core](/ef/core/miscellaneous/nullable-reference-types).
+
+Fixing a warning for not initializing a nonnullable member involves one of four techniques:
+
+- Change the constructors or field initializers to ensure all nonnullable members are initialized.
+- Change one or more members to be nullable types.
+- Annotate any helper methods to indicate which members are assigned.
+- Add an initializer to `null!` to indicate that the member is initialized in other code.
+
+## Mismatch in nullability declaration
+
+Many warnings indicate nullability mismatches between signatures for methods, delegates, or type parameters.
+
+- **CS8608** - *Nullability of reference types in type doesn't match overridden member.*
+- **CS8609** - *Nullability of reference types in return type doesn't match overridden member.*
+- **CS8610** - *Nullability of reference types in type parameter doesn't match overridden member.*
+- **CS8611** - *Nullability of reference types in type parameter doesn't match partial method declaration.*
+- **CS8612** - *Nullability of reference types in type doesn't match implicitly implemented member.*
+- **CS8613** - *Nullability of reference types in return type doesn't match implicitly implemented member.*
+- **CS8614** - *Nullability of reference types in type of parameter doesn't match implicitly implemented member.*
+- **CS8615** - *Nullability of reference types in type doesn't match implemented member.*
+- **CS8616** - *Nullability of reference types in return type doesn't match implemented member.*
+- **CS8617** - *Nullability of reference types in type of parameter doesn't match implemented member.*
+- **CS8619** - *Nullability of reference types in value doesn't match target type.*
+- **CS8620** - *Argument cannot be used for parameter due to differences in the nullability of reference types.*
+- **CS8621** - *Nullability of reference types in return type doesn't match the target delegate (possibly because of nullability attributes).*
+- **CS8622** - *Nullability of reference types in type of parameter doesn't match the target delegate (possibly because of nullability attributes).*
+- **CS8624** - *Argument cannot be used as an output due to differences in the nullability of reference types.*
+- **CS8631** - *The type cannot be used as type parameter in the generic type or method. Nullability of type argument doesn't match constraint type.*
+- **CS8633** - *Nullability in constraints for type parameter of method doesn't match the constraints for type parameter of interface method. Consider using an explicit interface implementation instead.*
+- **CS8634** - *The type cannot be used as type parameter in the generic type or method. Nullability of type argument doesn't match 'class' constraint.*
+- **CS8643** - *Nullability of reference types in explicit interface specifier doesn't match interface implemented by the type.*
+- **CS8644** - *Type does not implement interface member. Nullability of reference types in interface implemented by the base type doesn't match.*
+- **CS8645** - *Member is already listed in the interface list on type with different nullability of reference types.*
+- **CS8667** - *Partial method declarations have inconsistent nullability in constraints for type parameter.*
+- **CS8714** - *The type cannot be used as type parameter in the generic type or method. Nullability of type argument doesn't match 'notnull' constraint.*
+- **CS8764** - *Nullability of return type doesn't match overridden member (possibly because of nullability attributes).*
+- **CS8765** - *Nullability of type of parameter doesn't match overridden member (possibly because of nullability attributes).*
+- **CS8766** - *Nullability of reference types in return type of doesn't match implicitly implemented member (possibly because of nullability attributes).*
+- **CS8767** - *Nullability of reference types in type of parameter of doesn't match implicitly implemented member (possibly because of nullability attributes).*
+- **CS8768** - *Nullability of reference types in return type doesn't match implemented member (possibly because of nullability attributes).*
+- **CS8769** - *Nullability of reference types in type of parameter doesn't match implemented member (possibly because of nullability attributes).*
+- **CS8819** - *Nullability of reference types in return type doesn't match partial method declaration.*
+
+The following code demonstrates *CS8764*:
+
+```csharp
+public class B
+{
+    public virtual string GetMessage(string id) => string.Empty;
+}
+public class D : B
+{
+    public override string? GetMessage(string? id) => default;
+}
+```
+
+The preceding example shows a `virtual` method in a base class and an `override` with different nullability. The base class returns a non-nullable string, but the derived class returns a nullable string. If the `string` and `string?` are reversed, it would be allowed because the derived class is more restrictive. Similarly, parameter declarations should match. Parameters in the override method can allow null even when the base class doesn't.
+
+Other situations can generate these warnings. You have a mismatch in an interface method declaration and the implementation of that method. Or a delegate type and the expression for that delegate differ. A type parameter and the type argument differ in nullability.
+
+To fix these warnings, update the appropriate declaration.
+
+## Code doesn't match attribute declaration
+
+The preceding sections discussed how you can use [Attributes for nullable static analysis](../attributes/nullable-analysis.md) to inform the compiler about the null semantics of your code. The compiler warns you if the code doesn't adhere to the promises of that attribute:
+
+- **CS8607** - *A possible null value may not be used for a type marked with `[NotNull]` or `[DisallowNull]`*
+- **CS8763** - *A method marked `[DoesNotReturn]` should not return.*
+- **CS8770** - *Method lacks `[DoesNotReturn]` annotation to match implemented or overridden member.*
+- **CS8774** - *Member must have a non-null value when exiting.*
+- **CS8775** - *Member must have a non-null value when exiting.*
+- **CS8776** - *Member cannot be used in this attribute.*
+- **CS8777** - *Parameter must have a non-null value when exiting.*
+- **CS8824** - *Parameter must have a non-null value when exiting because parameter is non-null.*
+- **CS8825** - *Return value must be non-null because parameter is non-null.*
+
+Consider the following method:
+
+```csharp
+public bool TryGetMessage(int id, [NotNullWhen(true)] out string? message)
+{
+    message = null;
+    return true;
+
+}
+```
+
+The compiler produces a warning because the `message` parameter is assigned `null` *and* the method returns `true`. The `NotNullWhen` attribute indicates that shouldn't happen.
+
+To address these warnings, update your code so it matches the expectations of the attributes applied. You can change the attributes, or the algorithm.
+
+## Exhaustive switch expression
+
+Switch expressions must be *exhaustive*, meaning that all input values must be handled. Even for non-nullable reference types, the `null` value must be accounted for. The compiler issues warnings when the null value isn't handled:
+
+- **CS8655** - *The switch expression does not handle some null inputs (it is not exhaustive).*
+- **CS8847** - *The switch expression does not handle some null inputs (it is not exhaustive). However, a pattern with a 'when' clause might successfully match this value.*
+
+The following example code demonstrates this condition:
+
+```csharp
+int AsScale(string status) =>
+    status switch
+    {
+        "Red" => 0,
+        "Yellow" => 5,
+        "Green" => 10,
+        { } => -1
+    };
+```
+
+The input expression is a `string`, not a `string?`. The compiler still generates this warning. The `{ }` pattern handles all non-null values, but doesn't match `null`. To address these errors, you can either add an explicit `null` case, or replace the `{ }` with the `_` (discard) pattern. The discard pattern matches null in addition to any other value.
