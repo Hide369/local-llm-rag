@@ -49,10 +49,10 @@ from scripts.ingest_source import (
 
 DB_PATH = str(store.DB_PATH)
 
-# 技術ドキュメントの取り込み先。社内資料とはファイルごと分ける。
-# 同じDBに入れると、社内規程の質問にライブラリのドキュメントが混ざり、
-# 「社内資料に無ければ答えない」という歯止めが効かなくなる。
-DOCS_DB_PATH = str(store.DB_PATH.parent / "docs_store.sqlite3")
+# 技術ドキュメントの取り込み先。パスの組み立ては ingest/store.py に置いてある
+# （社内資料と分ける理由もそちら）。ここで綴り直すと、実測スクリプトと画面で
+# 別のDBを開いても例外が出ないまま食い違う。
+DOCS_DB_PATH = str(store.DOCS_DB_PATH)
 
 CORPUS_INTERNAL = "社内資料"
 CORPUS_DOCS = "技術ドキュメント"

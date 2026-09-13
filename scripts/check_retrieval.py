@@ -2,7 +2,7 @@
 
 判定は2つある。
 
-1. ゲートの分離: 関連する質問の最大距離 ≤ RELEVANCE_THRESHOLD < 圏外の質問の最小距離。
+1. ゲートの分離: 関連する質問の最大距離 ≤ しきい値 < 圏外の質問の最小距離。
    ベクトル側は圏内・圏外を分ける唯一の関門なので、ここが崩れると圏外の質問にも
    回答してしまう。成り立たない場合はしきい値の再調整か、チャンクサイズ・
    埋め込みモデルの見直しが必要。
@@ -17,11 +17,23 @@
 あり、合否判定の対象には含めない。挨拶は元からベクトル側のゲートを通っており
 （実測0.349〜0.381）、ゲート方式でもこの扱いは変わらない。この入力は
 ingest/prompting.py の「根拠がなければ答えない」プロンプトが受け持つ。
+
+コーパスは2つある。`--corpus internal`（既定）が社内資料、`--corpus docs` が
+技術ドキュメントである。しきい値は資料に付いた値であって検索の性質ではない
+（ingest/retrieval.py が「扱う資料を入れ替えたら再度実測して調整すること」と
+書いているのはこの意味である）。にもかかわらず、このスクリプトは長らく社内資料の
+DBに固定されており、技術ドキュメント側を測る手段が無かった。2026-09-13に
+「Snowflakeのロール権限」の質問へ無関係な資料が根拠として並んだのは、社内資料
+538チャンクで測った0.50が、47,525チャンクの英語コーパスにもそのまま効いていた
+ためである。Corpus はしきい値・質問・DBを1組にして、この取り違えが起きない形に
+するために置いている。
 """
 import argparse
 from collections import defaultdict, deque
+from dataclasses import dataclass
+from pathlib import Path
 
-from ingest import embedder, lexical, reranker, store
+from ingest import chat, embedder, lexical, query_translation, reranker, store
 from ingest.retrieval import (
     RELEVANCE_THRESHOLD,
     RERANK_CANDIDATE_COUNT,
@@ -33,8 +45,12 @@ from ingest.retrieval import (
 
 DB_PATH = store.DB_PATH
 
+# 検索クエリの英訳に使うモデル。rag_chat_app.py の MODELS と揃える。実行時と
+# 違うモデルで訳すと、実行時には存在しないクエリでしきい値を決めることになる。
+DEFAULT_MODEL = "gpt-oss:20b"
+
 # 取り込んだ資料に確実に答えがある質問
-RELEVANT = [
+RELEVANT = (
     "懲戒解雇となるのはどのような場合ですか",
     "裁判員になったとき休暇はもらえますか",
     "育児休業は誰が取得できますか",
@@ -56,22 +72,22 @@ RELEVANT = [
     # 再チャンク化後の実測では両方ともゲートを通る（0.414 / 0.456）。詳しくは REGRESSION を参照。
     "ファインチューニングについて教えてほしい",
     "ファインチューニング",
-]
+)
 
 # 資料のどこにも答えがない「問い」。しきい値の合否判定はこちらだけで行う。
-OUT_OF_DOMAIN = [
+OUT_OF_DOMAIN = (
     "今日の東京の天気を教えてください",
     "おすすめのラーメン屋はどこですか",
     "1たす1はいくつですか",
-]
+)
 
 # 意味的に空な入力（挨拶）。コーパスの重心付近にヒットするため、距離では
 # 際どい関連質問と切り分けられない。参考値として記録するだけで、合否判定には使わない。
-GREETINGS = [
+GREETINGS = (
     "こんにちは",
     "おはようございます",
     "ありがとう",
-]
+)
 
 # 設計書 第1節の発端となった2問。ゲート方式では圏内と判定された質問のBM25ヒットが
 # スコアを問わず採用されるため、BM25側の上位に期待する出典が入るかがそのまま合否になる。
@@ -80,12 +96,134 @@ GREETINGS = [
 # スライド11が0.486でベクトル側を単独でも通る（現在はどちらもRELEVANTのしきい値
 # 内に収まる。詳しくはRELEVANTのコメントを参照）。
 # RELEVANT にも入れてあるのは、距離の分離判定にこの2問も含めるためである。
-REGRESSION = [
+REGRESSION = (
     "ファインチューニングについて教えてほしい",
     "ファインチューニング",
-]
+)
 REGRESSION_EXPECTED = "生成AI活用セミナー.pptx スライド11"
 REGRESSION_TOP_N = 3
+
+# 技術ドキュメント側。docs_sources.toml の10ソース（streamlit / langchain /
+# ollama / huggingface_hub / mcp / pymupdf / csharp / go / mermaid / markdown）が
+# 対象で、取り込み済みのソース全てから最低1問は引くようにしてある。1つに偏った
+# 質問だけで測ると、そのソースの距離分布だけでしきい値が決まってしまう。
+#
+# 質問は日本語で書く。利用者は日本語で尋ね、検索の直前に
+# ingest/query_translation.py が英語へ訳すからである。はじめから英語で書いた
+# 質問で測ると、翻訳を経ないぶん実行時より良い数字が出る。
+DOCS_RELEVANT = (
+    "Streamlitでデータをキャッシュするにはどう書きますか",
+    "Streamlitでモーダルダイアログを表示する方法を教えてください",
+    "LangChainで長い文章をチャンクに分割するにはどうすればよいですか",
+    "Ollamaの埋め込みAPIをPythonから呼ぶ方法を教えてください",
+    "huggingface_hubでモデルのファイルを1つだけダウンロードする関数は何ですか",
+    "MCPサーバーでツールを定義するにはどう書きますか",
+    "PyMuPDFでPDFのページを画像として書き出すにはどうしますか",
+    "C#のrecord型はどう定義しますか",
+    "C#のswitch式でパターンマッチングを書く方法を教えてください",
+    # Go はバージョン番号を添えると当たりが良くなる（実測 2026-09-13:
+    # 「Goのジェネリクス」は2.52止まりだが「Go 1.18 generics type parameters」で
+    # go1.18.md が4.41）。既存の「API名を書くと強い」という所見と同じ傾向である。
+    # 番号を添えない側を残してあるのは、弱いほうの実力でしきい値を決めるため。
+    "Goでジェネリクスの型パラメータを使う書き方を教えてください",
+    "Goでゴルーチンとチャネルを使う例を教えてください",
+    "Mermaidでフローチャートを書く構文を教えてください",
+    "Mermaidのシーケンス図で参加者を宣言するにはどう書きますか",
+    "Markdownで表を書く記法を教えてください",
+)
+
+# 技術ドキュメントのどこにも答えがない「問い」。合否判定はこちらだけで行う。
+#
+# 社内資料側の質問（育児休業・懲戒解雇・有給休暇）をわざと混ぜてある。この2つの
+# コーパスは同じ画面から切り替えて使うため、片方に尋ねるはずの質問がもう片方で
+# 「答えられる」と判定されるのがいちばん起きやすい壊れ方である。
+DOCS_OUT_OF_DOMAIN = (
+    "今日の東京の天気を教えてください",
+    "おすすめのラーメン屋はどこですか",
+    "バイオリンの相場はいくらですか",
+    "育児休業は誰が取得できますか",
+    "懲戒解雇となるのはどのような場合ですか",
+    "有給休暇は年に何日もらえますか",
+    # 2026-09-13の不具合の発端。技術ドキュメントに Snowflake の資料は1件も無い。
+    # 当時の実測では LangSmith の "Roles and permissions" の権限表が0.402で
+    # ヒットして0.50のゲートを通り、そこから先はBM25側が下限なしで採用されるため
+    # 無関係な資料が根拠に並んだ。製品は違っても「ロールと権限」という概念は同じ
+    # なので、距離が近いこと自体は埋め込みの誤りではない。ゲートの位置の問題である。
+    "Snowflakeのロール権限を設定するSQLをGo言語のサンプルで書いてください",
+    "確定申告の医療費控除の上限はいくらですか",
+)
+
+DOCS_GREETINGS = GREETINGS
+
+INTERNAL_INGEST_COMMAND = "python -m scripts.ingest_source"
+DOCS_INGEST_COMMAND = (
+    "python -m scripts.fetch_docs のあと "
+    "python -m scripts.ingest_source --source-dir docs_source "
+    "--db docs_store.sqlite3 --keep-code-blocks"
+)
+
+
+@dataclass(frozen=True)
+class Corpus:
+    """実測の対象1つ分。
+
+    しきい値・質問・DBを3つで1組にしてある。ばらばらに置くと、片方の資料で
+    測った値がもう片方にも効いていることに気づけない。それが2026-09-13の
+    不具合であり、このスクリプトが社内資料のDBに固定されていたために、
+    ingest/retrieval.py が求めている「資料を入れ替えたら再実測」を技術
+    ドキュメント側に対して一度も実行できていなかった。
+    """
+
+    name: str
+    db_path: Path
+    threshold: float
+    relevant: tuple[str, ...]
+    out_of_domain: tuple[str, ...]
+    greetings: tuple[str, ...]
+    regression: tuple[str, ...]
+    regression_expected: str
+    ingest_command: str
+    # 検索の直前に英語へ訳すか。技術ドキュメントは英語で書かれており、
+    # rag_chat_app.py は ingest/query_translation.py を通してから search() を
+    # 呼ぶ。訳さずに測ると、実行時には存在しないクエリでしきい値を決めることに
+    # なる。
+    translate: bool = False
+
+
+INTERNAL = Corpus(
+    name="社内資料",
+    db_path=store.DB_PATH,
+    threshold=RELEVANCE_THRESHOLD,
+    relevant=RELEVANT,
+    out_of_domain=OUT_OF_DOMAIN,
+    greetings=GREETINGS,
+    regression=REGRESSION,
+    regression_expected=REGRESSION_EXPECTED,
+    ingest_command=INTERNAL_INGEST_COMMAND,
+)
+
+DOCS = Corpus(
+    name="技術ドキュメント",
+    db_path=store.DOCS_DB_PATH,
+    # 現在このしきい値は両方のコーパスで共有されている。それ自体が2026-09-13の
+    # 不具合の原因であり、まず「共有したままだと分離しない」ことを測れるように
+    # する。技術ドキュメント専用の値はこの実測の結果から決める。
+    threshold=RELEVANCE_THRESHOLD,
+    relevant=DOCS_RELEVANT,
+    out_of_domain=DOCS_OUT_OF_DOMAIN,
+    greetings=DOCS_GREETINGS,
+    # 技術ドキュメント側にBM25の回帰ケースは置かない。社内資料の回帰ケースは
+    # 「ベクトル側で足切りされた特定のスライドをBM25が拾えるか」という個別の
+    # 事故から来ているが、技術ドキュメント側で起きた事故はゲートの位置そのもの
+    # であり、それは out_of_domain の分離判定がそのまま受け持つ。中身の無い
+    # 回帰ケースを置くと、通ったことに意味があるように見えてしまう。
+    regression=(),
+    regression_expected="",
+    ingest_command=DOCS_INGEST_COMMAND,
+    translate=True,
+)
+
+CORPUSES = {"internal": INTERNAL, "docs": DOCS}
 
 
 def _vector_best(collection, question, session):
@@ -136,15 +274,43 @@ def _lexical_best(collection, index, question):
     return score, citation
 
 
-def _report(collection, index, session, title, questions):
+def translator(corpus, ask):
+    """質問 → 実際に検索へ渡る文字列 の変換を返す。
+
+    技術ドキュメントは英語で書かれており、rag_chat_app.py は search() を呼ぶ
+    直前に ingest/query_translation.py で質問を英語へ訳す。ここで同じ変換を
+    通さないと、実行時には存在しないクエリでしきい値を決めることになる。
+
+    訳した結果は覚えておく。同じ質問が分離の判定とリランカー比較の両方に出る
+    ため、そのつど訳すと待ち時間が倍になるうえ、2回の翻訳が食い違えば同じ質問の
+    測定値も食い違う。
+    """
+    cache: dict[str, str] = {}
+
+    def query_of(question: str) -> str:
+        if not corpus.translate:
+            return question
+        if question not in cache:
+            cache[question] = query_translation.translate_query(question, ask)
+        return cache[question]
+
+    return query_of
+
+
+def _report(collection, index, session, title, questions, query_of):
     """1グループ分を表示し、(距離, BM25スコア) の並びを返す。"""
     print(f"\n=== {title} ===")
     measured = []
     for question in questions:
-        distance, vector_citation = _vector_best(collection, question, session)
-        score, lexical_citation = _lexical_best(collection, index, question)
+        query = query_of(question)
+        distance, vector_citation = _vector_best(collection, query, session)
+        score, lexical_citation = _lexical_best(collection, index, query)
         measured.append((distance, score))
         print(f"  {question}")
+        # 訳した場合だけ、実際に検索へ渡った文字列を出す。距離が悪いときに、
+        # 翻訳が的外れだったのか資料に無いのかは、これが無いと切り分けられない。
+        if query != question:
+            print(f"      → 検索クエリ: {query}")
         print(f"      ベクトル {distance:.3f}  → {vector_citation}")
         print(f"      BM25     {score:6.2f}  → {lexical_citation}")
     return measured
@@ -201,7 +367,7 @@ def _rrf_ranks(before):
     return ranks
 
 
-def _rerank_comparison(collection, index, session, questions):
+def _rerank_comparison(collection, index, session, questions, query_of, threshold):
     """同じ質問をRRF順とリランカー順の両方で引き、上位 RERANK_CANDIDATE_COUNT 件を
     全件並べて違いを出す。
 
@@ -224,21 +390,24 @@ def _rerank_comparison(collection, index, session, questions):
     """
     print(f"\n=== RRF順 vs リランカー順（上位{RERANK_CANDIDATE_COUNT}件を全件表示）===")
     for question in questions:
+        query = query_of(question)
         # 両方とも RERANK_CANDIDATE_COUNT 件まで測り直す。既定の n_results
         # （SEARCH_RESULT_COUNT=4件）のままだと、RRF圏外で救えなかったのか
         # 4位以内へ上げられなかっただけなのかが見分けられない。
         before = search(
             collection,
-            question,
+            query,
             index=index,
             session=session,
+            threshold=threshold,
             n_results=RERANK_CANDIDATE_COUNT,
         )
         after = search(
             collection,
-            question,
+            query,
             index=index,
             session=session,
+            threshold=threshold,
             n_results=RERANK_CANDIDATE_COUNT,
             rerank=reranker.rerank,
         )
@@ -252,6 +421,8 @@ def _rerank_comparison(collection, index, session, questions):
             f"\n  {question} — 並びの変化（上位{SEARCH_RESULT_COUNT}件）: "
             f"{'あり' if changed else 'なし'}"
         )
+        if query != question:
+            print(f"      → 検索クエリ: {query}")
         # チャンク→RRF順位のルックアップ。リランカー順の各行にRRFでの元順位を
         # 添えるために使う。
         rrf_rank_by_hit = _rrf_ranks(before)
@@ -272,36 +443,69 @@ def _rerank_comparison(collection, index, session, questions):
 def main() -> int:
     parser = argparse.ArgumentParser(description="検索のしきい値と回帰ケースを実測する")
     parser.add_argument(
+        "--corpus",
+        choices=sorted(CORPUSES),
+        default="internal",
+        help="測る対象。internal=社内資料、docs=技術ドキュメント（既定: internal）",
+    )
+    parser.add_argument(
+        "--db",
+        help="DBのパスを上書きする（既定は --corpus で決まる）",
+    )
+    parser.add_argument(
+        "--model",
+        default=DEFAULT_MODEL,
+        help=f"検索クエリの英訳に使うモデル（既定: {DEFAULT_MODEL}）",
+    )
+    parser.add_argument(
         "--with-reranker",
         action="store_true",
         help="RRF順とリランカー順を並べて出す（初回はモデル570MBの取得が走る）",
     )
     args = parser.parse_args()
 
+    corpus = CORPUSES[args.corpus]
+    db_path = Path(args.db) if args.db else corpus.db_path
+
     embedder.check_ollama()
     if args.with_reranker:
         reranker.check_reranker()
-    collection = store.open_store(str(DB_PATH))
+    print(f"コーパス: {corpus.name}（{db_path}）")
+    print(f"しきい値: {corpus.threshold}")
+    collection = store.open_store(str(db_path))
     indexed = collection.count()
     print(f"総チャンク数: {indexed}")
     if indexed == 0:
         # open_store は存在しないパスに空のDBを黙って作る。移行直後はまだ
         # 取り込んでいないため、ここが通常の順序で踏まれる経路になる。
-        print(f"{DB_PATH} が空です。先に `python -m scripts.ingest_source` を実行してください。")
+        print(f"{db_path} が空です。先に `{corpus.ingest_command}` を実行してください。")
         return 1
     index = build_index(collection)
     print(f"BM25インデックス: {index.document_count}文書 / {len(index.postings)}トークン")
 
     session = embedder.new_session()
     try:
-        relevant = _report(collection, index, session, "関連する質問", RELEVANT)
-        out_of_domain = _report(collection, index, session, "圏外の質問", OUT_OF_DOMAIN)
+        # 翻訳もこのセッションで行う。認証プロキシの X-API-Key を足すのは
+        # embedder.new_session() だけで、素のクライアントは401で弾かれる。
+        def ask(prompt: str) -> str:
+            return chat.ask_json(args.model, prompt, session=session)
+
+        query_of = translator(corpus, ask)
+        if corpus.translate:
+            print(f"検索クエリは {args.model} で英語へ訳してから測ります。")
+        relevant = _report(
+            collection, index, session, "関連する質問", corpus.relevant, query_of
+        )
+        out_of_domain = _report(
+            collection, index, session, "圏外の質問", corpus.out_of_domain, query_of
+        )
         _report(
             collection,
             index,
             session,
             "挨拶（参考値。距離では分離できないため合否判定には使わない）",
-            GREETINGS,
+            corpus.greetings,
+            query_of,
         )
         print(
             "  意味的に空な入力はコーパスの重心付近に埋め込まれるため、際どい関連質問"
@@ -316,15 +520,23 @@ def main() -> int:
     out_of_domain_max_bm25 = max(score for _, score in out_of_domain)
     relevant_min_bm25 = min(score for _, score in relevant)
 
-    print(f"\n=== 回帰ケース（BM25側の上位{REGRESSION_TOP_N}件）===")
     regression_ok = True
-    for question in REGRESSION:
-        top = _lexical_top(collection, index, question, REGRESSION_TOP_N)
-        hit = any(citation.startswith(REGRESSION_EXPECTED) for citation, _ in top)
-        regression_ok = regression_ok and hit
-        print(f"  {question} — {'OK' if hit else 'NG'}")
-        for rank, (citation, score) in enumerate(top, start=1):
-            print(f"      {rank}. {score:6.2f}  {citation}")
+    if corpus.regression:
+        print(f"\n=== 回帰ケース（BM25側の上位{REGRESSION_TOP_N}件）===")
+        for question in corpus.regression:
+            top = _lexical_top(collection, index, question, REGRESSION_TOP_N)
+            hit = any(
+                citation.startswith(corpus.regression_expected) for citation, _ in top
+            )
+            regression_ok = regression_ok and hit
+            print(f"  {question} — {'OK' if hit else 'NG'}")
+            for rank, (citation, score) in enumerate(top, start=1):
+                print(f"      {rank}. {score:6.2f}  {citation}")
+    else:
+        print(
+            f"\n=== 回帰ケース ===\n  {corpus.name}には置いていない"
+            "（ゲートの位置が問題だったため、圏外の質問の分離判定がその役目を持つ）"
+        )
 
     print(f"\n関連の最大距離: {relevant_max_distance:.3f}")
     print(f"圏外の最小距離: {out_of_domain_min_distance:.3f}")
@@ -340,29 +552,52 @@ def main() -> int:
     print(f"圏外の最大BM25（参考。床は設けない）: {out_of_domain_max_bm25:.2f}")
     print(f"関連の最小BM25（参考。床はこれ以下でないと関連質問を落とす）: {relevant_min_bm25:.2f}")
 
-    # 実測が分離しているだけでは足りない。実際のゲートは RELEVANCE_THRESHOLD で
-    # 切るので、その定数が実測値の間に収まっていることまで確かめる。
-    separated = relevant_max_distance <= RELEVANCE_THRESHOLD < out_of_domain_min_distance
+    # 実測が分離しているだけでは足りない。実際のゲートはこのコーパスのしきい値で
+    # 切るので、その値が実測値の間に収まっていることまで確かめる。
+    separated = relevant_max_distance <= corpus.threshold < out_of_domain_min_distance
     if separated:
         print(
             f"ゲートは分離できています: {relevant_max_distance:.3f} ≤ "
-            f"{RELEVANCE_THRESHOLD} < {out_of_domain_min_distance:.3f}"
+            f"{corpus.threshold} < {out_of_domain_min_distance:.3f}"
         )
     else:
         print(
-            f"ゲートが分離できていません（RELEVANCE_THRESHOLD={RELEVANCE_THRESHOLD}）。"
+            f"ゲートが分離できていません（しきい値={corpus.threshold}）。"
             "しきい値の再調整か、チャンクサイズ・埋め込みモデルの見直しが必要です。"
         )
+        # 実測から見て分離できる範囲を添える。どこへ動かせばよいか分からないまま
+        # 「分離できていません」とだけ出しても、次の一手が決まらない。
+        if relevant_max_distance < out_of_domain_min_distance:
+            print(
+                f"  実測上は {relevant_max_distance:.3f} 以上 "
+                f"{out_of_domain_min_distance:.3f} 未満なら分離できます。"
+            )
+        else:
+            print(
+                "  実測そのものが重なっており、しきい値をどこに置いても分離"
+                "できません。埋め込み・チャンク化の見直しが要ります。"
+            )
     if not regression_ok:
         print(
             f"回帰ケースが失敗しています。BM25側の上位{REGRESSION_TOP_N}件に "
-            f"{REGRESSION_EXPECTED} が入りません。"
+            f"{corpus.regression_expected} が入りません。"
         )
 
     if args.with_reranker:
         session = embedder.new_session()
         try:
-            _rerank_comparison(collection, index, session, REGRESSION + RELEVANT[:4])
+
+            def ask_for_rerank(prompt: str) -> str:
+                return chat.ask_json(args.model, prompt, session=session)
+
+            _rerank_comparison(
+                collection,
+                index,
+                session,
+                tuple(corpus.regression) + tuple(corpus.relevant[:4]),
+                translator(corpus, ask_for_rerank),
+                corpus.threshold,
+            )
         finally:
             session.close()
 
