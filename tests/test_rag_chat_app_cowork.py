@@ -20,6 +20,7 @@ from ingest import chat
 from ingest import reranker as reranker_module
 from ingest import store as store_module
 from ingest import vlm as vlm_module
+from ingest.models import ParsedUnit
 from ingest.vector_store import open_store as open_real_store
 
 APP_PATH = Path(__file__).resolve().parent.parent / "rag_chat_app.py"
@@ -268,3 +269,158 @@ def test_cowork_tells_the_user_when_a_diagram_could_not_be_drawn(app, tmp_path):
 
     assert not app.exception
     assert any("図にできなかった" in warning.value for warning in app.warning)
+
+
+def test_cowork_reports_a_broken_template_instead_of_crashing(app, tmp_path):
+    """壊れた雛形（.docx の拡張子で中身が違うファイル）を Cowork で送っても、
+    生のトレースバックで止まらない。templates.register は拡張子しか見ないため、
+    これは異常系ではなく起こりうる誤操作である。
+
+    generating が戻ることも合わせて確かめる。戻らないと、以後どの操作をしても
+    同じ分岐に入って同じ例外で落ち、利用者はブラウザーのセッションを捨てる
+    以外の出口を失う。
+    """
+    store = tmp_path / "templates"
+    store.mkdir(parents=True, exist_ok=True)
+    (store / "壊れた.docx").write_bytes(b"not a docx file")
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", store),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+        app.chat_input[0].set_value("第5回会議の議事録を作って").run()
+
+    assert not app.exception
+    assert any("開けませんでした" in error.value for error in app.error)
+    assert app.session_state["generating"] is False
+    assert app.session_state["pending_question"] is None
+
+
+def test_template_dialog_shows_a_broken_template_but_still_offers_delete(app, tmp_path):
+    """壊れた雛形を消せる唯一の画面がここである。一覧の描画で落ちると、
+    削除ボタンごと出せなくなり利用者は雛形を消せなくなる。
+    """
+    store = tmp_path / "templates"
+    store.mkdir(parents=True, exist_ok=True)
+    (store / "壊れた.docx").write_bytes(b"not a docx file")
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", store),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+        button = next(b for b in app.button if b.label == "雛形を登録・削除")
+        button.click().run()
+
+    assert not app.exception
+    assert any("開けません" in markdown.value for markdown in app.markdown)
+    assert app.button(key="remove_壊れた.docx") is not None
+
+
+def test_cowork_does_not_leave_the_request_in_the_chat_history(app, tmp_path):
+    """Cowork の依頼文をチャット履歴に残さない。
+
+    残っていると、次のチャットの contextual_query（ingest/retrieval.py）が
+    返信の無い直前の user メッセージとして Cowork の依頼文を拾い、検索クエリが
+    「第5回会議の議事録を作って <新しい質問>」のように汚れる。Cowork の依頼は
+    結果パネル（render_cowork_result）が受け持つので、チャット履歴に残す必要は
+    ない。
+    """
+    store = tmp_path / "templates"
+    _register(store)
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", store),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+        patch.object(
+            chat,
+            "ask_json",
+            lambda model, prompt, session=None, num_ctx=None: json.dumps(
+                {"会議名": "第5回"}, ensure_ascii=False
+            ),
+        ),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+        app.chat_input[0].set_value("第5回会議の議事録を作って").run()
+
+    assert not app.exception
+    assert app.session_state["messages"] == []
+
+
+def test_cowork_attachments_are_captioned_through_the_vlm(app, tmp_path):
+    """既存のアップロード経路（upload_dialog）と同じ判断を添付にも適用する。
+
+    caption_image を渡さずに parse を呼ぶと、画面の図やスクリーンショットを
+    添付しても説明が付かず、OCR で拾えた文字だけになる。
+    """
+    store = tmp_path / "templates"
+    _register(store)
+    seen = []
+
+    def fake_parse(path, caption_image=None, on_missing_image=None):
+        seen.append(caption_image)
+        return [ParsedUnit(text="本文", location_type="document", location=1)]
+
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", store),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+        patch("ingest.parsers.parse", fake_parse),
+        patch.object(
+            chat,
+            "ask_json",
+            lambda model, prompt, session=None, num_ctx=None: json.dumps(
+                {"会議名": "第5回"}, ensure_ascii=False
+            ),
+        ),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+        app.file_uploader(key="cowork_files").set_value(
+            ("画面.png", b"\x89PNG\r\n\x1a\n", "image/png")
+        )
+        app.run()
+        app.chat_input[0].set_value("議事録を作って").run()
+
+    assert not app.exception
+    assert seen == [vlm_module.caption_image]
+
+
+def test_cowork_warns_when_an_attachment_yields_no_text(app, tmp_path):
+    """説明文もOCR文字も得られなかった添付を黙って通さない。
+
+    空の本文がプロンプトに載っても利用者には何も伝わらないため、画面に
+    警告として出す。
+    """
+    store = tmp_path / "templates"
+    _register(store)
+
+    def fake_parse(path, caption_image=None, on_missing_image=None):
+        return []
+
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", store),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+        patch("ingest.parsers.parse", fake_parse),
+        patch.object(
+            chat,
+            "ask_json",
+            lambda model, prompt, session=None, num_ctx=None: json.dumps(
+                {"会議名": "第5回"}, ensure_ascii=False
+            ),
+        ),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+        app.file_uploader(key="cowork_files").set_value(
+            ("画面.png", b"\x89PNG\r\n\x1a\n", "image/png")
+        )
+        app.run()
+        app.chat_input[0].set_value("議事録を作って").run()
+
+    assert not app.exception
+    assert any("本文を取り出せませんでした" in warning.value for warning in app.warning)
