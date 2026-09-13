@@ -164,20 +164,41 @@ def _frontmatter(source: LlmsSource, fetched_at: str) -> str:
     )
 
 
-def _body_of(path: Path) -> str:
-    """書き出し済みファイルから本文だけを取り出す。無ければ空文字。
+def _without_frontmatter(text: str) -> str:
+    """フロントマターを飛ばして本文だけを返す。
 
-    フロントマターを飛ばすのは、そこに fetched_at が入っているためである。
-    含めて比べると、内容が同じでも取得日が違えば必ず「変わった」ことになり、
-    差分検知が意味をなさなくなる。
+    飛ばすのは、そこに fetched_at が入っているためである。含めて比べると、
+    内容が同じでも取得日が違えば必ず「変わった」ことになり、差分検知が
+    意味をなさなくなる。
     """
-    if not path.is_file():
-        return ""
-    text = path.read_text(encoding="utf-8")
     if not text.startswith("---\n"):
         return text
     _, _, rest = text[4:].partition("---\n")
     return rest
+
+
+def _body_of(path: Path) -> str:
+    """書き出し済みファイルから本文だけを取り出す。無ければ空文字。"""
+    if not path.is_file():
+        return ""
+    return _without_frontmatter(path.read_text(encoding="utf-8"))
+
+
+def write_page_if_changed(relative_path: str, text: str, out_dir: Path) -> bool:
+    """1ページを書く。本文が変わっていなければ書かずに False を返す。
+
+    text にはフロントマターを含めて渡す。比べるのは本文だけである。
+    """
+    # 木の内容は設定ファイルと違ってバージョン管理下に無い入力である。
+    # ".." を含むパスを素通しすると out_dir の外へ書き出せてしまう。
+    if ".." in relative_path.split("/") or relative_path.startswith("/"):
+        raise ValueError(f"ページのパスが不正です: {relative_path!r}")
+    path = out_dir / relative_path
+    if _digest(_body_of(path)) == _digest(_without_frontmatter(text)):
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return True
 
 
 def write_if_changed(

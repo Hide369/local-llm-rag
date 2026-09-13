@@ -479,3 +479,39 @@ def test_load_sources_rejects_an_unknown_kind(tmp_path):
     )
     with pytest.raises(ValueError, match="ftp"):
         fetch_docs.load_sources(config)
+
+
+def test_write_page_if_changed_creates_the_nested_directories(tmp_path):
+    written = fetch_docs.write_page_if_changed(
+        "csharp/linq/a.md", "---\nname: csharp\n---\n# A\n", tmp_path
+    )
+    assert written is True
+    assert (tmp_path / "csharp" / "linq" / "a.md").read_text(encoding="utf-8") == (
+        "---\nname: csharp\n---\n# A\n"
+    )
+
+
+def test_write_page_if_changed_does_not_rewrite_an_unchanged_body(tmp_path):
+    """fetched_at はフロントマターにある。含めて比べると、内容が同じでも
+    取得日が違えば必ず「変わった」ことになり、差分検知が意味をなさなくなる。"""
+    first = "---\nname: csharp\nfetched_at: 2026-09-13\n---\n# A\n"
+    second = "---\nname: csharp\nfetched_at: 2026-09-20\n---\n# A\n"
+    assert fetch_docs.write_page_if_changed("csharp/a.md", first, tmp_path) is True
+    assert fetch_docs.write_page_if_changed("csharp/a.md", second, tmp_path) is False
+
+
+def test_write_page_if_changed_rewrites_a_changed_body(tmp_path):
+    fetch_docs.write_page_if_changed("csharp/a.md", "---\nname: c\n---\n# A\n", tmp_path)
+    assert (
+        fetch_docs.write_page_if_changed("csharp/a.md", "---\nname: c\n---\n# B\n", tmp_path)
+        is True
+    )
+
+
+def test_write_page_if_changed_rejects_a_parent_directory_reference(tmp_path):
+    """木の内容は設定ファイルと違ってバージョン管理下に無い入力である。
+
+    name だけでなく、GitHub から来るパスにも同じ検査を通す（設計書5.3節）。
+    """
+    with pytest.raises(ValueError):
+        fetch_docs.write_page_if_changed("csharp/../../evil.md", "x", tmp_path)

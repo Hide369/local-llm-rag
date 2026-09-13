@@ -141,3 +141,139 @@ def test_fetch_blob_raises_on_an_http_error():
     session = _FakeSession({})
     with pytest.raises(requests.HTTPError):
         github_source.fetch_blob("dotnet/docs", "main", "docs/a.md", session)
+
+
+def test_without_frontmatter_drops_the_original_yaml():
+    text = "---\ntitle: Records\nms.date: 06/05/2026\n---\n# Records\n\nbody\n"
+    assert github_source.without_frontmatter(text) == "# Records\n\nbody\n"
+
+
+def test_without_frontmatter_leaves_a_page_that_has_none():
+    text = "# Records\n\nbody\n"
+    assert github_source.without_frontmatter(text) == text
+
+
+def test_without_frontmatter_leaves_a_horizontal_rule_in_the_body():
+    """本文中の --- は区切り線であってフロントマターではない。"""
+    text = "# A\n\n---\n\nB\n"
+    assert github_source.without_frontmatter(text) == text
+
+
+def test_title_of_reads_the_original_frontmatter():
+    text = '---\ntitle: "Records"\nms.date: 06/05/2026\n---\n# X\n'
+    assert github_source.title_of(text) == "Records"
+
+
+def test_title_of_falls_back_to_the_first_heading():
+    assert github_source.title_of("# Flowcharts Syntax\n\nbody\n") == "Flowcharts Syntax"
+
+
+def test_title_of_returns_an_empty_string_when_there_is_neither():
+    assert github_source.title_of("body only\n") == ""
+
+
+def test_strip_liquid_removes_the_template_tags():
+    """github/docs には Liquid の記法が215箇所ある（実測 2026-09-13）。
+
+    取り込んでも記法の説明にならず、チャンクの本文を薄めるだけである。
+    """
+    text = "product: {% data reusables.gated-features.markdown-ui %}\ndone\n"
+    assert github_source.strip_liquid(text) == "product: \ndone\n"
+
+
+def test_strip_liquid_leaves_a_lone_brace_in_the_body():
+    """コード例の { を消してはいけない。"""
+    text = "int x = 1; { y }\n"
+    assert github_source.strip_liquid(text) == text
+
+
+def test_local_path_strips_the_prefix_the_configured_paths_share():
+    """docs_source/csharp/docs/csharp/... という二重の入れ子を避ける。
+
+    設定の paths が共有する一番深いディレクトリまでを落とす。csharp の10個の
+    paths は docs/csharp/ を共有するので、置き場所は
+    docs_source/csharp/language-reference/... になる（設計書5.3節）。
+    """
+    paths = ["docs/csharp/language-reference", "docs/csharp/linq"]
+    assert github_source.common_prefix(paths) == "docs/csharp"
+    assert (
+        github_source.local_path("docs/csharp/language-reference/keywords/a.md", paths)
+        == "language-reference/keywords/a.md"
+    )
+
+
+def test_local_path_strips_a_single_configured_path_entirely():
+    paths = ["packages/mermaid/src/docs"]
+    assert (
+        github_source.local_path("packages/mermaid/src/docs/syntax/flowchart.md", paths)
+        == "syntax/flowchart.md"
+    )
+
+
+def test_local_path_keeps_the_part_that_tells_the_two_paths_apart():
+    """go の _content/doc と _content/ref は _content までしか共有しない。"""
+    paths = ["_content/doc", "_content/ref"]
+    assert github_source.common_prefix(paths) == "_content"
+    assert github_source.local_path("_content/ref/mod.md", paths) == "ref/mod.md"
+
+
+def test_render_page_writes_the_frontmatter_with_the_commit_and_the_source_path():
+    source = github_source.GitHubSource(
+        name="csharp",
+        repo="dotnet/docs",
+        ref="main",
+        paths=("docs/csharp/linq",),
+        version="0.0.0",
+    )
+    rendered = github_source.render_page(
+        source,
+        commit="deadbeef",
+        page_path="docs/csharp/linq/a.md",
+        body="---\ntitle: Query\n---\n# Query\n\nbody\n",
+        fetched_at="2026-09-13",
+    )
+    assert rendered == (
+        "---\n"
+        "name: csharp\n"
+        "repo: dotnet/docs\n"
+        "ref: main\n"
+        "commit: deadbeef\n"
+        "source_path: docs/csharp/linq/a.md\n"
+        "title: Query\n"
+        "version: 0.0.0\n"
+        "fetched_at: 2026-09-13\n"
+        "---\n"
+        "# Query\n\nbody\n"
+    )
+
+
+def test_render_page_output_parses_as_markdown_with_the_attributes(tmp_path):
+    """ingest/parsers/md_parser.py がフロントマターを属性として読めること。
+
+    書き出した形が取り込み側の想定から外れていると、取り込みの段になって
+    初めて分かる。ここで繋げておく。
+    """
+    from ingest.parsers.md_parser import parse_md
+
+    source = github_source.GitHubSource(
+        name="mermaid",
+        repo="mermaid-js/mermaid",
+        ref="develop",
+        paths=("packages/mermaid/src/docs",),
+        version="0.0.0",
+    )
+    rendered = github_source.render_page(
+        source,
+        commit="abc",
+        page_path="packages/mermaid/src/docs/syntax/flowchart.md",
+        body="---\ntitle: Flowcharts Syntax\n---\n# Flowcharts\n\n## Nodes\n\nbody\n",
+        fetched_at="2026-09-13",
+    )
+    path = tmp_path / "flowchart.md"
+    path.write_text(rendered, encoding="utf-8")
+    units = parse_md(path)
+    assert units
+    assert units[0].attributes["name"] == "mermaid"
+    assert units[0].attributes["source_path"] == (
+        "packages/mermaid/src/docs/syntax/flowchart.md"
+    )
