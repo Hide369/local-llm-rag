@@ -17,7 +17,29 @@ from pathlib import Path
 from ingest.image_text import describe_image, has_caption, has_ocr
 from ingest.models import SECTION, ParsedUnit
 
-_FENCE = "```"
+# コードフェンスの行。CommonMarkの規則に合わせる。
+#
+# 行頭の ``` だけを見て状態を反転させていたときは、字下げされた開きフェンスを
+# 数えられなかった。MDX（LangChain・Streamlitのllms-full.txt）はタブの中で
+# コード例を字下げするため、開きが数えられず、対応する行頭の閉じだけが「開き」に
+# なって、そこから先がずっとフェンスの中になった。
+#
+# 実測 2026-09-13（docs_source/ と source/ の全Markdown、`## ` 計9,069件）:
+#   行頭だけを見る（当時の実装）  2,205件がフェンス内と誤判定
+#   字下げも含めて反転する          212件
+#   この規則                         80件  ← 残りはコード例の中の `## ` で、正しい
+# 社内資料（source/*.md 30件）はどの規則でも結果が変わらない（181セクションのまま）。
+#
+# 開きは情報文字列（```python など）を伴ってよい。閉じは開きと同数以上の
+# バッククォートだけの行でなければならない。閉じの条件を緩めて「後ろに何が
+# 続いても閉じる」ことにすると、本文中の ```javascript が閉じ扱いになって
+# 状態がずれる（実測では streamlit.md の失われる見出しが45件から176件へ悪化）。
+#
+# 残る80件のうち大半は ```markdown の中に書かれた見出しの例で、コードとして
+# 扱うのが正しい。streamlit.md には上流のHTMLが貼り付いた閉じフェンス
+# （```</div> など3件）があり、これを閉じ扱いにする案も測ったが、改善は
+# 80件→72件にとどまった。規則が場当たり的になるわりに見合わないので採らない。
+_FENCE_LINE = re.compile(r"^[ \t]*(?P<ticks>`{3,})(?P<info>.*)$")
 
 # ![alt](path) と ![alt](path "title")。altは空でもよい。パスに空白は許さない
 # （Markdownでは <> で囲む記法になるが、この資料群には現れない）。
@@ -202,14 +224,25 @@ def parse_md(path: Path, caption_image=None, on_missing_image=None, ocr_bytes=No
     heading: str = ""
     body: list[str] = []
     in_fence = False
+    # 開いたフェンスのバッククォートの数。閉じるにはこれ以上が要る。
+    fence_ticks = 0
     # 画像を読む手立てが1つも無いなら走査もしない。従来の取り込み結果と
     # 1バイトも変わらないことを保証するため。
     read_images = caption_image is not None or ocr_bytes is not None
 
     for line in body_lines:
-        if line.startswith(_FENCE):
-            in_fence = not in_fence
-        elif not in_fence:
+        fence = _FENCE_LINE.match(line)
+        if fence:
+            ticks = len(fence.group("ticks"))
+            if not in_fence:
+                in_fence, fence_ticks = True, ticks
+            elif ticks >= fence_ticks and not fence.group("info").strip():
+                in_fence = False
+            # フェンスの行そのものは本文に残す。見出し・タイトル・画像の
+            # いずれの判定にもかけない。
+            body.append(line)
+            continue
+        if not in_fence:
             if line.startswith("## "):
                 sections.append((heading, body))
                 heading, body = line[3:].strip(), []

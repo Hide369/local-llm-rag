@@ -425,3 +425,91 @@ def test_md_without_images_is_unchanged(tmp_path):
     text = parse_md(path, caption_image=lambda _blob: "図です。")[0].text
 
     assert text == "UD-0900i\n設置情報\n幅は600mmです。"
+
+
+def test_an_indented_fence_is_recognised_as_an_opening(tmp_path):
+    """MDXのタブの中でコードフェンスが字下げされる。
+
+    行頭の ``` しか見ていなかったとき、字下げされた開きが数えられず、対応する
+    行頭の閉じだけが「開き」として扱われて、そこから先がずっとフェンスの中に
+    なった。実測 2026-09-13: langchain-text-splitters.md の3,371個の `## ` の
+    うち2,001個（59%）が見出しとして扱われず、1つのセクションが5,122チャンクに
+    膨れた。出典は `kubectl get deployments` にまで `Dynamic interrupts` と
+    表示されていた。
+    """
+    fence = "`" * 3
+    text = (
+        "# タイトル\n\n## 最初の節\n\n"
+        f"    {fence}python\n    print(1)\n{fence}\n\n"
+        "## 次の節\n\n本文。\n"
+    )
+    units = parse_md(_write(tmp_path, text))
+    assert [u.heading for u in units] == ["最初の節", "次の節"]
+
+
+def test_a_closing_fence_needs_at_least_as_many_backticks(tmp_path):
+    """4個のフェンスの中に3個のフェンスを入れ子にできる。
+
+    Markdownの書き方を説明する資料はこの形でコード例を示す。内側で閉じたことに
+    すると、以降の見出しがすべてずれる。
+    """
+    outer, inner = "`" * 4, "`" * 3
+    text = (
+        "# タイトル\n\n## 記法\n\n"
+        f"{outer}\n{inner}python\nprint(1)\n{inner}\n{outer}\n\n"
+        "## 次の節\n\n本文。\n"
+    )
+    units = parse_md(_write(tmp_path, text))
+    assert [u.heading for u in units] == ["記法", "次の節"]
+
+
+def test_a_fence_with_trailing_text_does_not_close(tmp_path):
+    """閉じフェンスの行に文字が続いていたら閉じたとみなさない。
+
+    実測 2026-09-13: streamlit.md には ```` ```</div> ```` という行があり、
+    上流のHTMLが混ざった形になっている。CommonMarkでは閉じフェンスに情報文字列を
+    書けないので、これは閉じない。緩めて「後ろに何があっても閉じる」ことにすると、
+    今度は本文中の ```javascript が閉じ扱いになって状態がずれる（実測では
+    失われる見出しが45件から176件へ悪化した）。
+    """
+    fence = "`" * 3
+    text = (
+        "# タイトル\n\n## 節\n\n"
+        f"{fence}javascript\nalert(1);\n{fence}</div>\n\n"
+        "## 閉じていないので見出しにならない\n\n本文。\n"
+    )
+    units = parse_md(_write(tmp_path, text))
+    assert [u.heading for u in units] == ["節"]
+
+
+def test_a_heading_shown_as_an_example_inside_a_fence_stays_code(tmp_path):
+    """Markdownの書き方そのものを説明する資料がある（GitHubのMarkdownドキュメント）。
+
+    そこに出てくる `## 見出し` はコード例であって見出しではない。フェンスの
+    追跡を直したあとも、この区別は保たれていなければならない。
+    """
+    fence = "`" * 3
+    text = (
+        "# 書き方\n\n## 見出しの書き方\n\n"
+        f"{fence}markdown\n## これは例です\n{fence}\n\n"
+        "## 次の節\n\n本文。\n"
+    )
+    units = parse_md(_write(tmp_path, text))
+    assert [u.heading for u in units] == ["見出しの書き方", "次の節"]
+    assert "## これは例です" in units[0].text
+
+
+def test_an_unclosed_indented_fence_does_not_swallow_the_rest(tmp_path):
+    """字下げされたフェンスが閉じられないまま残ることがある。
+
+    行頭の閉じで閉じられること自体が、この壊れ方の実際の直り方である
+    （開きが字下げ、閉じが行頭という組み合わせが langchain の形）。
+    """
+    fence = "`" * 3
+    text = (
+        "# タイトル\n\n## 節\n\n"
+        f"  {fence}\n  code\n  {fence}\n\n"
+        "## 次の節\n\n本文。\n"
+    )
+    units = parse_md(_write(tmp_path, text))
+    assert [u.heading for u in units] == ["節", "次の節"]
