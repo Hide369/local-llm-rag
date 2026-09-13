@@ -127,3 +127,12 @@ def test_stream_chat_raises_when_the_connection_fails():
     session = _FakeSession([requests.ConnectionError("refused")])
     with pytest.raises(ChatError):
         list(stream_chat("m", [], 0.3, session=session))
+
+
+def test_ask_json_accepts_custom_context_size():
+    """Cowork は添付ファイルを丸ごと渡すため 8192 では足りない。呼び出し側で指定できる。"""
+    session = _FakeSession([_reply('{"ok": true}')])
+    result = ask_json("qwen2.5:7b-instruct", "prompt", session=session, num_ctx=32768)
+    assert result == '{"ok": true}'
+    payload = session.payloads[0]
+    assert payload["options"]["num_ctx"] == 32768
