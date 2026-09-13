@@ -2504,27 +2504,42 @@ if mode == MODE_COWORK:
             "空欄は {{会議名}} のように書きます。"
         )
     else:
+        # 生成の最中はどのウィジェットも触らせない。触るとその場で再実行が
+        # 走り、走っていた生成は中断されたうえ、雛形や参照先が入れ替わった
+        # 状態で同じ質問が送り直される。サイドバーのコーパス切り替えを
+        # generating で止めているのと同じ理由である。
         left, right = st.columns([3, 1])
         template_path = left.selectbox(
-            "雛形", available, format_func=lambda path: path.name, key="template"
+            "雛形",
+            available,
+            format_func=lambda path: path.name,
+            key="template",
+            disabled=st.session_state.generating,
         )
-        if right.button("雛形を登録・削除"):
+        if right.button("雛形を登録・削除", disabled=st.session_state.generating):
             st.session_state.template_dialog_open = True
         # どの資料を引くかは雛形と依頼で決まるので、利用者に選ばせる。
         # 技術ドキュメントを入れると英訳のLLM呼び出しが1回と検索が1本増え、
         # 生成が30〜60秒遅くなる。要らない回に払う理由がない。
         corpora = st.columns(2)
         use_internal = corpora[0].checkbox(
-            "社内資料を参照", value=True, key="cowork_internal"
+            "社内資料を参照",
+            value=True,
+            key="cowork_internal",
+            disabled=st.session_state.generating,
         )
         use_docs = corpora[1].checkbox(
-            "技術ドキュメントを参照", value=False, key="cowork_docs"
+            "技術ドキュメントを参照",
+            value=False,
+            key="cowork_docs",
+            disabled=st.session_state.generating,
         )
         attached = st.file_uploader(
             "添付（この回だけ使い、DBには入れません）",
             type=sorted(suffix.lstrip(".") for suffix in SUPPORTED_SUFFIXES),
             accept_multiple_files=True,
             key="cowork_files",
+            disabled=st.session_state.generating,
         )
         attachments = attached or []
 
@@ -2535,7 +2550,12 @@ if st.session_state.get("template_dialog_open"):
 生成の処理は、既存の `if st.session_state.generating:` の中で `mode` により分岐させる。
 
 ```python
-    if mode == MODE_COWORK and template_path is not None:
+    if mode == MODE_COWORK and template_path is None:
+        # 雛形が無いまま Cowork で送られたら、黙ってチャットの回答を返さない。
+        # 利用者は Cowork のつもりで読むため、どこから来た答えなのかを
+        # 取り違える。
+        st.error("雛形が登録されていません。先に「雛形を登録・削除」から登録してください。")
+    elif mode == MODE_COWORK:
         names = docgen.placeholders(template_path)
         if not names:
             st.error(
