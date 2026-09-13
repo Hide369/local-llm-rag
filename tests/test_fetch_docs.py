@@ -8,14 +8,18 @@ import sys
 import pytest
 import requests
 
-from scripts import fetch_docs
+from scripts import fetch_docs, github_source
 
 
 class _FakeResponse:
-    def __init__(self, status_code, text="", content_type="text/plain"):
+    def __init__(self, status_code, text="", content_type="text/plain", payload=None):
         self.status_code = status_code
         self.text = text
         self.headers = {"Content-Type": content_type}
+        self._payload = payload
+
+    def json(self):
+        return self._payload
 
     def raise_for_status(self):
         if self.status_code >= 400:
@@ -37,7 +41,7 @@ class _FakeSession:
 
 
 def _source(name="streamlit", url="https://example.test/llms-full.txt", version="1.0"):
-    return fetch_docs.DocSource(name=name, url=url, version=version)
+    return fetch_docs.LlmsSource(name=name, url=url, version=version)
 
 
 def test_load_sources_reads_the_name_url_and_version(tmp_path):
@@ -49,7 +53,7 @@ def test_load_sources_reads_the_name_url_and_version(tmp_path):
     )
     sources = fetch_docs.load_sources(config)
     assert sources == [
-        fetch_docs.DocSource(
+        fetch_docs.LlmsSource(
             name="streamlit", url="https://example.test/llms-full.txt", version="1.61.1"
         )
     ]
@@ -154,9 +158,9 @@ def test_the_written_file_parses_as_markdown_with_the_attributes(tmp_path):
 
 def test_run_reports_updated_unchanged_and_failed(tmp_path):
     sources = [
-        fetch_docs.DocSource("a", "https://a.test/llms-full.txt", "1"),
-        fetch_docs.DocSource("b", "https://b.test/llms-full.txt", "2"),
-        fetch_docs.DocSource("c", "https://c.test/llms-full.txt", "3"),
+        fetch_docs.LlmsSource("a", "https://a.test/llms-full.txt", "1"),
+        fetch_docs.LlmsSource("b", "https://b.test/llms-full.txt", "2"),
+        fetch_docs.LlmsSource("c", "https://c.test/llms-full.txt", "3"),
     ]
     session = _FakeSession(
         {
@@ -181,9 +185,9 @@ def test_run_continues_after_a_failure(tmp_path):
     更新できなくなる。ingest_source.py の _ingest_one と同じ方針。
     """
     sources = [
-        fetch_docs.DocSource("a", "https://a.test/llms-full.txt", "1"),
-        fetch_docs.DocSource("b", "https://b.test/llms-full.txt", "2"),
-        fetch_docs.DocSource("c", "https://c.test/llms-full.txt", "3"),
+        fetch_docs.LlmsSource("a", "https://a.test/llms-full.txt", "1"),
+        fetch_docs.LlmsSource("b", "https://b.test/llms-full.txt", "2"),
+        fetch_docs.LlmsSource("c", "https://c.test/llms-full.txt", "3"),
     ]
     session = _FakeSession(
         {
@@ -204,7 +208,7 @@ def test_run_records_the_sources_that_only_yielded_an_index(tmp_path):
     report ではなく notify の出力しか目にしないため、そちらで警告が
     読めなければ「本文が取れていない」ことに気づけない。
     """
-    sources = [fetch_docs.DocSource("a", "https://a.test/llms-full.txt", "1")]
+    sources = [fetch_docs.LlmsSource("a", "https://a.test/llms-full.txt", "1")]
     session = _FakeSession({"https://a.test/llms.txt": _FakeResponse(200, "- [x](/x)\n")})
     messages = []
     report = fetch_docs.run(
@@ -223,9 +227,9 @@ def test_run_continues_after_a_write_failure(tmp_path, monkeypatch):
     fetch の失敗と同じ扱いにすることを monkeypatch で確かめる。
     """
     sources = [
-        fetch_docs.DocSource("a", "https://a.test/llms-full.txt", "1"),
-        fetch_docs.DocSource("b", "https://b.test/llms-full.txt", "2"),
-        fetch_docs.DocSource("c", "https://c.test/llms-full.txt", "3"),
+        fetch_docs.LlmsSource("a", "https://a.test/llms-full.txt", "1"),
+        fetch_docs.LlmsSource("b", "https://b.test/llms-full.txt", "2"),
+        fetch_docs.LlmsSource("c", "https://c.test/llms-full.txt", "3"),
     ]
     session = _FakeSession(
         {
@@ -252,7 +256,7 @@ def test_run_continues_after_a_write_failure(tmp_path, monkeypatch):
 
 
 def test_run_notifies_progress_per_source(tmp_path):
-    sources = [fetch_docs.DocSource("a", "https://a.test/llms-full.txt", "1")]
+    sources = [fetch_docs.LlmsSource("a", "https://a.test/llms-full.txt", "1")]
     session = _FakeSession({"https://a.test/llms-full.txt": _FakeResponse(200, "A\n")})
     messages = []
     fetch_docs.run(sources, tmp_path, "2026-09-12", session=session, notify=messages.append)
@@ -374,8 +378,8 @@ def test_an_html_response_is_reported_as_a_failure_not_written(tmp_path):
     run() は1件の失敗で止まらないので、他のライブラリの取得は続く。
     """
     sources = [
-        fetch_docs.DocSource("a", "https://a.test/llms-full.txt", "1"),
-        fetch_docs.DocSource("b", "https://b.test/llms-full.txt", "2"),
+        fetch_docs.LlmsSource("a", "https://a.test/llms-full.txt", "1"),
+        fetch_docs.LlmsSource("b", "https://b.test/llms-full.txt", "2"),
     ]
     session = _FakeSession(
         {
@@ -388,3 +392,328 @@ def test_an_html_response_is_reported_as_a_failure_not_written(tmp_path):
     assert list(report.failed) == ["a"]
     assert report.updated == ["b"]
     assert not (tmp_path / "a.md").exists()
+
+
+def test_load_sources_defaults_to_the_llms_kind(tmp_path):
+    """kind を書かない既存の設定は、今までどおり LlmsSource になる。
+
+    docs_sources.toml の既存6件は1行も編集しない方針である（設計書5.1節）。
+    既定が変わると、その6件が黙って別の経路に入る。
+    """
+    config = tmp_path / "docs_sources.toml"
+    config.write_text(
+        '[[source]]\nname = "streamlit"\n'
+        'url = "https://example.test/llms-full.txt"\nversion = "1.61.1"\n',
+        encoding="utf-8",
+    )
+    assert fetch_docs.load_sources(config) == [
+        fetch_docs.LlmsSource(
+            name="streamlit", url="https://example.test/llms-full.txt", version="1.61.1"
+        )
+    ]
+
+
+def test_load_sources_reads_a_github_source(tmp_path):
+    config = tmp_path / "docs_sources.toml"
+    config.write_text(
+        '[[source]]\nname = "csharp"\nkind = "github"\n'
+        'repo = "dotnet/docs"\nref = "main"\n'
+        'paths = ["docs/csharp/language-reference", "docs/csharp/linq"]\n'
+        'resolve_code_refs = true\nversion = "0.0.0"\n',
+        encoding="utf-8",
+    )
+    assert fetch_docs.load_sources(config) == [
+        github_source.GitHubSource(
+            name="csharp",
+            repo="dotnet/docs",
+            ref="main",
+            paths=("docs/csharp/language-reference", "docs/csharp/linq"),
+            version="0.0.0",
+            resolve_code_refs=True,
+        )
+    ]
+
+
+def test_load_sources_defaults_resolve_code_refs_to_false(tmp_path):
+    """:::code の解決は明示的に有効にしたソースでだけ走る（設計書5.4節）。
+
+    参照を辿るのは AGENTS.md の「ページ内のリンクは辿らない」と関わる。
+    既定で有効にすると、設定を書いた人が気付かないまま辿ることになる。
+    """
+    config = tmp_path / "docs_sources.toml"
+    config.write_text(
+        '[[source]]\nname = "mermaid"\nkind = "github"\n'
+        'repo = "mermaid-js/mermaid"\nref = "develop"\n'
+        'paths = ["packages/mermaid/src/docs"]\nversion = "0.0.0"\n',
+        encoding="utf-8",
+    )
+    assert fetch_docs.load_sources(config)[0].resolve_code_refs is False
+
+
+def test_load_sources_rejects_a_github_key_on_an_llms_source(tmp_path):
+    """黙って無視すると、設定を直したつもりの人が直っていないことに気付けない。"""
+    config = tmp_path / "docs_sources.toml"
+    config.write_text(
+        '[[source]]\nname = "streamlit"\n'
+        'url = "https://example.test/llms-full.txt"\n'
+        'repo = "dotnet/docs"\nversion = "1.0.0"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="repo"):
+        fetch_docs.load_sources(config)
+
+
+def test_load_sources_rejects_a_url_on_a_github_source(tmp_path):
+    config = tmp_path / "docs_sources.toml"
+    config.write_text(
+        '[[source]]\nname = "csharp"\nkind = "github"\n'
+        'repo = "dotnet/docs"\nref = "main"\npaths = ["docs/csharp"]\n'
+        'url = "https://example.test/llms-full.txt"\nversion = "0.0.0"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="url"):
+        fetch_docs.load_sources(config)
+
+
+def test_load_sources_rejects_an_unknown_kind(tmp_path):
+    config = tmp_path / "docs_sources.toml"
+    config.write_text(
+        '[[source]]\nname = "x"\nkind = "ftp"\nversion = "0.0.0"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="ftp"):
+        fetch_docs.load_sources(config)
+
+
+def test_write_page_if_changed_creates_the_nested_directories(tmp_path):
+    written = fetch_docs.write_page_if_changed(
+        "csharp/linq/a.md", "---\nname: csharp\n---\n# A\n", tmp_path
+    )
+    assert written is True
+    assert (tmp_path / "csharp" / "linq" / "a.md").read_text(encoding="utf-8") == (
+        "---\nname: csharp\n---\n# A\n"
+    )
+
+
+def test_write_page_if_changed_does_not_rewrite_an_unchanged_body(tmp_path):
+    """fetched_at はフロントマターにある。含めて比べると、内容が同じでも
+    取得日が違えば必ず「変わった」ことになり、差分検知が意味をなさなくなる。"""
+    first = "---\nname: csharp\nfetched_at: 2026-09-13\n---\n# A\n"
+    second = "---\nname: csharp\nfetched_at: 2026-09-20\n---\n# A\n"
+    assert fetch_docs.write_page_if_changed("csharp/a.md", first, tmp_path) is True
+    assert fetch_docs.write_page_if_changed("csharp/a.md", second, tmp_path) is False
+
+
+def test_write_page_if_changed_rewrites_a_changed_body(tmp_path):
+    fetch_docs.write_page_if_changed("csharp/a.md", "---\nname: c\n---\n# A\n", tmp_path)
+    assert (
+        fetch_docs.write_page_if_changed("csharp/a.md", "---\nname: c\n---\n# B\n", tmp_path)
+        is True
+    )
+
+
+def test_write_page_if_changed_rejects_a_parent_directory_reference(tmp_path):
+    """木の内容は設定ファイルと違ってバージョン管理下に無い入力である。
+
+    name だけでなく、GitHub から来るパスにも同じ検査を通す（設計書5.3節）。
+    """
+    with pytest.raises(ValueError):
+        fetch_docs.write_page_if_changed("csharp/../../evil.md", "x", tmp_path)
+
+
+_CSHARP = github_source.GitHubSource(
+    name="csharp",
+    repo="dotnet/docs",
+    ref="main",
+    paths=("docs/csharp/linq",),
+    version="0.0.0",
+    resolve_code_refs=True,
+)
+
+_TREE = "https://api.github.com/repos/dotnet/docs/git/trees/main?recursive=1"
+_RAW = "https://raw.githubusercontent.com/dotnet/docs/main"
+
+
+def _tree_response(paths, sha="abc", truncated=False):
+    return _FakeResponse(
+        200,
+        payload={
+            "sha": sha,
+            "truncated": truncated,
+            "tree": [{"path": path, "type": "blob"} for path in paths],
+        },
+    )
+
+
+def test_run_writes_one_file_per_page_under_the_source_name(tmp_path):
+    session = _FakeSession(
+        {
+            _TREE: _tree_response(["docs/csharp/linq/a.md", "docs/csharp/linq/b.md"]),
+            f"{_RAW}/docs/csharp/linq/a.md": _FakeResponse(200, "# A\n"),
+            f"{_RAW}/docs/csharp/linq/b.md": _FakeResponse(200, "# B\n"),
+        }
+    )
+    report = fetch_docs.run([_CSHARP], tmp_path, "2026-09-13", session=session)
+    assert report.pages_written == {"csharp": 2}
+    # _CSHARP の paths は ("docs/csharp/linq",) の1つだけなので、共通部分は
+    # それ自身になる。置き場所は docs_source/csharp/a.md である。
+    assert (tmp_path / "csharp" / "a.md").is_file()
+
+
+def test_run_resolves_code_references_when_the_source_enables_it(tmp_path):
+    session = _FakeSession(
+        {
+            _TREE: _tree_response(
+                ["docs/csharp/linq/a.md", "docs/csharp/linq/snippets/P.cs"]
+            ),
+            f"{_RAW}/docs/csharp/linq/a.md": _FakeResponse(
+                200, ':::code language="csharp" source="snippets/P.cs":::\n'
+            ),
+            f"{_RAW}/docs/csharp/linq/snippets/P.cs": _FakeResponse(200, "int x = 1;\n"),
+        }
+    )
+    fetch_docs.run([_CSHARP], tmp_path, "2026-09-13", session=session)
+    written = (tmp_path / "csharp" / "a.md").read_text(encoding="utf-8")
+    assert "```csharp\nint x = 1;\n```" in written
+    assert ":::code" not in written
+
+
+def test_run_does_not_resolve_code_references_when_the_source_disables_it(tmp_path):
+    """既定は無効である。設定に書いていないソースで参照を辿ってはいけない。"""
+    source = github_source.GitHubSource(
+        name="go",
+        repo="golang/website",
+        ref="master",
+        paths=("_content/doc",),
+        version="0.0.0",
+    )
+    tree = "https://api.github.com/repos/golang/website/git/trees/master?recursive=1"
+    raw = "https://raw.githubusercontent.com/golang/website/master"
+    directive = ':::code language="csharp" source="snippets/P.cs":::\n'
+    session = _FakeSession(
+        {
+            tree: _tree_response(["_content/doc/a.md", "_content/doc/snippets/P.cs"]),
+            f"{raw}/_content/doc/a.md": _FakeResponse(200, directive),
+            f"{raw}/_content/doc/snippets/P.cs": _FakeResponse(200, "int x = 1;\n"),
+        }
+    )
+    fetch_docs.run([source], tmp_path, "2026-09-13", session=session)
+    written = (tmp_path / "go" / "a.md").read_text(encoding="utf-8")
+    assert ":::code" in written
+    assert f"{raw}/_content/doc/snippets/P.cs" not in session.urls
+
+
+def test_run_reports_unresolved_code_references(tmp_path):
+    session = _FakeSession(
+        {
+            _TREE: _tree_response(["docs/csharp/linq/a.md"]),
+            f"{_RAW}/docs/csharp/linq/a.md": _FakeResponse(
+                200, ':::code language="csharp" source="snippets/Missing.cs":::\n'
+            ),
+        }
+    )
+    report = fetch_docs.run([_CSHARP], tmp_path, "2026-09-13", session=session)
+    assert report.unresolved_code_refs == {"csharp": 1}
+
+
+def test_run_continues_after_a_single_page_fails(tmp_path):
+    """土台（木）は取れているので、残りのページは使える（設計書5.2節）。"""
+    session = _FakeSession(
+        {
+            _TREE: _tree_response(["docs/csharp/linq/a.md", "docs/csharp/linq/b.md"]),
+            f"{_RAW}/docs/csharp/linq/a.md": _FakeResponse(500),
+            f"{_RAW}/docs/csharp/linq/b.md": _FakeResponse(200, "# B\n"),
+        }
+    )
+    report = fetch_docs.run([_CSHARP], tmp_path, "2026-09-13", session=session)
+    assert report.pages_written == {"csharp": 1}
+    assert report.pages_failed == {"csharp": 1}
+    assert "csharp" not in report.failed
+
+
+def test_run_fails_the_whole_source_when_the_tree_is_truncated(tmp_path):
+    """木が欠けていれば、どのページが抜けたかも分からない。"""
+    session = _FakeSession({_TREE: _tree_response(["docs/csharp/linq/a.md"], truncated=True)})
+    report = fetch_docs.run([_CSHARP], tmp_path, "2026-09-13", session=session)
+    assert "csharp" in report.failed
+    assert report.pages_written == {}
+
+
+def test_run_continues_to_the_next_source_after_a_tree_failure(tmp_path):
+    llms = fetch_docs.LlmsSource("a", "https://a.test/llms-full.txt", "1")
+    session = _FakeSession(
+        {
+            "https://a.test/llms-full.txt": _FakeResponse(200, "# A\n"),
+        }
+    )
+    report = fetch_docs.run([_CSHARP, llms], tmp_path, "2026-09-13", session=session)
+    assert "csharp" in report.failed
+    assert report.updated == ["a"]
+
+
+def test_run_counts_a_github_source_as_unchanged_when_no_page_changed(tmp_path):
+    session = _FakeSession(
+        {
+            _TREE: _tree_response(["docs/csharp/linq/a.md"]),
+            f"{_RAW}/docs/csharp/linq/a.md": _FakeResponse(200, "# A\n"),
+        }
+    )
+    fetch_docs.run([_CSHARP], tmp_path, "2026-09-13", session=session)
+    report = fetch_docs.run([_CSHARP], tmp_path, "2026-09-20", session=session)
+    assert report.unchanged == ["csharp"]
+    assert report.pages_written == {"csharp": 0}
+
+
+def test_the_real_config_file_loads():
+    """docs_sources.toml は手で編集するファイルである。壊れたまま気付かないと、
+    取得を走らせたときに初めて分かる。"""
+    sources = fetch_docs.load_sources(fetch_docs.DEFAULT_CONFIG)
+    assert [source.name for source in sources] == [
+        "streamlit",
+        "langchain-text-splitters",
+        "ollama",
+        "huggingface_hub",
+        "pymupdf",
+        "mcp",
+        "csharp",
+        "go",
+        "mermaid",
+        "markdown",
+    ]
+    by_name = {source.name: source for source in sources}
+    assert by_name["csharp"].resolve_code_refs is True
+    assert by_name["go"].resolve_code_refs is False
+    assert by_name["streamlit"].url == "https://docs.streamlit.io/llms-full.txt"
+
+
+def test_write_page_if_changed_writes_a_page_whose_body_is_empty(tmp_path):
+    """「ファイルが無い」と「本文が空」は違う。
+
+    どちらも空文字のダイジェストになるため、区別しないと本文の無いページが
+    黙って書かれないまま残る。実測 2026-09-13: go の96ページ中8件、mermaid と
+    markdown の index.md がこれで、報告には出ないまま消えていた。
+    """
+    written = fetch_docs.write_page_if_changed(
+        "go/doc/copyright.md", "---\nname: go\n---\n", tmp_path
+    )
+    assert written is True
+    assert (tmp_path / "go" / "doc" / "copyright.md").is_file()
+
+
+def test_run_reports_pages_that_carry_no_body(tmp_path):
+    """本文の無いページは取り込んでも0チャンクにしかならないので書かない。
+
+    ただし黙って落とさず数える。選別したページ数と書き出したページ数が
+    説明なく食い違うと、取りこぼしと区別が付かない。
+    """
+    session = _FakeSession(
+        {
+            _TREE: _tree_response(["docs/csharp/linq/a.md", "docs/csharp/linq/i.md"]),
+            f"{_RAW}/docs/csharp/linq/a.md": _FakeResponse(200, "# A\n"),
+            f"{_RAW}/docs/csharp/linq/i.md": _FakeResponse(200, "---\nredirect: /x\n---\n"),
+        }
+    )
+    report = fetch_docs.run([_CSHARP], tmp_path, "2026-09-13", session=session)
+    assert report.pages_written == {"csharp": 1}
+    assert report.pages_empty == {"csharp": 1}
+    assert not (tmp_path / "csharp" / "i.md").exists()

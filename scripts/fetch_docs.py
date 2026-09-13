@@ -16,6 +16,8 @@ from pathlib import Path
 
 import requests
 
+from scripts import code_references, github_source
+
 _ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = _ROOT / "docs_sources.toml"
 DEFAULT_OUT_DIR = _ROOT / "docs_source"
@@ -26,19 +28,55 @@ _TIMEOUT = 60
 
 
 @dataclass(frozen=True)
-class DocSource:
+class LlmsSource:
+    """`llms-full.txt` を1本の URL から取るソース（`kind = "llms"`、既定）。"""
+
     name: str
     url: str
     version: str
 
 
-def load_sources(path: Path = DEFAULT_CONFIG) -> list[DocSource]:
+# kind ごとに「使ってよいキー」を決めておく。混ざった設定を黙って無視すると、
+# 設定を直したつもりの人が直っていないことに気付けない。
+_LLMS_ONLY = ("url",)
+_GITHUB_ONLY = ("repo", "ref", "paths", "resolve_code_refs")
+
+
+def load_sources(path: Path = DEFAULT_CONFIG) -> list:
+    """docs_sources.toml を読む。kind で LlmsSource か GitHubSource になる。"""
     with path.open("rb") as handle:
         config = tomllib.load(handle)
-    return [
-        DocSource(name=entry["name"], url=entry["url"], version=str(entry["version"]))
-        for entry in config.get("source", [])
-    ]
+    return [_source_of(entry) for entry in config.get("source", [])]
+
+
+def _source_of(entry: dict):
+    kind = entry.get("kind", "llms")
+    name = entry["name"]
+    version = str(entry["version"])
+    if kind == "llms":
+        _reject(entry, _GITHUB_ONLY, name, kind)
+        return LlmsSource(name=name, url=entry["url"], version=version)
+    if kind == "github":
+        _reject(entry, _LLMS_ONLY, name, kind)
+        return github_source.GitHubSource(
+            name=name,
+            repo=entry["repo"],
+            ref=entry["ref"],
+            paths=tuple(entry["paths"]),
+            version=version,
+            resolve_code_refs=bool(entry.get("resolve_code_refs", False)),
+        )
+    raise ValueError(
+        f'{name} の kind が不明です: {kind!r}（使えるのは "llms" か "github"）'
+    )
+
+
+def _reject(entry: dict, forbidden, name: str, kind: str) -> None:
+    found = [key for key in forbidden if key in entry]
+    if found:
+        raise ValueError(
+            f'{name} は kind = "{kind}" なので {"、".join(found)} は書けません'
+        )
 
 
 def _index_url(url: str) -> str:
@@ -81,7 +119,7 @@ def _looks_like_html(text: str, content_type: str) -> bool:
     return text.lstrip()[:200].lower().startswith(_HTML_PREFIXES)
 
 
-def fetch(source: DocSource, session=None) -> tuple[str, bool]:
+def fetch(source: LlmsSource, session=None) -> tuple[str, bool]:
     """本文と、目次に落ちたかどうかを返す。
 
     llms.txt は各ページへのリンクの目次であって本文ではない（実測 2026-09-12:
@@ -115,7 +153,7 @@ def _checked(response, url: str) -> str:
     return response.text
 
 
-def _frontmatter(source: DocSource, fetched_at: str) -> str:
+def _frontmatter(source: LlmsSource, fetched_at: str) -> str:
     return (
         "---\n"
         f"name: {source.name}\n"
@@ -126,24 +164,47 @@ def _frontmatter(source: DocSource, fetched_at: str) -> str:
     )
 
 
-def _body_of(path: Path) -> str:
-    """書き出し済みファイルから本文だけを取り出す。無ければ空文字。
+def _without_frontmatter(text: str) -> str:
+    """フロントマターを飛ばして本文だけを返す。
 
-    フロントマターを飛ばすのは、そこに fetched_at が入っているためである。
-    含めて比べると、内容が同じでも取得日が違えば必ず「変わった」ことになり、
-    差分検知が意味をなさなくなる。
+    飛ばすのは、そこに fetched_at が入っているためである。含めて比べると、
+    内容が同じでも取得日が違えば必ず「変わった」ことになり、差分検知が
+    意味をなさなくなる。
     """
-    if not path.is_file():
-        return ""
-    text = path.read_text(encoding="utf-8")
     if not text.startswith("---\n"):
         return text
     _, _, rest = text[4:].partition("---\n")
     return rest
 
 
+def _body_of(path: Path) -> str:
+    """書き出し済みファイルから本文だけを取り出す。無ければ空文字。"""
+    if not path.is_file():
+        return ""
+    return _without_frontmatter(path.read_text(encoding="utf-8"))
+
+
+def write_page_if_changed(relative_path: str, text: str, out_dir: Path) -> bool:
+    """1ページを書く。本文が変わっていなければ書かずに False を返す。
+
+    text にはフロントマターを含めて渡す。比べるのは本文だけである。
+    """
+    # 木の内容は設定ファイルと違ってバージョン管理下に無い入力である。
+    # ".." を含むパスを素通しすると out_dir の外へ書き出せてしまう。
+    if ".." in relative_path.split("/") or relative_path.startswith("/"):
+        raise ValueError(f"ページのパスが不正です: {relative_path!r}")
+    path = out_dir / relative_path
+    # 「ファイルが無い」と「本文が空」を区別する。どちらも空文字のダイジェストに
+    # なるため、存在を先に見ないと本文の無いページが黙って書かれないまま残る。
+    if path.is_file() and _digest(_body_of(path)) == _digest(_without_frontmatter(text)):
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return True
+
+
 def write_if_changed(
-    source: DocSource, body: str, out_dir: Path, fetched_at: str
+    source: LlmsSource, body: str, out_dir: Path, fetched_at: str
 ) -> bool:
     """本文が変わっていれば書く。書いたら True。"""
     # name はそのままファイル名に使う。docs_sources.toml の name に
@@ -174,36 +235,116 @@ class FetchReport:
     failed: dict[str, str] = field(default_factory=dict)
     # llms-full.txt が無く llms.txt に落ちたもの。取り込んでも目次しか入らない。
     index_only: list[str] = field(default_factory=list)
+    # GitHub ソースの内訳。ソース単位の updated/unchanged では、1,000ページの
+    # うち何ページが書かれたか・落ちたかが分からない。
+    pages_written: dict[str, int] = field(default_factory=dict)
+    pages_failed: dict[str, int] = field(default_factory=dict)
+    # フロントマターだけで本文の無いページ。取り込んでも0チャンクにしかならない
+    # ので書かないが、黙って落とすと選別数と書き出し数が説明なく食い違う。
+    pages_empty: dict[str, int] = field(default_factory=dict)
+    # 解決できなかった :::code。黙って落とすと、コードの入っていないページが
+    # 混ざったことに気付けない。
+    unresolved_code_refs: dict[str, int] = field(default_factory=dict)
 
 
 def run(sources, out_dir: Path, fetched_at: str, session=None, notify=None) -> FetchReport:
     report = FetchReport()
     say = notify or (lambda _message: None)
     for source in sources:
-        say(f"取得中: {source.name} — {source.url}")
         try:
-            # fetch と write_if_changed の両方をここに含める。書き込み側だけ
-            # 外に出すと、ディスク満杯や権限エラーがここで拾われずに run() の
-            # 外へ抜けてしまい、残りのソースが一切試されなくなる
-            # （仕様書5.2節「1件が失敗しても残りを続ける」はfetchに限定していない）。
-            body, fell_back = fetch(source, session=session)
-            if fell_back:
-                report.index_only.append(source.name)
-                say(
-                    f"警告: {source.name} は llms-full.txt が無く llms.txt に落ちました。"
-                    "取り込めるのはリンクの目次だけで、記法の質問には答えられません"
-                )
-            if write_if_changed(source, body, out_dir, fetched_at):
-                report.updated.append(source.name)
-                say(f"更新: {source.name}（{len(body.encode('utf-8'))}バイト）")
+            if isinstance(source, github_source.GitHubSource):
+                _run_github(source, out_dir, fetched_at, session, say, report)
             else:
-                report.unchanged.append(source.name)
-                say(f"変更なし: {source.name}")
+                _run_llms(source, out_dir, fetched_at, session, say, report)
         except Exception as error:  # 1件の失敗で残りを止めない
             report.failed[source.name] = str(error)
             say(f"失敗: {source.name} — {error}")
             continue
     return report
+
+
+def _run_llms(source, out_dir, fetched_at, session, say, report) -> None:
+    """`llms-full.txt` を1本取って1ファイルに書く。
+
+    fetch と write_if_changed の両方を呼び出し元の try の中に置く。書き込み側
+    だけ外に出すと、ディスク満杯や権限エラーが拾われずに run() の外へ抜けて
+    しまい、残りのソースが一切試されなくなる（設計書5.2節「1件が失敗しても
+    残りを続ける」は fetch に限定していない）。
+    """
+    say(f"取得中: {source.name} — {source.url}")
+    body, fell_back = fetch(source, session=session)
+    if fell_back:
+        report.index_only.append(source.name)
+        say(
+            f"警告: {source.name} は llms-full.txt が無く llms.txt に落ちました。"
+            "取り込めるのはリンクの目次だけで、記法の質問には答えられません"
+        )
+    if write_if_changed(source, body, out_dir, fetched_at):
+        report.updated.append(source.name)
+        say(f"更新: {source.name}（{len(body.encode('utf-8'))}バイト）")
+    else:
+        report.unchanged.append(source.name)
+        say(f"変更なし: {source.name}")
+
+
+def _run_github(source, out_dir, fetched_at, session, say, report) -> None:
+    """1ソース分のページを取って書く。
+
+    木の取得の失敗と truncated は呼び出し元へ抜けさせ、ソース全体の失敗に
+    する。土台が無ければ、どのページが抜けたかも分からないためである。
+    1ページの取得失敗はここで飲み込み、残りのページを続ける。
+    """
+    say(f"取得中: {source.name} — {source.repo}@{source.ref}")
+    active = session or requests
+    tree = github_source.fetch_tree(source.repo, source.ref, active)
+    pages = github_source.select_pages(tree, source.paths)
+    say(f"{source.name}: {len(pages)}ページ（commit {tree.commit[:10]}）")
+
+    blob_paths = set(tree.paths)
+    written = failed = unresolved = empty = 0
+    for page_path in pages:
+        try:
+            body = github_source.fetch_blob(source.repo, source.ref, page_path, active)
+        except Exception as error:
+            failed += 1
+            say(f"警告: {source.name} の {page_path} を取得できません — {error}")
+            continue
+        body = github_source.strip_liquid(body)
+        if source.resolve_code_refs:
+            body, missed = code_references.resolve_code_references(
+                body,
+                page_path,
+                blob_paths,
+                lambda path: github_source.fetch_blob(
+                    source.repo, source.ref, path, active
+                ),
+            )
+            unresolved += missed
+        if not github_source.without_frontmatter(body).strip():
+            # リダイレクト指定や目次だけのページがある（実測 2026-09-13:
+            # golang/website の _content/doc/copyright.md、mermaid と
+            # github/docs の index.md）。取り込んでも0チャンクにしかならない。
+            empty += 1
+            continue
+        text = github_source.render_page(source, tree.commit, page_path, body, fetched_at)
+        # フロントマターの source_path はリポジトリ内の完全なパスを残すが、
+        # 置き場所は共通部分を落とした相対パスにする（github_source.local_path）。
+        local = github_source.local_path(page_path, source.paths)
+        if write_page_if_changed(f"{source.name}/{local}", text, out_dir):
+            written += 1
+
+    report.pages_written[source.name] = written
+    report.pages_failed[source.name] = failed
+    report.pages_empty[source.name] = empty
+    report.unresolved_code_refs[source.name] = unresolved
+    if written:
+        report.updated.append(source.name)
+        say(f"更新: {source.name}（{written}ページ、失敗{failed}件）")
+    else:
+        report.unchanged.append(source.name)
+        say(f"変更なし: {source.name}（{len(pages)}ページ）")
+    if unresolved:
+        say(f"警告: {source.name} で解決できなかった :::code が{unresolved}件あります")
 
 
 def main() -> int:
@@ -241,6 +382,14 @@ def main() -> int:
     print("\n--- 結果 ---")
     print(f"更新: {len(report.updated)}件")
     print(f"変更なし: {len(report.unchanged)}件")
+    for name, count in report.pages_written.items():
+        print(
+            f"  {name}: {count}ページ書き出し / 取得失敗{report.pages_failed[name]}件"
+            f" / 本文なし{report.pages_empty[name]}件"
+        )
+    for name, count in report.unresolved_code_refs.items():
+        if count:
+            print(f"  {name}: 解決できなかった :::code が{count}件")
     if report.index_only:
         print(f"目次のみ（本文が取れていません）: {'、'.join(report.index_only)}")
     for name, message in report.failed.items():

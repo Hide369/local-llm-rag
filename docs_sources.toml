@@ -44,3 +44,68 @@ version = "1.28.2"
 name = "mcp"
 url = "https://modelcontextprotocol.io/llms-full.txt"
 version = "2.2.0"
+
+# ここから下は kind = "github"。llms.txt を公開していない対象を、公式リポジトリの
+# 生 Markdown から取る（実測 2026-09-13: Go・C#・Java・Rust はいずれも404、
+# Kotlin は200だがコードフェンス0個の目次）。設計書
+# docs/superpowers/specs/2026-09-13-github-docs-ingestion-design.md を参照。
+#
+# ref は既定ブランチを明示する。golang/website は master、mermaid-js/mermaid は
+# develop であり、main ではない（実測 2026-09-13）。
+
+# docs/csharp/misc（409ファイル）は入れない。コンパイラのエラー番号ごとのページ
+# （cs0003.md など）で、文法の説明ではなく量だけが多い。
+#
+# resolve_code_refs を有効にするのはここだけである。MS Learn 形式は :::code で
+# 外部の .cs を参照し、実測では参照の割合が33%〜93%あった。解決しないと
+# 「検索は当たるのにコードが書けない」状態になる。
+[[source]]
+name = "csharp"
+kind = "github"
+repo = "dotnet/docs"
+ref = "main"
+paths = [
+  "docs/csharp/language-reference",
+  "docs/csharp/programming-guide",
+  "docs/csharp/fundamentals",
+  "docs/csharp/tour-of-csharp",
+  "docs/csharp/whats-new",
+  "docs/csharp/advanced-topics",
+  "docs/csharp/linq",
+  "docs/csharp/asynchronous-programming",
+  "docs/csharp/tutorials",
+  "docs/csharp/how-to",
+]
+resolve_code_refs = true
+version = "0.0.0"
+
+# Go の言語仕様（spec.html）と Effective Go は HTML であり、ここでは取れない。
+# 取れるのは各版のリリースノート（go1.1.md〜）・FAQ・modules リファレンス等の
+# 96ファイルである。_content/blog（339ファイル）と _content/solutions（42ファイル）は
+# 読み物と事例なので入れない。
+[[source]]
+name = "go"
+kind = "github"
+repo = "golang/website"
+ref = "master"
+paths = ["_content/doc", "_content/ref"]
+version = "0.0.0"
+
+[[source]]
+name = "mermaid"
+kind = "github"
+repo = "mermaid-js/mermaid"
+ref = "develop"
+paths = ["packages/mermaid/src/docs"]
+version = "0.0.0"
+
+# CommonMark の仕様書は入れない。例が独自の区切り文字で書かれておりコード
+# フェンスではないため、現在のチャンカーが扱えない。実務で書くのは GitHub
+# Flavored Markdown なので、ここで足りる。
+[[source]]
+name = "markdown"
+kind = "github"
+repo = "github/docs"
+ref = "main"
+paths = ["content/get-started/writing-on-github"]
+version = "0.0.0"
