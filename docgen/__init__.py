@@ -16,6 +16,8 @@ from docgen.md_template import fill as _fill_md
 from docgen.md_template import placeholders as _placeholders_md
 from docgen.pptx_template import fill as _fill_pptx
 from docgen.pptx_template import placeholders as _placeholders_pptx
+from docgen.xlsx_template import fill as _fill_xlsx
+from docgen.xlsx_template import placeholders as _placeholders_xlsx
 
 
 class UnsupportedTemplateError(Exception):
@@ -25,6 +27,7 @@ class UnsupportedTemplateError(Exception):
 _TEMPLATES = {
     ".md": (_placeholders_md, _fill_md),
     ".docx": (_placeholders_docx, _fill_docx),
+    ".xlsx": (_placeholders_xlsx, _fill_xlsx),
     ".pptx": (_placeholders_pptx, _fill_pptx),
 }
 

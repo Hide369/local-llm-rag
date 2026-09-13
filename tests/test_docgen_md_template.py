@@ -41,3 +41,11 @@ def test_an_unsupported_suffix_is_refused(tmp_path):
 
 def test_the_supported_suffixes_are_the_four_agreed_formats():
     assert docgen.SUPPORTED_SUFFIXES == {".docx", ".xlsx", ".pptx", ".md"}
+
+
+def test_every_supported_suffix_has_a_module():
+    """SUPPORTED_SUFFIXES だけ足して _TEMPLATES への登録を忘れると、
+    画面では選べるのに使うと例外になる。"""
+    from docgen import _TEMPLATES
+
+    assert set(_TEMPLATES) == docgen.SUPPORTED_SUFFIXES
