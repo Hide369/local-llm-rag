@@ -732,7 +732,7 @@ def _paragraphs(presentation):
 
 def _shape_paragraphs(shapes):
     for shape in shapes:
-        if shape.shape_type is not None and shape.has_text_frame:
+        if shape.has_text_frame:
             yield from shape.text_frame.paragraphs
         if shape.has_table:
             for row in shape.table.rows:
