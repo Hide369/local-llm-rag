@@ -136,6 +136,31 @@ section_level = 4
 title = "C# 言語仕様書"
 version = "ECMA-334:2026"
 
+# Python の言語リファレンス。docs.python.org/3/reference/ を md 化したもので、
+# 文法と実行モデルを定める側である。標準ライブラリのリファレンスは含まない。
+# 英語なので csharp-spec のような言語の食い違いは無い。
+#
+# title を書く理由が C# と少し違う。原本の H1 は11個で、**最初の1つは本当に
+# 資料の題名**（The Python Language Reference）、残り10個が章題（1. Introduction
+# 〜 10. Full Grammar specification）である。title を書かないと最初の1つだけが
+# 題名になり、章題10個が本文に埋もれる。書くと11個すべてが節の境界へ下り、
+# 元の題名は「資料の前書き＋目次」を持つ1節になる。
+#
+# section_level = 4 は実測で決めた（2026-09-13）。
+#   H1..H2  84節 / 中央値2,010 / 最大87,245
+#   H1..H3 197節 / 中央値1,594 / 最大25,584
+#   H1..H4 265節 / 中央値1,311 / 最大25,584
+# H4 まで下ろすと「3.2.13 Internal types」（21,824）「6.2.10 Yield expressions」
+# （20,163）が割れる。残る最大は「10. Full Grammar specification」で、これは
+# 1つのコードフェンスなので見出しでは割れない（csharp-spec の A.3 と同じ）。
+[[source]]
+name = "python-spec"
+kind = "local"
+path = "docs/pg_data/python-language-reference-unified.md"
+section_level = 4
+title = "The Python Language Reference"
+version = "3.14"
+
 [[source]]
 name = "mermaid"
 kind = "github"

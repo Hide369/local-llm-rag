@@ -679,6 +679,7 @@ def test_the_real_config_file_loads():
         "go",
         "go-spec",
         "csharp-spec",
+        "python-spec",
         "mermaid",
         "markdown",
     ]
@@ -689,6 +690,7 @@ def test_the_real_config_file_loads():
     assert by_name["go-spec"].section_level == 3
     # 原本の H1 が31個とも章題なので、題名は設定側で決める。
     assert by_name["csharp-spec"].title == "C# 言語仕様書"
+    assert by_name["python-spec"].title == "The Python Language Reference"
     assert by_name["go-spec"].title == ""
 
 

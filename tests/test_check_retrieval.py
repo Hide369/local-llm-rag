@@ -129,6 +129,9 @@ def test_the_docs_questions_cover_every_configured_source():
         # csharp と csharp-spec も同じ「C#」で照合できてしまう。仕様側は規範的な
         # 規則の名前で照合する（MS Learn の解説に「確定代入」の節は無い）。
         "csharp-spec": "確定代入",
+        # 「Python」では照合できない。Ollama の質問が「Pythonから呼ぶ」を含み、
+        # langchain の例も Python なので、資料が無くても通ってしまう。
+        "python-spec": "デスクリプタ",
         "mermaid": "Mermaid",
         "markdown": "Markdown",
     }
