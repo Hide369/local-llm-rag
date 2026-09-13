@@ -126,6 +126,9 @@ def test_the_docs_questions_cover_every_configured_source():
         # go と go-spec は同じ「Go」で照合できてしまう。仕様側は文法そのものを
         # 尋ねる語で照合する（リリースノートには select 文の構文は無い）。
         "go-spec": "select文",
+        # csharp と csharp-spec も同じ「C#」で照合できてしまう。仕様側は規範的な
+        # 規則の名前で照合する（MS Learn の解説に「確定代入」の節は無い）。
+        "csharp-spec": "確定代入",
         "mermaid": "Mermaid",
         "markdown": "Markdown",
     }

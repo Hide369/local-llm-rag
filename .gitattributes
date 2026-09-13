@@ -1,0 +1,11 @@
+# 取り込みの入力になるファイルは、改行コードを git に触らせない。
+#
+# scripts/ingest_source.py の file_hash() は生バイトの SHA-256 で差分を判定する。
+# 既定のまま追跡すると Windows のチェックアウトで LF が CRLF へ変わり、内容が
+# 1文字も違わないのに766ファイル全部が「変更あり」になる。DB を一緒に持ち込んだ
+# 移植先で、差分取り込みのつもりが全量再取り込みになる。
+#
+# docs/pg_data/ のほうは scripts/local_source.py が読み込み時に CRLF を潰すので
+# 指紋は変わらないが、同じ理由で揃えておく（不要な差分と警告を出さない）。
+docs_source/** -text
+docs/pg_data/** -text

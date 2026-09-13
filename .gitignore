@@ -22,11 +22,25 @@ chroma_db/
 # 取り込み対象の原本（バイナリが大きく、内容も配布対象ではない）
 source/
 
-# 取得した公式ドキュメントと、その取り込み先DB。source/ と vector_store.sqlite3 と
-# 同じ理由で追跡しない（大きく、docs_sources.toml からいつでも取り直せる）
-docs_source/
+# 取り込み先DB。大きく（273MB）、docs_source/ からいつでも作り直せる
 docs_store.sqlite3
 docs_store.sqlite3.bak-*
+
+# docs_source/ は追跡する（2026-09-13 に ignore から外した）。移植先が
+# `fetch_docs` を走らせずに取り込めるようにするためである。外部通信が要るのは
+# `fetch_docs` だけなので、これを追跡するとオフラインの移植先でも
+# `ingest_source` だけで済む（触る外部は OLLAMA_HOST のみ）。
+#
+# 代償が2つある。
+#
+# 1. 26MB がリポジトリに入る。`fetch_docs` で更新するたびに新しいblobが積まれ、
+#    langchain-text-splitters.md だけで1回7MBである。頻繁に取り直すなら効く。
+# 2. **生成物である。** 手で置いたファイルは docs_sources.toml に記録が残らず、
+#    どの版を入れたのか後から追えない。実測 2026-09-13: 未登録のまま置かれた
+#    Go 仕様書の生コピーが `go/doc/` に紛れており、取り込めば go-spec.md と
+#    重複した劣化版（pandoc属性が残り1節が最大82,825バイト）が入るところだった。
+#    **原本は docs/pg_data/ に置き、docs_sources.toml へ登録すること。**
+#    docs_source/ の中身は `fetch_docs` が書いたものだけにする。
 
 # 取り込み対象から外した資料。削除ではなく退避しているだけで、戻せば索引に復帰する
 source_archive/

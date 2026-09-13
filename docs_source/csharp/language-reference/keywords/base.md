@@ -1,0 +1,114 @@
+---
+name: csharp
+repo: dotnet/docs
+ref: main
+commit: 434d5f080534909ba985053aec2f2ba2e73f4c1c
+source_path: docs/csharp/language-reference/keywords/base.md
+title: The base keyword
+version: 0.0.0
+fetched_at: 2026-09-13
+---
+# The base keyword
+
+Use the `base` keyword to access members of the base class from within a derived class. Use it if you want to:
+
+- Call a method on the base class that's overridden by another method.
+- Specify which base-class constructor to call when creating instances of the derived class.
+
+You can access the base class only in a constructor, in an instance method, and in an instance property accessor. Using the `base` keyword from within a static method produces an error.
+
+[!INCLUDE[csharp-version-note](../includes/initial-version.md)]
+
+The base class you access is the base class you specify in the class declaration. For example, if you specify `class ClassB : ClassA`, you access the members of ClassA from ClassB, regardless of the base class of ClassA.
+
+In this example, both the base class `Person` and the derived class `Employee` have a method named `GetInfo`. By using the `base` keyword, you can call the `GetInfo` method of the base class from within the derived class.
+
+```csharp
+public class Person
+{
+    protected string ssn = "444-55-6666";
+    protected string name = "John L. Malgraine";
+
+    public virtual void GetInfo()
+    {
+        Console.WriteLine($"Name: {name}");
+        Console.WriteLine($"SSN: {ssn}");
+    }
+}
+class Employee : Person
+{
+    public readonly string id = "ABC567EFG";
+    public override void GetInfo()
+    {
+        // Calling the base class GetInfo method:
+        base.GetInfo();
+        Console.WriteLine($"Employee ID: {id}");
+    }
+}
+
+class TestClass
+{
+    static void Main()
+    {
+        Employee E = new Employee();
+        E.GetInfo();
+    }
+}
+/*
+Output
+Name: John L. Malgraine
+SSN: 444-55-6666
+Employee ID: ABC567EFG
+*/
+```
+
+This example shows how to specify the base-class constructor to call when creating instances of a derived class.
+
+```csharp
+public class BaseClass
+{
+    private int num;
+
+    public BaseClass() => 
+        Console.WriteLine("in BaseClass()");
+
+    public BaseClass(int i)
+    {
+        num = i;
+        Console.WriteLine("in BaseClass(int i)");
+    }
+
+    public int GetNum() => num;
+}
+
+public class DerivedClass : BaseClass
+{
+    // This constructor will call BaseClass.BaseClass()
+    public DerivedClass() : base() { }
+
+    // This constructor will call BaseClass.BaseClass(int i)
+    public DerivedClass(int i) : base(i) { }
+
+    static void Main()
+    {
+        DerivedClass md = new DerivedClass();
+        DerivedClass md1 = new DerivedClass(1);
+    }
+}
+/*
+Output:
+in BaseClass()
+in BaseClass(int i)
+*/
+```
+
+For more examples, see [new](new-modifier.md), [virtual](virtual.md), and [override](override.md).
+
+## C# language specification
+
+[!INCLUDE[CSharplangspec](~/includes/csharplangspec-md.md)]
+
+## See also
+
+- [C# Keywords](./index.md)
+- [The `this` keyword](./this.md)

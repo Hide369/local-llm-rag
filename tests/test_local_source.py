@@ -113,7 +113,87 @@ def test_normalise_tracks_an_indented_opening_fence():
     )
 
 
+# --- 章題の H1（題名が1つに決まらない資料）---
+
+
+def test_normalise_leaves_h1_alone_by_default():
+    """H1 は資料の題名である。既定では動かさない。"""
+    body = "# 題名\n\n## 節\n"
+    assert local_source.normalise(body, section_level=3) == body
+
+
+def test_normalise_demotes_every_h1_to_a_section_boundary():
+    """章題の H1 は節の境界へ下ろす。
+
+    取り込み側は最初の H1 だけを題名として拾い、2つ目以降は `# 章題` という行の
+    まま本文に残す（ingest/parsers/md_parser.py の parse_md）。C# の仕様書は H1 が
+    31個あり、30個の章題が直前の章の最後の節に紛れ込む。
+    """
+    body = "# 6 字句構造\n\n本文\n\n# 7 基本的な概念\n"
+    assert local_source.normalise(body, demote_h1=True) == (
+        "## 6 字句構造\n\n本文\n\n## 7 基本的な概念\n"
+    )
+
+
+def test_normalise_demotes_h1_together_with_the_section_level():
+    """C# の設定（section_level=4 + demote_h1）は H1〜H4 をすべて境界にする。
+
+    H1..H3 までを境界にすると1節が最大55,115バイト残る（9.4.4 確定代入）。H4 まで
+    下ろすと、残る最大は文法の付録（54,596バイト、1つのコード塊）だけになる。
+    """
+    body = (
+        "# 9 変数\n\n## 9.4 確定代入\n\n### 9.4.4 正確なルール\n\n"
+        "#### 9.4.4.15 Try-finally\n\n##### 補足\n"
+    )
+    assert local_source.normalise(body, section_level=4, demote_h1=True) == (
+        "## 9 変数\n\n## 9.4 確定代入\n\n## 9.4.4 正確なルール\n\n"
+        "## 9.4.4.15 Try-finally\n\n### 補足\n"
+    )
+
+
+def test_normalise_still_strips_the_anchor_from_a_demoted_h1():
+    body = "# 序文 {#foreword}\n"
+    assert local_source.normalise(body, demote_h1=True) == "## 序文\n"
+
+
+def test_normalise_does_not_demote_an_h1_inside_a_code_fence():
+    body = "```sh\n# コメント\n```\n\n# 章題\n"
+    assert local_source.normalise(body, demote_h1=True) == (
+        "```sh\n# コメント\n```\n\n## 章題\n"
+    )
+
+
 # --- 書き出す形 ---
+
+
+def test_render_page_adds_the_title_as_the_only_h1():
+    """題名が本文に無いと、取り込み側が各節の先頭に付ける資料名が空になる。
+
+    normalise が章題の H1 を全部下ろしたあと、本文には H1 が1つも残らない。
+    """
+    text = local_source.render_page(
+        _source(title="C# 言語仕様書"), "## 序文\n\n本文\n", "2026-09-13", "abc"
+    )
+    body = text.partition("\n---\n")[2]
+    assert body.startswith("# C# 言語仕様書\n")
+    assert "\n# " not in body
+
+
+def test_render_page_uses_the_configured_title_over_the_original_one():
+    """設定に書いた題名のほうが、原本のフロントマターより後から決めたものである。"""
+    text = local_source.render_page(
+        _source(title="C# 言語仕様書"),
+        "---\ntitle: C# 言語仕様書（統合版）\n---\n## 序文\n",
+        "2026-09-13",
+        "abc",
+    )
+    assert "title: C# 言語仕様書\n" in text.partition("\n---\n")[0]
+
+
+def test_render_page_leaves_the_body_alone_without_a_title():
+    """題名を書いていない資料（go-spec）は原本の H1 をそのまま題名に使う。"""
+    text = local_source.render_page(_source(), "# 題名\n\n## 節\n", "2026-09-13", "abc")
+    assert text.partition("\n---\n")[2] == "# 題名\n\n## 節\n"
 
 
 def test_render_page_records_where_the_body_came_from():

@@ -111,6 +111,31 @@ path = "docs/pg_data/go-language-specification.md"
 section_level = 3
 version = "go1.27"
 
+# C# の言語仕様（ECMA-334）。csharp ソース（MS Learn の解説）と役割が違う。
+# 解説は「どう書くか」を教えるが、規範的な文法と意味論はこちらにしか無い。
+#
+# この原本は他のどのソースとも違い日本語である。技術ドキュメントの検索は質問を
+# 英語へ訳してから当てるので（ingest/query_translation.py）、BM25 は英語の語では
+# 当たらない。当たるのはコード識別子（`record`、`ToString` など、訳されずに残る）
+# だけである。ベクトルとリランカーは多言語（bge-m3 / bge-reranker-v2-m3）なので
+# 言語をまたいでも効く。実測値は docs/コーディング対応ライブラリ.md にある。
+#
+# title を書いているのは、原本の H1 が31個あり、そのすべてが章題だからである
+# （「6 字句構造」「付録 A 文法」など）。取り込み側は最初の H1 だけを題名として
+# 拾い、残り30個は本文に埋もれる。title を書くと章題は節の境界へ下りる。
+#
+# section_level = 4 は実測で決めた。H1..H3 までを境界にすると1節が最大55,115
+# バイト残る（9.4.4 確定代入の正確なルール）。H4 まで下ろすと945節・中央値1,553
+# バイトになり、残る最大は文法の付録（54,596バイト、割れない1つのコード塊）と
+# 標準ライブラリの一覧だけになる（実測 2026-09-13）。
+[[source]]
+name = "csharp-spec"
+kind = "local"
+path = "docs/pg_data/csharp-language-specification-unified.md"
+section_level = 4
+title = "C# 言語仕様書"
+version = "ECMA-334:2026"
+
 [[source]]
 name = "mermaid"
 kind = "github"
