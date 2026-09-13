@@ -34,11 +34,16 @@ class ChatError(Exception):
     """チャット生成に失敗した。"""
 
 
-def ask_json(model: str, prompt: str, session=None) -> str:
+def ask_json(model: str, prompt: str, session=None, num_ctx: int = NUM_CTX) -> str:
     """JSONオブジェクト1個だけを返させる。条件抽出用。temperature=0固定。
 
     temperature=0固定の理由はingest/conditions.pyと同じ: 同じ質問で条件が
     揺れると再現性のない誤りになるため。
+
+    num_ctx の既定は NUM_CTX（8192）で、条件抽出とクエリ翻訳はこれで足りる。
+    雛形の生成（docgen/filling.py）だけは添付ファイルを丸ごと渡すため大きい値を
+    渡す。既定値を上げないのは、短いプロンプトにも大きな文脈を割り当てると
+    VRAMの余裕を使い切るためである（この定数のコメントを参照）。
     """
     own_session = session is None
     session = session or new_session()
@@ -50,7 +55,7 @@ def ask_json(model: str, prompt: str, session=None) -> str:
             "stream": False,
             "format": "json",
             "keep_alive": "30m",
-            "options": {"temperature": 0, "num_ctx": NUM_CTX},
+            "options": {"temperature": 0, "num_ctx": num_ctx},
         }
         last_error = None
         for attempt in range(_MAX_ATTEMPTS):
