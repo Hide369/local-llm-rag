@@ -5,11 +5,9 @@ sha256: c132f5cd086e9049c2081d127dcc20fd62c92c22cc8c8d8e66ae1aea9fa13fae
 title: The Python Language Reference
 section_level: 4
 version: 3.14
-fetched_at: 2026-09-13
+fetched_at: 2026-09-14
 ---
 # The Python Language Reference
-
-<span id="index--reference-index"></span>
 
 ## The Python Language Reference
 
@@ -98,7 +96,6 @@ This reference manual describes the syntax and “core semantics” of the langu
   - [9.4. Expression input](#toplevel_components--expression-input)
 - [10. Full Grammar specification](#grammar--full-grammar-specification)
 
-<span id="introduction--id1"></span>
 
 ## 1. Introduction
 
@@ -110,7 +107,6 @@ It is dangerous to add too many implementation details to a language reference d
 
 Every Python implementation comes with a number of built-in and standard modules. These are documented in [The Python Standard Library](https://docs.python.org/3/library/index.html#library-index). A few built-in modules are mentioned when they interact in a significant way with the language definition.
 
-<span id="introduction--implementations"></span>
 
 ## 1.1. Alternate Implementations
 
@@ -135,7 +131,6 @@ An implementation of Python written completely in Python. It supports several ad
 
 Each of these implementations varies in some way from the language as documented in this manual, or introduces specific information beyond what’s covered in the standard Python documentation. Please refer to the implementation-specific documentation to determine what else you need to know about the specific implementation you’re using.
 
-<span id="introduction--id2"></span>
 
 ## 1.2. Notation
 
@@ -163,7 +158,7 @@ Each rule begins with a name (which identifies the rule that’s being defined) 
 
 - `e1 e2`: Items separated only by whitespace denote a sequence. Here, `e1` must be followed by `e2`.
 
-- `e1 | e2`: A vertical bar is used to separate alternatives. It denotes PEG’s “ordered choice”: if `e1` matches, `e2` is not considered. In traditional PEG grammars, this is written as a slash, `/`, rather than a vertical bar. See <span id="introduction--index-1"></span>[**PEP 617**](https://peps.python.org/pep-0617/) for more background and details.
+- `e1 | e2`: A vertical bar is used to separate alternatives. It denotes PEG’s “ordered choice”: if `e1` matches, `e2` is not considered. In traditional PEG grammars, this is written as a slash, `/`, rather than a vertical bar. See [**PEP 617**](https://peps.python.org/pep-0617/) for more background and details.
 
 - `e*`: A star means zero or more repetitions of the preceding item.
 
@@ -207,7 +202,6 @@ Alternatively, rules may be formatted with the first line ending at the colon, a
 
 This does *not* mean that there is an empty first alternative.
 
-<span id="introduction--notation-lexical-vs-syntactic"></span> <span id="introduction--index-2"></span>
 
 ## 1.2.1. Lexical and Syntactic definitions
 
@@ -217,7 +211,6 @@ The practical difference between the two is that in *lexical* definitions, all w
 
 This documentation uses the same BNF grammar for both styles of definitions. All uses of BNF in the next chapter ([Lexical analysis](#lexical_analysis--lexical)) are lexical definitions; uses in subsequent chapters are syntactic definitions.
 
-<span id="lexical_analysis--lexical"></span>
 
 ## 2. Lexical analysis
 
@@ -349,19 +342,16 @@ Next, the lexical analyzer uses the source characters to generate a stream of to
 </tbody>
 </table>
 
-<span id="lexical_analysis--id1"></span>
 
 ## 2.1. Line structure
 
 A Python program is divided into a number of *logical lines*.
 
-<span id="lexical_analysis--id2"></span>
 
 ## 2.1.1. Logical lines
 
 The end of a logical line is represented by the token [`NEWLINE`](https://docs.python.org/3/library/token.html#token.NEWLINE). Statements cannot cross logical line boundaries except where `NEWLINE` is allowed by the syntax (e.g., between statements in compound statements). A logical line is constructed from one or more *physical lines* by following the [explicit](#lexical_analysis--explicit-joining) or [implicit](#lexical_analysis--implicit-joining) *line joining* rules.
 
-<span id="lexical_analysis--id3"></span>
 
 ## 2.1.2. Physical lines
 
@@ -381,13 +371,11 @@ Formally:
 
     newline: <ASCII LF> | <ASCII CR> <ASCII LF> | <ASCII CR>
 
-<span id="lexical_analysis--id5"></span>
 
 ## 2.1.3. Comments
 
 A comment starts with a hash character (`#`) that is not part of a string literal, and ends at the end of the physical line. A comment signifies the end of the logical line unless the implicit line joining rules are invoked. Comments are ignored by the syntax.
 
-<span id="lexical_analysis--encodings"></span>
 
 ## 2.1.4. Encoding declarations
 
@@ -409,7 +397,6 @@ All lexical analysis, including string literals, comments and identifiers, works
 
     source_character:  <any Unicode code point, except NUL>
 
-<span id="lexical_analysis--explicit-joining"></span>
 
 ## 2.1.5. Explicit line joining
 
@@ -422,7 +409,6 @@ Two or more physical lines may be joined into logical lines using backslash char
 
 A line ending in a backslash cannot carry a comment. A backslash does not continue a comment. A backslash does not continue a token except for string literals (i.e., tokens other than string literals cannot be split across physical lines using a backslash). A backslash is illegal elsewhere on a line outside a string literal.
 
-<span id="lexical_analysis--implicit-joining"></span>
 
 ## 2.1.6. Implicit line joining
 
@@ -435,13 +421,11 @@ Expressions in parentheses, square brackets or curly braces can be split over mo
 
 Implicitly continued lines can carry comments. The indentation of the continuation lines is not important. Blank continuation lines are allowed. There is no NEWLINE token between implicit continuation lines. Implicitly continued lines can also occur within triple-quoted strings (see below); in that case they cannot carry comments.
 
-<span id="lexical_analysis--id6"></span>
 
 ## 2.1.7. Blank lines
 
 A logical line that contains only spaces, tabs, formfeeds and possibly a comment, is ignored (i.e., no [`NEWLINE`](https://docs.python.org/3/library/token.html#token.NEWLINE) token is generated). During interactive input of statements, handling of a blank line may differ depending on the implementation of the read-eval-print loop. In the standard interactive interpreter, an entirely blank logical line (that is, one containing not even whitespace or a comment) terminates a multi-line statement.
 
-<span id="lexical_analysis--id7"></span>
 
 ## 2.1.8. Indentation
 
@@ -485,7 +469,6 @@ The following example shows various indentation errors:
 
 (Actually, the first three errors are detected by the parser; only the last error is found by the lexical analyzer — the indentation of `return r` does not match a level popped off the stack.)
 
-<span id="lexical_analysis--whitespace"></span>
 
 ## 2.1.9. Whitespace between tokens
 
@@ -495,19 +478,16 @@ Except at the beginning of a logical line or in string literals, the whitespace 
 
 Whitespace is needed between two tokens only if their concatenation could otherwise be interpreted as a different token. For example, `ab` is one token, but `a b` is two tokens. However, `+a` and `+ a` both produce two tokens, `+` and `a`, as `+a` is not a valid token.
 
-<span id="lexical_analysis--endmarker-token"></span>
 
 ## 2.1.10. End marker
 
 At the end of non-interactive input, the lexical analyzer generates an [`ENDMARKER`](https://docs.python.org/3/library/token.html#token.ENDMARKER) token.
 
-<span id="lexical_analysis--id8"></span>
 
 ## 2.2. Other tokens
 
 Besides [`NEWLINE`](https://docs.python.org/3/library/token.html#token.NEWLINE), [`INDENT`](https://docs.python.org/3/library/token.html#token.INDENT) and [`DEDENT`](https://docs.python.org/3/library/token.html#token.DEDENT), the following categories of tokens exist: *identifiers* and *keywords* ([`NAME`](https://docs.python.org/3/library/token.html#token.NAME)), *literals* (such as [`NUMBER`](https://docs.python.org/3/library/token.html#token.NUMBER) and [`STRING`](https://docs.python.org/3/library/token.html#token.STRING)), and other symbols (*operators* and *delimiters*, [`OP`](https://docs.python.org/3/library/token.html#token.OP)). Whitespace characters (other than logical line terminators, discussed earlier) are not tokens, but serve to delimit tokens. Where ambiguity exists, a token comprises the longest possible string that forms a legal token, when read from left to right.
 
-<span id="lexical_analysis--identifiers"></span>
 
 ## 2.3. Names (identifiers and keywords)
 
@@ -534,7 +514,6 @@ Formally, names are described by the following lexical definitions:
 
 Note that not all names matched by this grammar are valid; see [Non-ASCII characters in names](#lexical_analysis--lexical-names-nonascii) for details.
 
-<span id="lexical_analysis--id9"></span>
 
 ## 2.3.1. Keywords
 
@@ -548,7 +527,6 @@ The following names are used as reserved words, or *keywords* of the language, a
     assert     del        global     not        with
     async      elif       if         or         yield
 
-<span id="lexical_analysis--id10"></span>
 
 ## 2.3.2. Soft Keywords
 
@@ -566,7 +544,6 @@ As soft keywords, their use in the grammar is possible while still preserving co
 
 Changed in version 3.12: `type` is now a soft keyword.
 
-<span id="lexical_analysis--id-classes"></span> <span id="lexical_analysis--index-12"></span>
 
 ## 2.3.3. Reserved classes of identifiers
 
@@ -594,7 +571,6 @@ System-defined names, informally known as “dunder” names. These names are de
 `__*`  
 Class-private names. Names in this category, when used within the context of a class definition, are re-written to use a mangled form to help avoid name clashes between “private” attributes of base and derived classes. See section [Identifiers (Names)](#expressions--atom-identifiers).
 
-<span id="lexical_analysis--lexical-names-nonascii"></span>
 
 ## 2.3.4. Non-ASCII characters in names
 
@@ -658,11 +634,10 @@ Unicode categories use the version of the Unicode Character Database as included
 
 See also
 
-- <span id="lexical_analysis--index-13"></span>[**PEP 3131**](https://peps.python.org/pep-3131/) – Supporting Non-ASCII Identifiers
+- [**PEP 3131**](https://peps.python.org/pep-3131/) – Supporting Non-ASCII Identifiers
 
-- <span id="lexical_analysis--index-14"></span>[**PEP 672**](https://peps.python.org/pep-0672/) – Unicode-related Security Considerations for Python
+- [**PEP 672**](https://peps.python.org/pep-0672/) – Unicode-related Security Considerations for Python
 
-<span id="lexical_analysis--id11"></span>
 
 ## 2.4. Literals
 
@@ -672,7 +647,6 @@ In terms of lexical analysis, Python has [string, bytes](#lexical_analysis--stri
 
 Other “literals” are lexically denoted using [keywords](#lexical_analysis--keywords) (`None`, `True`, `False`) and the special [ellipsis token](#lexical_analysis--lexical-ellipsis) (`...`).
 
-<span id="lexical_analysis--strings"></span> <span id="lexical_analysis--index-16"></span>
 
 ## 2.5. String and Bytes literals
 
@@ -695,7 +669,6 @@ Inside a string literal, the backslash (`\`) character introduces an *escape seq
 
 See [escape sequences](#lexical_analysis--escape-sequences) below for a full list of such sequences, and more details.
 
-<span id="lexical_analysis--index-17"></span>
 
 ## 2.5.1. Triple-quoted strings
 
@@ -712,7 +685,6 @@ Unescaped newlines are also allowed and retained:
     '''This triple-quoted string
     continues on the next line.'''
 
-<span id="lexical_analysis--index-18"></span>
 
 ## 2.5.2. String prefixes
 
@@ -739,7 +711,7 @@ Prefixes are case-insensitive (for example, ‘`B`’ works the same as ‘`b`�
 
 Added in version 3.3: The `'rb'` prefix of raw bytes literals has been added as a synonym of `'br'`.
 
-Support for the unicode legacy literal (`u'value'`) was reintroduced to simplify the maintenance of dual Python 2.x and 3.x codebases. See <span id="lexical_analysis--index-19"></span>[**PEP 414**](https://peps.python.org/pep-0414/) for more information.
+Support for the unicode legacy literal (`u'value'`) was reintroduced to simplify the maintenance of dual Python 2.x and 3.x codebases. See [**PEP 414**](https://peps.python.org/pep-0414/) for more information.
 
 ## 2.5.3. Formal grammar
 
@@ -761,7 +733,6 @@ These definitions use [negative lookaheads](#introduction--lexical-lookaheads) (
 
 Note that as in all lexical definitions, whitespace is significant. In particular, the prefix (if any) must be immediately followed by the starting quote.
 
-<span id="lexical_analysis--index-20"></span> <span id="lexical_analysis--id12"></span>
 
 ## 2.5.4. Escape sequences
 
@@ -786,7 +757,6 @@ Unless an ‘`r`’ or ‘`R`’ prefix is present, escape sequences in string a
 | `\u`*`xxxx`*     | [Hexadecimal Unicode character](#lexical_analysis--string-escape-long-hex) |
 | `\U`*`xxxxxxxx`* | [Hexadecimal Unicode character](#lexical_analysis--string-escape-long-hex) |
 
-<span id="lexical_analysis--string-escape-ignore"></span>
 
 ## 2.5.4.1. Ignored end of line
 
@@ -798,7 +768,6 @@ A backslash can be added at the end of a line to ignore the newline:
 
 The same result can be achieved using [triple-quoted strings](#lexical_analysis--strings), or parentheses and [string literal concatenation](#expressions--string-concatenation).
 
-<span id="lexical_analysis--string-escape-escaped-char"></span>
 
 ## 2.5.4.2. Escaped characters
 
@@ -812,7 +781,6 @@ Similarly, the `\'` and `\"` sequences denote the single and double quote charac
     >>> print('\' and \"')
     ' and "
 
-<span id="lexical_analysis--string-escape-oct"></span>
 
 ## 2.5.4.3. Octal character
 
@@ -829,7 +797,6 @@ Changed in version 3.11: Octal escapes with value larger than `0o377` (255) prod
 
 Changed in version 3.12: Octal escapes with value larger than `0o377` (255) produce a [`SyntaxWarning`](https://docs.python.org/3/library/exceptions.html#SyntaxWarning). In a future Python version they will raise a [`SyntaxError`](https://docs.python.org/3/library/exceptions.html#SyntaxError).
 
-<span id="lexical_analysis--string-escape-hex"></span>
 
 ## 2.5.4.4. Hexadecimal character
 
@@ -842,7 +809,6 @@ Unlike in Standard C, exactly two hex digits are required.
 
 In a bytes literal, *character* means a *byte* with the given value. In a string literal, it means a Unicode character with the given value.
 
-<span id="lexical_analysis--string-escape-named"></span>
 
 ## 2.5.4.5. Named Unicode character
 
@@ -857,7 +823,6 @@ This sequence cannot appear in [bytes literals](#lexical_analysis--bytes-literal
 
 Changed in version 3.3: Support for [name aliases](https://www.unicode.org/Public/16.0.0/ucd/NameAliases.txt) has been added.
 
-<span id="lexical_analysis--string-escape-long-hex"></span>
 
 ## 2.5.4.6. Hexadecimal Unicode characters
 
@@ -870,7 +835,6 @@ These sequences `\u`*`xxxx`* and `\U`*`xxxxxxxx`* denote the Unicode character w
 
 These sequences cannot appear in [bytes literals](#lexical_analysis--bytes-literal).
 
-<span id="lexical_analysis--index-21"></span>
 
 ## 2.5.4.7. Unrecognized escape sequences
 
@@ -887,7 +851,6 @@ Changed in version 3.6: Unrecognized escape sequences produce a [`DeprecationWar
 
 Changed in version 3.12: Unrecognized escape sequences produce a [`SyntaxWarning`](https://docs.python.org/3/library/exceptions.html#SyntaxWarning). In a future Python version they will raise a [`SyntaxError`](https://docs.python.org/3/library/exceptions.html#SyntaxError).
 
-<span id="lexical_analysis--bytes-literal"></span> <span id="lexical_analysis--index-22"></span>
 
 ## 2.5.5. Bytes literals
 
@@ -900,7 +863,6 @@ Changed in version 3.12: Unrecognized escape sequences produce a [`SyntaxWarning
 
 Similarly, a zero byte must be expressed using an escape sequence (typically `\0` or `\x00`).
 
-<span id="lexical_analysis--raw-strings"></span> <span id="lexical_analysis--index-23"></span>
 
 ## 2.5.6. Raw string literals
 
@@ -911,7 +873,6 @@ Both string and bytes literals may optionally be prefixed with a letter ‘`r`�
 
 Even in a raw literal, quotes can be escaped with a backslash, but the backslash remains in the result; for example, `r"\""` is a valid string literal consisting of two characters: a backslash and a double quote; `r"\"` is not a valid string literal (even a raw string cannot end in an odd number of backslashes). Specifically, *a raw literal cannot end in a single backslash* (since the backslash would escape the following quote character). Note also that a single backslash followed by a newline is interpreted as those two characters as part of the literal, *not* as a line continuation.
 
-<span id="lexical_analysis--f-strings"></span> <span id="lexical_analysis--index-24"></span> <span id="lexical_analysis--id13"></span>
 
 ## 2.5.7. f-strings
 
@@ -1028,13 +989,12 @@ Formatted string literals cannot be used as [docstrings](https://docs.python.org
 
 See also
 
-- <span id="lexical_analysis--index-25"></span>[**PEP 498**](https://peps.python.org/pep-0498/) – Literal String Interpolation
+- [**PEP 498**](https://peps.python.org/pep-0498/) – Literal String Interpolation
 
-- <span id="lexical_analysis--index-26"></span>[**PEP 701**](https://peps.python.org/pep-0701/) – Syntactic formalization of f-strings
+- [**PEP 701**](https://peps.python.org/pep-0701/) – Syntactic formalization of f-strings
 
 - [`str.format()`](https://docs.python.org/3/library/stdtypes.html#str.format), which uses a related format string mechanism.
 
-<span id="lexical_analysis--t-strings"></span> <span id="lexical_analysis--id14"></span>
 
 ## 2.5.8. t-strings
 
@@ -1103,7 +1063,6 @@ The grammar for t-strings is identical to the one for f-strings, with *t* instea
 
     <rest of the t-string grammar is omitted; see above>
 
-<span id="lexical_analysis--numbers"></span>
 
 ## 2.6. Numeric literals
 
@@ -1115,7 +1074,6 @@ The numeric value of a numeric literal is the same as if it were passed as a str
 
 Numeric literals do not include a sign; a phrase like `-1` is actually an expression composed of the unary operator ‘`-`’ and the literal `1`.
 
-<span id="lexical_analysis--integers"></span> <span id="lexical_analysis--index-28"></span>
 
 ## 2.6.1. Integer literals
 
@@ -1166,7 +1124,6 @@ Formally, integer literals are described by the following lexical definitions:
 
 Changed in version 3.6: Underscores are now allowed for grouping purposes in literals.
 
-<span id="lexical_analysis--floating"></span> <span id="lexical_analysis--index-29"></span>
 
 ## 2.6.2. Floating-point literals
 
@@ -1211,7 +1168,6 @@ Formally, floating-point literals are described by the following lexical definit
 
 Changed in version 3.6: Underscores are now allowed for grouping purposes in literals.
 
-<span id="lexical_analysis--imaginary"></span> <span id="lexical_analysis--index-30"></span>
 
 ## 2.6.3. Imaginary literals
 
@@ -1251,7 +1207,6 @@ Formally, imaginary literals are described by the following lexical definition:
 
     imagnumber: (floatnumber | digitpart) ("j" | "J")
 
-<span id="lexical_analysis--lexical-ellipsis"></span> <span id="lexical_analysis--operators"></span> <span id="lexical_analysis--delimiters"></span>
 
 ## 2.7. Operators and delimiters
 
@@ -1288,11 +1243,9 @@ Some of Python’s operators, like `and`, `or`, and `not in`, use [keyword](#lex
 
 A sequence of three consecutive periods (`...`) has a special meaning as an [`Ellipsis`](https://docs.python.org/3/library/constants.html#Ellipsis) literal.
 
-<span id="datamodel--datamodel"></span>
 
 ## 3. Data model
 
-<span id="datamodel--objects"></span>
 
 ## 3.1. Objects, values and types
 
@@ -1318,7 +1271,6 @@ Some objects contain references to other objects; these are called *containers*.
 
 Types affect almost all aspects of object behavior. Even the importance of object identity is affected in some sense: for immutable types, operations that compute new values may actually return a reference to any existing object with the same type and value, while for mutable objects this is not allowed. For example, after `a = 1; b = 1`, *a* and *b* may or may not refer to the same object with the value one, depending on the implementation. This is because [`int`](https://docs.python.org/3/library/functions.html#int) is an immutable type, so the reference to `1` can be reused. This behaviour depends on the implementation used, so should not be relied upon, but is something to be aware of when making use of object identity tests. However, after `c = []; d = []`, *c* and *d* are guaranteed to refer to two different, unique, newly created empty lists. (Note that `e = f = []` assigns the *same* object to both *e* and *f*.)
 
-<span id="datamodel--types"></span>
 
 ## 3.2. The standard type hierarchy
 
@@ -1378,7 +1330,6 @@ These represent numbers in an unlimited range, subject to available (virtual) me
 Booleans ([`bool`](https://docs.python.org/3/library/functions.html#bool))  
 These represent the truth values False and True. The two objects representing the values `False` and `True` are the only Boolean objects. The Boolean type is a subtype of the integer type, and Boolean values behave like the values 0 and 1, respectively, in almost all contexts, the exception being that when converted to a string, the strings `"False"` or `"True"` are returned, respectively.
 
-<span id="datamodel--datamodel-float"></span>
 
 ## 3.2.4.2. [`numbers.Real`](https://docs.python.org/3/library/numbers.html#numbers.Real) ([`float`](https://docs.python.org/3/library/functions.html#float))
 
@@ -1388,7 +1339,6 @@ These represent machine-level double precision floating-point numbers. You are a
 
 These represent complex numbers as a pair of machine-level double precision floating-point numbers. The same caveats apply as for floating-point numbers. The real and imaginary parts of a complex number `z` can be retrieved through the read-only attributes `z.real` and `z.imag`.
 
-<span id="datamodel--datamodel-sequences"></span>
 
 ## 3.2.5. Sequences
 
@@ -1429,7 +1379,7 @@ Mutable sequences can be changed after they are created. The subscription and sl
 
 Note
 
-<span id="datamodel--index-23"></span>The [`collections`](https://docs.python.org/3/library/collections.html#module-collections) and [`array`](https://docs.python.org/3/library/array.html#module-array) module provide additional examples of mutable sequence types.
+The [`collections`](https://docs.python.org/3/library/collections.html#module-collections) and [`array`](https://docs.python.org/3/library/array.html#module-array) module provide additional examples of mutable sequence types.
 
 There are currently two intrinsic mutable sequence types:
 
@@ -1453,7 +1403,6 @@ These represent a mutable set. They are created by the built-in [`set()`](https:
 Frozen sets  
 These represent an immutable set. They are created by the built-in [`frozenset()`](https://docs.python.org/3/library/stdtypes.html#frozenset) constructor. As a frozenset is immutable and [hashable](https://docs.python.org/3/glossary.html#term-hashable), it can be used again as an element of another set, or as a dictionary key.
 
-<span id="datamodel--datamodel-mappings"></span>
 
 ## 3.2.7. Mappings
 
@@ -1477,7 +1426,6 @@ Changed in version 3.7: Dictionaries did not preserve insertion order in version
 
 These are the types to which the function call operation (see section [Calls](#expressions--calls)) can be applied:
 
-<span id="datamodel--user-defined-funcs"></span>
 
 ## 3.2.8.1. User-defined functions
 
@@ -1606,7 +1554,7 @@ Most of these attributes check the type of the assigned value:
 &#10;</dd>
 </dl></td>
 <td><p>A <a href="https://docs.python.org/3/library/stdtypes.html#dict"><code>dictionary</code></a> containing annotations of <a href="https://docs.python.org/3/glossary.html#term-parameter">parameters</a>. The keys of the dictionary are the parameter names, and <code>'return'</code> for the return annotation, if provided. See also: <a href="#datamodel--object.__annotations__"><code>object.__annotations__</code></a>.</p>
-<p>Changed in version 3.14: Annotations are now <a href="#executionmodel--lazy-evaluation">lazily evaluated</a>. See <span id="datamodel--index-37"></span><a href="https://peps.python.org/pep-0649/"><strong>PEP 649</strong></a>.</p></td>
+<p>Changed in version 3.14: Annotations are now <a href="#executionmodel--lazy-evaluation">lazily evaluated</a>. See <a href="https://peps.python.org/pep-0649/"><strong>PEP 649</strong></a>.</p></td>
 </tr>
 <tr class="odd">
 <td><dl>
@@ -1643,7 +1591,6 @@ Function objects also support getting and setting arbitrary attributes, which ca
 
 Additional information about a function’s definition can be retrieved from its [code object](#datamodel--code-objects) (accessible via the [`__code__`](#datamodel--function.__code__) attribute).
 
-<span id="datamodel--id2"></span>
 
 ## 3.2.8.2. Instance methods
 
@@ -1728,7 +1675,6 @@ A function or method which is defined using [`async def`](#compound_stmts--async
 
 Calling the asynchronous iterator’s [`aiterator.__anext__`](#datamodel--object.__anext__) method will return an [awaitable](https://docs.python.org/3/glossary.html#term-awaitable) which when awaited will execute until it provides a value using the [`yield`](#simple_stmts--yield) expression. When the function executes an empty [`return`](#simple_stmts--return) statement or falls off the end, a [`StopAsyncIteration`](https://docs.python.org/3/library/exceptions.html#StopAsyncIteration) exception is raised and the asynchronous iterator will have reached the end of the set of values to be yielded.
 
-<span id="datamodel--builtin-functions"></span>
 
 ## 3.2.8.6. Built-in functions
 
@@ -1742,13 +1688,11 @@ A built-in function object is a wrapper around a C function. Examples of built-i
 
 - `__module__` is the name of the module the function was defined in or `None` if unavailable. See [`function.__module__`](#datamodel--function.__module__).
 
-<span id="datamodel--builtin-methods"></span>
 
 ## 3.2.8.7. Built-in methods
 
 This is really a different disguise of a built-in function, this time containing an object passed to the C function as an implicit extra argument. An example of a built-in method is `alist.append()`, assuming *alist* is a list object. In this case, the special read-only attribute `__self__` is set to the object denoted by *alist*. (The attribute has the same semantics as it does with [`other instance methods`](#datamodel--method.__self__).)
 
-<span id="datamodel--id3"></span>
 
 ## 3.2.8.8. Classes
 
@@ -1758,7 +1702,6 @@ Classes are callable. These objects normally act as factories for new instances 
 
 Instances of arbitrary classes can be made callable by defining a [`__call__()`](#datamodel--object.__call__) method in their class.
 
-<span id="datamodel--module-objects"></span>
 
 ## 3.2.9. Modules
 
@@ -1766,7 +1709,6 @@ Modules are a basic organizational unit of Python code, and are created by the [
 
 Attribute assignment updates the module’s namespace dictionary, e.g., `m.x = 1` is equivalent to `m.__dict__["x"] = 1`.
 
-<span id="datamodel--import-mod-attrs"></span> <span id="datamodel--index-46"></span>
 
 ## 3.2.9.1. Import-related attributes on module objects
 
@@ -1807,7 +1749,7 @@ Added in version 3.4.
 module.\_\_package\_\_  
 The [package](https://docs.python.org/3/glossary.html#term-package) a module belongs to.
 
-If the module is top-level (that is, not a part of any specific package) then the attribute should be set to `''` (the empty string). Otherwise, it should be set to the name of the module’s package (which can be equal to [`module.__name__`](#datamodel--module.__name__) if the module itself is a package). See <span id="datamodel--index-47"></span>[**PEP 366**](https://peps.python.org/pep-0366/) for further details.
+If the module is top-level (that is, not a part of any specific package) then the attribute should be set to `''` (the empty string). Otherwise, it should be set to the name of the module’s package (which can be equal to [`module.__name__`](#datamodel--module.__name__) if the module itself is a package). See [**PEP 366**](https://peps.python.org/pep-0366/) for further details.
 
 This attribute is used instead of [`__name__`](#datamodel--module.__name__) to calculate explicit relative imports for main modules. It defaults to `None` for modules created dynamically using the [`types.ModuleType`](https://docs.python.org/3/library/types.html#types.ModuleType) constructor; use [`importlib.util.module_from_spec()`](https://docs.python.org/3/library/importlib.html#importlib.util.module_from_spec) instead to ensure the attribute is set to a [`str`](https://docs.python.org/3/library/stdtypes.html#str).
 
@@ -1856,7 +1798,7 @@ module.\_\_cached\_\_
 
 `__file__` indicates the pathname of the file from which the module was loaded (if loaded from a file), or the pathname of the shared library file for extension modules loaded dynamically from a shared library. It might be missing for certain types of modules, such as C modules that are statically linked into the interpreter, and the [import system](#import--importsystem) may opt to leave it unset if it has no semantic meaning (for example, a module loaded from a database).
 
-If `__file__` is set then the `__cached__` attribute might also be set, which is the path to any compiled version of the code (for example, a byte-compiled file). The file does not need to exist to set this attribute; the path can simply point to where the compiled file *would* exist (see <span id="datamodel--index-48"></span>[**PEP 3147**](https://peps.python.org/pep-3147/)).
+If `__file__` is set then the `__cached__` attribute might also be set, which is the path to any compiled version of the code (for example, a byte-compiled file). The file does not need to exist to set this attribute; the path can simply point to where the compiled file *would* exist (see [**PEP 3147**](https://peps.python.org/pep-3147/)).
 
 Note that `__cached__` may be set even if `__file__` is not set. However, that scenario is quite atypical. Ultimately, the [loader](https://docs.python.org/3/glossary.html#term-loader) is what makes use of the module spec provided by the [finder](https://docs.python.org/3/glossary.html#term-finder) (from which `__file__` and `__cached__` are derived). So if a loader can load from a cached module but otherwise does not load from a file, that atypical scenario may be appropriate.
 
@@ -1876,7 +1818,7 @@ The module’s documentation string, or `None` if unavailable. See also: [`__doc
 module.\_\_annotations\_\_  
 A dictionary containing [variable annotations](https://docs.python.org/3/glossary.html#term-variable-annotation) collected during module body execution. For best practices on working with `__annotations__`, see [`annotationlib`](https://docs.python.org/3/library/annotationlib.html#module-annotationlib).
 
-Changed in version 3.14: Annotations are now [lazily evaluated](#executionmodel--lazy-evaluation). See <span id="datamodel--index-49"></span>[**PEP 649**](https://peps.python.org/pep-0649/).
+Changed in version 3.14: Annotations are now [lazily evaluated](#executionmodel--lazy-evaluation). See [**PEP 649**](https://peps.python.org/pep-0649/).
 
 <!-- -->
 
@@ -1894,7 +1836,6 @@ The module’s namespace as a dictionary object. Uniquely among the attributes l
 
 **CPython implementation detail:** Because of the way CPython clears module dictionaries, the module dictionary will be cleared when the module falls out of scope even if the dictionary still has live references. To avoid this, copy the dictionary or keep the module around while using its dictionary directly.
 
-<span id="datamodel--class-attrs-and-methods"></span>
 
 ## 3.2.10. Custom classes
 
@@ -1985,9 +1926,9 @@ A class object can be called (see above) to yield a class instance (see below).
 <td><p>A dictionary containing <a href="https://docs.python.org/3/glossary.html#term-variable-annotation">variable annotations</a> collected during class body execution. See also: <a href="#datamodel--object.__annotations__"><code>__annotations__ attributes</code></a>.</p>
 <p>For best practices on working with <a href="#datamodel--object.__annotations__"><code>__annotations__</code></a>, please see <a href="https://docs.python.org/3/library/annotationlib.html#module-annotationlib"><code>annotationlib</code></a>. Use <a href="https://docs.python.org/3/library/annotationlib.html#annotationlib.get_annotations"><code>annotationlib.get_annotations()</code></a> instead of accessing this attribute directly.</p>
 <p>Warning</p>
-<p>Accessing the <code>__annotations__</code> attribute directly on a class object may return annotations for the wrong class, specifically in certain cases where the class, its base class, or a metaclass is defined under <code>from __future__ import annotations</code>. See <span id="datamodel--index-55"></span><a href="https://peps.python.org/pep-0749/#pep749-metaclasses"><strong>749</strong></a> for details.</p>
+<p>Accessing the <code>__annotations__</code> attribute directly on a class object may return annotations for the wrong class, specifically in certain cases where the class, its base class, or a metaclass is defined under <code>from __future__ import annotations</code>. See <a href="https://peps.python.org/pep-0749/#pep749-metaclasses"><strong>749</strong></a> for details.</p>
 <p>This attribute does not exist on certain builtin classes. On user-defined classes without <code>__annotations__</code>, it is an empty dictionary.</p>
-<p>Changed in version 3.14: Annotations are now <a href="#executionmodel--lazy-evaluation">lazily evaluated</a>. See <span id="datamodel--index-56"></span><a href="https://peps.python.org/pep-0649/"><strong>PEP 649</strong></a>.</p></td>
+<p>Changed in version 3.14: Annotations are now <a href="#executionmodel--lazy-evaluation">lazily evaluated</a>. See <a href="https://peps.python.org/pep-0649/"><strong>PEP 649</strong></a>.</p></td>
 </tr>
 <tr class="odd">
 <td><dl>
@@ -2096,13 +2037,11 @@ Flush any buffers and close the underlying file.
 
 A few types used internally by the interpreter are exposed to the user. Their definitions may change with future versions of the interpreter, but they are mentioned here for completeness.
 
-<span id="datamodel--id6"></span>
 
 ## 3.2.13.1. Code objects
 
 Code objects represent *byte-compiled* executable Python code, or [bytecode](https://docs.python.org/3/glossary.html#term-bytecode). The difference between a code object and a function object is that the function object contains an explicit reference to the function’s globals (the module in which it was defined), while a code object contains no context; also the default argument values are stored in the function object, not in the code object (because they represent values calculated at run-time). Unlike function objects, code objects are immutable and contain no references (directly or indirectly) to mutable objects.
 
-<span id="datamodel--id7"></span>
 
 ### 3.2.13.1.1. Special read-only attributes
 
@@ -2285,7 +2224,7 @@ Added in version 3.11.
 
 Note
 
-This feature requires storing column positions in code objects which may result in a small increase of disk usage of compiled Python files or interpreter memory usage. To avoid storing the extra information and/or deactivate printing the extra traceback information, the [`-X`](https://docs.python.org/3/using/cmdline.html#cmdoption-X) `no_debug_ranges` command line flag or the <span id="datamodel--index-67"></span>[`PYTHONNODEBUGRANGES`](https://docs.python.org/3/using/cmdline.html#envvar-PYTHONNODEBUGRANGES) environment variable can be used.
+This feature requires storing column positions in code objects which may result in a small increase of disk usage of compiled Python files or interpreter memory usage. To avoid storing the extra information and/or deactivate printing the extra traceback information, the [`-X`](https://docs.python.org/3/using/cmdline.html#cmdoption-X) `no_debug_ranges` command line flag or the [`PYTHONNODEBUGRANGES`](https://docs.python.org/3/using/cmdline.html#envvar-PYTHONNODEBUGRANGES) environment variable can be used.
 
 <!-- -->
 
@@ -2314,7 +2253,7 @@ Added in version 3.10.
 
 See also
 
-<span id="datamodel--index-68"></span>[**PEP 626**](https://peps.python.org/pep-0626/) - Precise line numbers for debugging and other tools.  
+[**PEP 626**](https://peps.python.org/pep-0626/) - Precise line numbers for debugging and other tools.  
 The PEP that introduced the `co_lines()` method.
 
 <!-- -->
@@ -2326,13 +2265,11 @@ Code objects are also supported by the generic function [`copy.replace()`](https
 
 Added in version 3.8.
 
-<span id="datamodel--id8"></span>
 
 ## 3.2.13.2. Frame objects
 
 Frame objects represent execution frames. They may occur in [traceback objects](#datamodel--traceback-objects), and are also passed to registered trace functions.
 
-<span id="datamodel--id9"></span>
 
 ### 3.2.13.2.1. Special read-only attributes
 
@@ -2403,7 +2340,6 @@ Frame objects represent execution frames. They may occur in [traceback objects](
 </tbody>
 </table>
 
-<span id="datamodel--id10"></span>
 
 ### 3.2.13.2.2. Special writable attributes
 
@@ -2461,7 +2397,6 @@ Added in version 3.4.
 
 Changed in version 3.13: Attempting to clear a suspended frame raises [`RuntimeError`](https://docs.python.org/3/library/exceptions.html#RuntimeError) (as has always been the case for executing frames).
 
-<span id="datamodel--id11"></span>
 
 ## 3.2.13.3. Traceback objects
 
@@ -2537,7 +2472,6 @@ Static method objects provide a way of defeating the transformation of function 
 
 A class method object, like a static method object, is a wrapper around another object that alters the way in which that object is retrieved from classes and class instances. The behaviour of class method objects upon such retrieval is described above, under [“instance methods”](#datamodel--instance-methods). Class method objects are created by the built-in [`classmethod()`](https://docs.python.org/3/library/functions.html#classmethod) constructor.
 
-<span id="datamodel--specialnames"></span>
 
 ## 3.3. Special method names
 
@@ -2547,7 +2481,6 @@ Setting a special method to `None` indicates that the corresponding operation is
 
 When implementing a class that emulates any built-in type, it is important that the emulation only be implemented to the degree that it makes sense for the object being modelled. For example, some sequences may work well with retrieval of individual elements, but extracting a slice may not make sense. (One example of this is the [NodeList](https://docs.python.org/3/library/xml.dom.html#dom-nodelist-objects) interface in the W3C’s Document Object Model.)
 
-<span id="datamodel--customization"></span>
 
 ## 3.3.1. Basic customization
 
@@ -2596,7 +2529,6 @@ Due to the precarious circumstances under which `__del__()` methods are invoked,
 
 - `__del__()` can be executed during interpreter shutdown. As a consequence, the global variables it needs to access (including other modules) may already have been deleted or set to `None`. Python guarantees that globals whose name begins with a single underscore are deleted from their module before other globals are deleted; if no other references to such globals exist, this may help in assuring that imported modules are still available at the time when the `__del__()` method is called.
 
-<span id="datamodel--index-81"></span>
 
 <!-- -->
 
@@ -2605,7 +2537,6 @@ Called by the [`repr()`](https://docs.python.org/3/library/functions.html#repr) 
 
 This is typically used for debugging, so it is important that the representation is information-rich and unambiguous. A default implementation is provided by the [`object`](https://docs.python.org/3/library/functions.html#object) class itself.
 
-<span id="datamodel--index-82"></span>
 
 <!-- -->
 
@@ -2621,7 +2552,6 @@ The default implementation defined by the built-in type [`object`](https://docs.
 object.\_\_bytes\_\_(*self*)  
 Called by [bytes](https://docs.python.org/3/library/functions.html#func-bytes) to compute a byte-string representation of an object. This should return a [`bytes`](https://docs.python.org/3/library/stdtypes.html#bytes) object. The [`object`](https://docs.python.org/3/library/functions.html#object) class itself does not provide this method.
 
-<span id="datamodel--index-84"></span>
 
 <!-- -->
 
@@ -2690,7 +2620,7 @@ This is intended to provide protection against a denial-of-service caused by car
 
 Changing hash values affects the iteration order of sets. Python has never made guarantees about this ordering (and it typically varies between 32-bit and 64-bit builds).
 
-See also <span id="datamodel--index-87"></span>[`PYTHONHASHSEED`](https://docs.python.org/3/using/cmdline.html#envvar-PYTHONHASHSEED).
+See also [`PYTHONHASHSEED`](https://docs.python.org/3/using/cmdline.html#envvar-PYTHONHASHSEED).
 
 Changed in version 3.3: Hash randomization is enabled by default.
 
@@ -2699,7 +2629,6 @@ Changed in version 3.3: Hash randomization is enabled by default.
 object.\_\_bool\_\_(*self*)  
 Called to implement truth value testing and the built-in operation `bool()`; should return `False` or `True`. When this method is not defined, [`__len__()`](#datamodel--object.__len__) is called, if it is defined, and the object is considered true if its result is nonzero. If a class defines neither `__len__()` nor `__bool__()` (which is true of the [`object`](https://docs.python.org/3/library/functions.html#object) class itself), all its instances are considered true.
 
-<span id="datamodel--attribute-access"></span>
 
 ## 3.3.2. Customizing attribute access
 
@@ -2778,10 +2707,9 @@ Added in version 3.7: `__getattr__` and `__dir__` module attributes.
 
 See also
 
-<span id="datamodel--index-90"></span>[**PEP 562**](https://peps.python.org/pep-0562/) - Module \_\_getattr\_\_ and \_\_dir\_\_  
+[**PEP 562**](https://peps.python.org/pep-0562/) - Module \_\_getattr\_\_ and \_\_dir\_\_  
 Describes the `__getattr__` and `__dir__` functions on modules.
 
-<span id="datamodel--descriptors"></span>
 
 ## 3.3.2.2. Implementing Descriptors
 
@@ -2792,7 +2720,7 @@ Called to get the attribute of the owner class (class attribute access) or of an
 
 This method should return the computed attribute value or raise an [`AttributeError`](https://docs.python.org/3/library/exceptions.html#AttributeError) exception.
 
-<span id="datamodel--index-91"></span>[**PEP 252**](https://peps.python.org/pep-0252/) specifies that `__get__()` is callable with one or two arguments. Python’s own built-in descriptors support this specification; however, it is likely that some third-party tools have descriptors that require both arguments. Python’s own [`__getattribute__()`](#datamodel--object.__getattribute__) implementation always passes in both arguments whether they are required or not.
+[**PEP 252**](https://peps.python.org/pep-0252/) specifies that `__get__()` is callable with one or two arguments. Python’s own built-in descriptors support this specification; however, it is likely that some third-party tools have descriptors that require both arguments. Python’s own [`__getattribute__()`](#datamodel--object.__getattribute__) implementation always passes in both arguments whether they are required or not.
 
 <!-- -->
 
@@ -2811,7 +2739,6 @@ Instances of descriptors may also have the `__objclass__` attribute present:
 object.\_\_objclass\_\_  
 The attribute `__objclass__` is interpreted by the [`inspect`](https://docs.python.org/3/library/inspect.html#module-inspect) module as specifying the class where this object was defined (setting this appropriately can assist in runtime introspection of dynamic class attributes). For callables, it may indicate that an instance of the given type (or a subclass) is expected or required as the first positional argument (for example, CPython sets this attribute for unbound methods that are implemented in C).
 
-<span id="datamodel--descriptor-invocation"></span>
 
 ## 3.3.2.3. Invoking Descriptors
 
@@ -2841,7 +2768,6 @@ Python methods (including those decorated with [`@staticmethod`](https://docs.py
 
 The [`@property`](https://docs.python.org/3/library/functions.html#property) decorator is implemented as a data descriptor. Accordingly, instances cannot override the behavior of a property.
 
-<span id="datamodel--id13"></span>
 
 ## 3.3.2.4. \_\_slots\_\_
 
@@ -2878,7 +2804,6 @@ Notes on using *\_\_slots\_\_*:
 
 - If an [iterator](https://docs.python.org/3/glossary.html#term-iterator) is used for *\_\_slots\_\_* then a [descriptor](https://docs.python.org/3/glossary.html#term-descriptor) is created for each of the iterator’s values. However, the *\_\_slots\_\_* attribute will be an empty iterator.
 
-<span id="datamodel--class-customization"></span>
 
 ## 3.3.3. Customizing class creation
 
@@ -2926,7 +2851,6 @@ See [Creating the class object](#datamodel--class-object-creation) for more deta
 
 Added in version 3.6.
 
-<span id="datamodel--id14"></span>
 
 ## 3.3.3.1. Metaclasses
 
@@ -2970,7 +2894,7 @@ Dynamically resolve bases that are not instances of [`type`](https://docs.python
 [`types.get_original_bases()`](https://docs.python.org/3/library/types.html#types.get_original_bases)  
 Retrieve a class’s “original bases” prior to modifications by [`__mro_entries__()`](#datamodel--object.__mro_entries__).
 
-<span id="datamodel--index-93"></span>[**PEP 560**](https://peps.python.org/pep-0560/)  
+[**PEP 560**](https://peps.python.org/pep-0560/)  
 Core support for typing module and generic types.
 
 ## 3.3.3.3. Determining the appropriate metaclass
@@ -2985,7 +2909,6 @@ The appropriate metaclass for a class definition is determined as follows:
 
 The most derived metaclass is selected from the explicitly specified metaclass (if any) and the metaclasses (i.e. `type(cls)`) of all specified base classes. The most derived metaclass is one which is a subtype of *all* of these candidate metaclasses. If none of the candidate metaclasses meets that criterion, then the class definition will fail with `TypeError`.
 
-<span id="datamodel--prepare"></span>
 
 ## 3.3.3.4. Preparing the class namespace
 
@@ -2995,7 +2918,7 @@ If the metaclass has no `__prepare__` attribute, then the class namespace is ini
 
 See also
 
-<span id="datamodel--index-96"></span>[**PEP 3115**](https://peps.python.org/pep-3115/) - Metaclasses in Python 3000  
+[**PEP 3115**](https://peps.python.org/pep-3115/) - Metaclasses in Python 3000  
 Introduced the `__prepare__` namespace hook
 
 ## 3.3.3.5. Executing the class body
@@ -3004,7 +2927,6 @@ The class body is executed (approximately) as `exec(body, globals(), namespace)`
 
 However, even when the class definition occurs inside the function, methods defined inside the class still cannot see names defined at the class scope. Class variables must be accessed through the first parameter of instance or class methods, or through the implicit lexically scoped `__class__` reference described in the next section.
 
-<span id="datamodel--class-object-creation"></span>
 
 ## 3.3.3.6. Creating the class object
 
@@ -3028,7 +2950,7 @@ When a new class is created by `type.__new__`, the object provided as the namesp
 
 See also
 
-<span id="datamodel--index-99"></span>[**PEP 3135**](https://peps.python.org/pep-3135/) - New super  
+[**PEP 3135**](https://peps.python.org/pep-3135/) - New super  
 Describes the implicit `__class__` closure reference
 
 ## 3.3.3.7. Uses for metaclasses
@@ -3053,7 +2975,7 @@ Note that these methods are looked up on the type (metaclass) of a class. They c
 
 See also
 
-<span id="datamodel--index-100"></span>[**PEP 3119**](https://peps.python.org/pep-3119/) - Introducing Abstract Base Classes  
+[**PEP 3119**](https://peps.python.org/pep-3119/) - Introducing Abstract Base Classes  
 Includes the specification for customizing [`isinstance()`](https://docs.python.org/3/library/functions.html#isinstance) and [`issubclass()`](https://docs.python.org/3/library/functions.html#issubclass) behavior through [`__instancecheck__()`](#datamodel--type.__instancecheck__) and [`__subclasscheck__()`](#datamodel--type.__subclasscheck__), with motivation for this functionality in the context of adding Abstract Base Classes (see the [`abc`](https://docs.python.org/3/library/abc.html#module-abc) module) to the language.
 
 ## 3.3.5. Emulating generic types
@@ -3062,7 +2984,7 @@ When using [type annotations](https://docs.python.org/3/glossary.html#term-annot
 
 See also
 
-<span id="datamodel--index-101"></span>[**PEP 484**](https://peps.python.org/pep-0484/) - Type Hints  
+[**PEP 484**](https://peps.python.org/pep-0484/) - Type Hints  
 Introducing Python’s framework for type annotations
 
 [Generic Alias Types](https://docs.python.org/3/library/stdtypes.html#types-genericalias)  
@@ -3086,7 +3008,6 @@ To implement custom generic classes that can be parameterized at runtime and und
 
 Custom implementations of [`__class_getitem__()`](#datamodel--object.__class_getitem__) on classes defined outside of the standard library may not be understood by third-party type-checkers such as mypy. Using `__class_getitem__()` on any class for purposes other than type hinting is discouraged.
 
-<span id="datamodel--classgetitem-versus-getitem"></span>
 
 ## 3.3.5.2. *\_\_class_getitem\_\_* versus *\_\_getitem\_\_*
 
@@ -3152,17 +3073,15 @@ However, if a class has a custom metaclass that defines [`__getitem__()`](#datam
 
 See also
 
-<span id="datamodel--index-102"></span>[**PEP 560**](https://peps.python.org/pep-0560/) - Core Support for typing module and generic types  
+[**PEP 560**](https://peps.python.org/pep-0560/) - Core Support for typing module and generic types  
 Introducing [`__class_getitem__()`](#datamodel--object.__class_getitem__), and outlining when a [subscription](#expressions--subscriptions) results in `__class_getitem__()` being called instead of [`__getitem__()`](#datamodel--object.__getitem__)
 
-<span id="datamodel--id15"></span>
 
 ## 3.3.6. Emulating callable objects
 
 object.\_\_call\_\_(*self*\[, *args...*\])  
 Called when the instance is “called” as a function; if this method is defined, `x(arg1, arg2, ...)` roughly translates to `type(x).__call__(x, arg1, ...)`. The [`object`](https://docs.python.org/3/library/functions.html#object) class itself does not provide this method.
 
-<span id="datamodel--sequence-types"></span>
 
 ## 3.3.7. Emulating container types
 
@@ -3251,7 +3170,6 @@ Called to implement membership test operators. Should return true if *item* is i
 
 For objects that don’t define `__contains__()`, the membership test first tries iteration via [`__iter__()`](#datamodel--object.__iter__), then the old sequence iteration protocol via [`__getitem__()`](#datamodel--object.__getitem__), see [this section in the language reference](#expressions--membership-test-details).
 
-<span id="datamodel--numeric-types"></span>
 
 ## 3.3.8. Emulating numeric types
 
@@ -3350,7 +3268,6 @@ Called to implement the built-in function [`round()`](https://docs.python.org/3/
 
 Changed in version 3.14: [`int()`](https://docs.python.org/3/library/functions.html#int) no longer delegates to the `__trunc__()` method.
 
-<span id="datamodel--context-managers"></span>
 
 ## 3.3.9. With Statement Context Managers
 
@@ -3374,10 +3291,9 @@ Note that `__exit__()` methods should not reraise the passed-in exception; this 
 
 See also
 
-<span id="datamodel--index-112"></span>[**PEP 343**](https://peps.python.org/pep-0343/) - The “with” statement  
+[**PEP 343**](https://peps.python.org/pep-0343/) - The “with” statement  
 The specification, background, and examples for the Python [`with`](#compound_stmts--with) statement.
 
-<span id="datamodel--class-pattern-matching"></span>
 
 ## 3.3.10. Customizing positional arguments in class pattern matching
 
@@ -3392,10 +3308,9 @@ Added in version 3.10.
 
 See also
 
-<span id="datamodel--index-113"></span>[**PEP 634**](https://peps.python.org/pep-0634/) - Structural Pattern Matching  
+[**PEP 634**](https://peps.python.org/pep-0634/) - Structural Pattern Matching  
 The specification for the Python `match` statement.
 
-<span id="datamodel--python-buffer-protocol"></span>
 
 ## 3.3.11. Emulating buffer types
 
@@ -3421,7 +3336,7 @@ Added in version 3.12.
 
 See also
 
-<span id="datamodel--index-114"></span>[**PEP 688**](https://peps.python.org/pep-0688/) - Making the buffer protocol accessible in Python  
+[**PEP 688**](https://peps.python.org/pep-0688/) - Making the buffer protocol accessible in Python  
 Introduces the Python `__buffer__` and `__release_buffer__` methods.
 
 [`collections.abc.Buffer`](https://docs.python.org/3/library/collections.abc.html#collections.abc.Buffer)  
@@ -3453,10 +3368,9 @@ Added in version 3.14.
 
 See also
 
-<span id="datamodel--index-115"></span>[**PEP 649**](https://peps.python.org/pep-0649/) — Deferred evaluation of annotation using descriptors  
+[**PEP 649**](https://peps.python.org/pep-0649/) — Deferred evaluation of annotation using descriptors  
 Introduces lazy evaluation of annotations and the `__annotate__` function.
 
-<span id="datamodel--special-lookup"></span>
 
 ## 3.3.13. Special method lookup
 
@@ -3514,7 +3428,6 @@ In addition to bypassing any instance attributes in the interest of correctness,
 
 Bypassing the [`__getattribute__()`](#datamodel--object.__getattribute__) machinery in this fashion provides significant scope for speed optimisations within the interpreter, at the cost of some flexibility in the handling of special methods (the special method *must* be set on the class object itself in order to be consistently invoked by the interpreter).
 
-<span id="datamodel--index-116"></span>
 
 ## 3.4. Coroutines
 
@@ -3537,9 +3450,8 @@ Added in version 3.5.
 
 See also
 
-<span id="datamodel--index-117"></span>[**PEP 492**](https://peps.python.org/pep-0492/) for additional information about awaitable objects.
+[**PEP 492**](https://peps.python.org/pep-0492/) for additional information about awaitable objects.
 
-<span id="datamodel--id19"></span>
 
 ## 3.4.2. Coroutine Objects
 
@@ -3569,7 +3481,6 @@ Causes the coroutine to clean itself up and exit. If the coroutine is suspended,
 
 Coroutine objects are automatically closed using the above process when they are about to be destroyed.
 
-<span id="datamodel--async-iterators"></span>
 
 ## 3.4.3. Asynchronous Iterators
 
@@ -3608,7 +3519,6 @@ Changed in version 3.7: Prior to Python 3.7, [`__aiter__()`](#datamodel--object.
 
 Starting with Python 3.7, [`__aiter__()`](#datamodel--object.__aiter__) must return an asynchronous iterator object. Returning anything else will result in a [`TypeError`](https://docs.python.org/3/library/exceptions.html#TypeError) error.
 
-<span id="datamodel--async-context-managers"></span>
 
 ## 3.4.4. Asynchronous Context Managers
 
@@ -3659,11 +3569,9 @@ For operands of the same type, it is assumed that if the non-reflected method (s
 
 If the right operand’s type is a subclass of the left operand’s type, the reflected method having precedence allows subclasses to override their ancestors’ operations.
 
-<span id="executionmodel--execmodel"></span>
 
 ## 4. Execution model
 
-<span id="executionmodel--prog-structure"></span> <span id="executionmodel--index-0"></span>
 
 ## 4.1. Structure of a program
 
@@ -3671,11 +3579,9 @@ A Python program is constructed from code blocks. A *block* is a piece of Python
 
 A code block is executed in an *execution frame*. A frame contains some administrative information (used for debugging) and determines where and how execution continues after the code block’s execution has completed.
 
-<span id="executionmodel--naming"></span>
 
 ## 4.2. Naming and binding
 
-<span id="executionmodel--bind-names"></span> <span id="executionmodel--index-3"></span>
 
 ## 4.2.1. Binding of names
 
@@ -3715,7 +3621,6 @@ If a name is bound in a block, it is a local variable of that block, unless decl
 
 Each occurrence of a name in the program text refers to the *binding* of that name established by the following name resolution rules.
 
-<span id="executionmodel--resolve-names"></span>
 
 ## 4.2.2. Resolution of names
 
@@ -3749,7 +3654,6 @@ However, the following will succeed:
 
     print(A.Alias.__value__)  # <type 'A.Nested'>
 
-<span id="executionmodel--id1"></span>
 
 ## 4.2.3. Annotation scopes
 
@@ -3781,13 +3685,12 @@ Annotation scopes differ from function scopes in the following ways:
 
 - While annotation scopes have an internal name, that name is not reflected in the [qualified name](https://docs.python.org/3/glossary.html#term-qualified-name) of objects defined within the scope. Instead, the [`__qualname__`](https://docs.python.org/3/library/stdtypes.html#definition.__qualname__) of such objects is as if the object were defined in the enclosing scope.
 
-Added in version 3.12: Annotation scopes were introduced in Python 3.12 as part of <span id="executionmodel--index-11"></span>[**PEP 695**](https://peps.python.org/pep-0695/).
+Added in version 3.12: Annotation scopes were introduced in Python 3.12 as part of [**PEP 695**](https://peps.python.org/pep-0695/).
 
-Changed in version 3.13: Annotation scopes are also used for type parameter defaults, as introduced by <span id="executionmodel--index-12"></span>[**PEP 696**](https://peps.python.org/pep-0696/).
+Changed in version 3.13: Annotation scopes are also used for type parameter defaults, as introduced by [**PEP 696**](https://peps.python.org/pep-0696/).
 
-Changed in version 3.14: Annotation scopes are now also used for annotations, as specified in <span id="executionmodel--index-13"></span>[**PEP 649**](https://peps.python.org/pep-0649/) and <span id="executionmodel--index-14"></span>[**PEP 749**](https://peps.python.org/pep-0749/).
+Changed in version 3.14: Annotation scopes are now also used for annotations, as specified in [**PEP 649**](https://peps.python.org/pep-0649/) and [**PEP 749**](https://peps.python.org/pep-0749/).
 
-<span id="executionmodel--id2"></span>
 
 ## 4.2.4. Lazy evaluation
 
@@ -3821,7 +3724,6 @@ Lazily evaluated values are evaluated in [annotation scope](#executionmodel--ann
 
 Added in version 3.12.
 
-<span id="executionmodel--restrict-exec"></span>
 
 ## 4.2.5. Builtins and restricted execution
 
@@ -3829,7 +3731,6 @@ Added in version 3.12.
 
 The builtins namespace associated with the execution of a code block is actually found by looking up the name `__builtins__` in its global namespace; this should be a dictionary or a module (in the latter case the module’s dictionary is used). By default, when in the [`__main__`](https://docs.python.org/3/library/__main__.html#module-__main__) module, `__builtins__` is the built-in module [`builtins`](https://docs.python.org/3/library/builtins.html#module-builtins); when in any other module, `__builtins__` is an alias for the dictionary of the `builtins` module itself.
 
-<span id="executionmodel--dynamic-features"></span>
 
 ## 4.2.6. Interaction with dynamic features
 
@@ -3843,11 +3744,10 @@ Name resolution of free variables occurs at runtime, not at compile time. This m
 
 The [`eval()`](https://docs.python.org/3/library/functions.html#eval) and [`exec()`](https://docs.python.org/3/library/functions.html#exec) functions do not have access to the full environment for resolving names. Names may be resolved in the local and global namespaces of the caller. Free variables are not resolved in the nearest enclosing namespace, but in the global namespace. [\[1\]](#executionmodel--id5){#executionmodel--id3} The `exec()` and `eval()` functions have optional arguments to override the global and local namespace. If only one namespace is specified, it is used for both.
 
-<span id="executionmodel--id4"></span>
 
 ## 4.3. Exceptions
 
-<span id="executionmodel--index-16"></span>Exceptions are a means of breaking out of the normal flow of control of a code block in order to handle errors or other exceptional conditions. An exception is *raised* at the point where the error is detected; it may be *handled* by the surrounding code block or by any code block that directly or indirectly invoked the code block where the error occurred.
+Exceptions are a means of breaking out of the normal flow of control of a code block in order to handle errors or other exceptional conditions. An exception is *raised* at the point where the error is detected; it may be *handled* by the surrounding code block or by any code block that directly or indirectly invoked the code block where the error occurred.
 
 The Python interpreter raises an exception when it detects a run-time error (such as division by zero). A Python program can also explicitly raise an exception with the [`raise`](#simple_stmts--raise) statement. Exception handlers are specified with the [`try`](#compound_stmts--try) … [`except`](#compound_stmts--except) statement. The [`finally`](#compound_stmts--finally) clause of such a statement can be used to specify cleanup code which does not handle the exception, but is executed whether an exception occurred or not in the preceding code.
 
@@ -3863,7 +3763,6 @@ Exception messages are not part of the Python API. Their contents may change fro
 
 See also the description of the [`try`](#compound_stmts--try) statement in section [The try statement](#compound_stmts--try) and [`raise`](#simple_stmts--raise) statement in section [The raise statement](#simple_stmts--raise).
 
-<span id="executionmodel--execcomponents"></span>
 
 ## 4.4. Runtime Components
 
@@ -3947,7 +3846,6 @@ Footnotes
 
 This limitation occurs because the code that is executed by these operations is not available at the time the module is compiled.
 
-<span id="import--importsystem"></span>
 
 ## 5. The import system
 
@@ -3961,7 +3859,7 @@ When an [`import`](#simple_stmts--import) statement is executed, the standard bu
 
 When a module is first imported, Python searches for the module and if found, it creates a module object [\[1\]](#import--fnmo){#import--id1}, initializing it. If the named module cannot be found, a [`ModuleNotFoundError`](https://docs.python.org/3/library/exceptions.html#ModuleNotFoundError) is raised. Python implements various strategies to search for the named module when the import machinery is invoked. These strategies can be modified and extended by using various hooks described in the sections below.
 
-Changed in version 3.3: The import system has been updated to fully implement the second phase of <span id="import--index-1"></span>[**PEP 302**](https://peps.python.org/pep-0302/). There is no longer any implicit import machinery - the full import system is exposed through [`sys.meta_path`](https://docs.python.org/3/library/sys.html#sys.meta_path). In addition, native namespace package support has been implemented (see <span id="import--index-2"></span>[**PEP 420**](https://peps.python.org/pep-0420/)).
+Changed in version 3.3: The import system has been updated to fully implement the second phase of [**PEP 302**](https://peps.python.org/pep-0302/). There is no longer any implicit import machinery - the full import system is exposed through [`sys.meta_path`](https://docs.python.org/3/library/sys.html#sys.meta_path). In addition, native namespace package support has been implemented (see [**PEP 420**](https://peps.python.org/pep-0420/)).
 
 ## 5.1. [`importlib`](https://docs.python.org/3/library/importlib.html#module-importlib)
 
@@ -3994,9 +3892,8 @@ For example, the following file system layout defines a top level `parent` packa
 
 Importing `parent.one` will implicitly execute `parent/__init__.py` and `parent/one/__init__.py`. Subsequent imports of `parent.two` or `parent.three` will execute `parent/two/__init__.py` and `parent/three/__init__.py` respectively.
 
-A subdirectory inside a regular package that does not contain an `__init__.py` file is treated as an implicit [namespace package](#import--reference-namespace-package) (a “namespace subpackage”) rooted in that parent. See <span id="import--index-5"></span>[**PEP 420**](https://peps.python.org/pep-0420/) for the underlying specification.
+A subdirectory inside a regular package that does not contain an `__init__.py` file is treated as an implicit [namespace package](#import--reference-namespace-package) (a “namespace subpackage”) rooted in that parent. See [**PEP 420**](https://peps.python.org/pep-0420/) for the underlying specification.
 
-<span id="import--reference-namespace-package"></span>
 
 ## 5.2.2. Namespace packages
 
@@ -4008,7 +3905,7 @@ With namespace packages, there is no `parent/__init__.py` file. In fact, there m
 
 Namespace packages may also be nested inside a regular package. When the import system searches a regular package’s `__path__` and encounters a subdirectory that does not contain an `__init__.py` file, that subdirectory becomes a [portion](https://docs.python.org/3/glossary.html#term-portion) contributing to a namespace subpackage of the enclosing regular package.
 
-See also <span id="import--index-7"></span>[**PEP 420**](https://peps.python.org/pep-0420/) for the namespace package specification.
+See also [**PEP 420**](https://peps.python.org/pep-0420/) for the namespace package specification.
 
 ## 5.3. Searching
 
@@ -4026,7 +3923,6 @@ During import, the module name is looked up in [`sys.modules`](https://docs.pyth
 
 Beware though, as if you keep a reference to the module object, invalidate its cache entry in [`sys.modules`](https://docs.python.org/3/library/sys.html#sys.modules), and then re-import the named module, the two module objects will *not* be the same. By contrast, [`importlib.reload()`](https://docs.python.org/3/library/importlib.html#importlib.reload) will reuse the *same* module object, and simply reinitialise the module contents by rerunning the module’s code.
 
-<span id="import--id2"></span>
 
 ## 5.3.2. Finders and loaders
 
@@ -4175,7 +4071,6 @@ then executing the following puts name bindings for `foo` and `Foo` in the `spam
 
 Given Python’s familiar name binding rules this might seem surprising, but it’s actually a fundamental feature of the import system. The invariant holding is that if you have `sys.modules['spam']` and `sys.modules['spam.foo']` (as you would after the above import), the latter must appear as the `foo` attribute of the former.
 
-<span id="import--id4"></span>
 
 ## 5.4.3. Module specs
 
@@ -4189,7 +4084,6 @@ See [`ModuleSpec`](https://docs.python.org/3/library/importlib.html#importlib.ma
 
 Added in version 3.4.
 
-<span id="import--package-path-rules"></span>
 
 ## 5.4.4. \_\_path\_\_ attributes on modules
 
@@ -4199,7 +4093,7 @@ A package’s [`__path__`](#datamodel--module.__path__) attribute is used during
 
 The same rules used for [`sys.path`](https://docs.python.org/3/library/sys.html#sys.path) also apply to a package’s `__path__`. [`sys.path_hooks`](https://docs.python.org/3/library/sys.html#sys.path_hooks) (described below) are consulted when traversing a package’s `__path__`.
 
-A package’s `__init__.py` file may set or alter the package’s [`__path__`](#datamodel--module.__path__) attribute, and this was typically the way namespace packages were implemented prior to <span id="import--index-12"></span>[**PEP 420**](https://peps.python.org/pep-0420/). With the adoption of <span id="import--index-13"></span>[**PEP 420**](https://peps.python.org/pep-0420/), namespace packages no longer need to supply `__init__.py` files containing only `__path__` manipulation code; the import machinery automatically sets `__path__` correctly for the namespace package.
+A package’s `__init__.py` file may set or alter the package’s [`__path__`](#datamodel--module.__path__) attribute, and this was typically the way namespace packages were implemented prior to [**PEP 420**](https://peps.python.org/pep-0420/). With the adoption of [**PEP 420**](https://peps.python.org/pep-0420/), namespace packages no longer need to supply `__init__.py` files containing only `__path__` manipulation code; the import machinery automatically sets `__path__` correctly for the namespace package.
 
 ## 5.4.5. Module reprs
 
@@ -4219,7 +4113,6 @@ Here are the exact rules used:
 
 Changed in version 3.12: Use of `module_repr()`, having been deprecated since Python 3.4, was removed in Python 3.12 and is no longer called during the resolution of a module’s repr.
 
-<span id="import--pyc-invalidation"></span>
 
 ## 5.4.6. Cached bytecode invalidation
 
@@ -4253,7 +4146,7 @@ As a meta path finder, the [path based finder](https://docs.python.org/3/glossar
 
 Three variables are used by the [path based finder](https://docs.python.org/3/glossary.html#term-path-based-finder), [`sys.path`](https://docs.python.org/3/library/sys.html#sys.path), [`sys.path_hooks`](https://docs.python.org/3/library/sys.html#sys.path_hooks) and [`sys.path_importer_cache`](https://docs.python.org/3/library/sys.html#sys.path_importer_cache). The `__path__` attributes on package objects are also used. These provide additional ways that the import machinery can be customized.
 
-[`sys.path`](https://docs.python.org/3/library/sys.html#sys.path) contains a list of strings providing search locations for modules and packages. It is initialized from the <span id="import--index-16"></span>[`PYTHONPATH`](https://docs.python.org/3/using/cmdline.html#envvar-PYTHONPATH) environment variable and various other installation- and implementation-specific defaults. Entries in `sys.path` can name directories on the file system, zip files, and potentially other “locations” (see the [`site`](https://docs.python.org/3/library/site.html#module-site) module) that should be searched for modules, such as URLs, or database queries. Only strings should be present on `sys.path`; all other data types are ignored.
+[`sys.path`](https://docs.python.org/3/library/sys.html#sys.path) contains a list of strings providing search locations for modules and packages. It is initialized from the [`PYTHONPATH`](https://docs.python.org/3/using/cmdline.html#envvar-PYTHONPATH) environment variable and various other installation- and implementation-specific defaults. Entries in `sys.path` can name directories on the file system, zip files, and potentially other “locations” (see the [`site`](https://docs.python.org/3/library/site.html#module-site) module) that should be searched for modules, such as URLs, or database queries. Only strings should be present on `sys.path`; all other data types are ignored.
 
 The [path based finder](https://docs.python.org/3/glossary.html#term-path-based-finder) is a [meta path finder](https://docs.python.org/3/glossary.html#term-meta-path-finder), so the import machinery begins the [import path](https://docs.python.org/3/glossary.html#term-import-path) search by calling the path based finder’s [`find_spec()`](https://docs.python.org/3/library/importlib.html#importlib.machinery.PathFinder.find_spec) method as described previously. When the `path` argument to `find_spec()` is given, it will be a list of string paths to traverse - typically a package’s `__path__` attribute for an import within that package. If the `path` argument is `None`, this indicates a top level import and [`sys.path`](https://docs.python.org/3/library/sys.html#sys.path) is used.
 
@@ -4297,7 +4190,6 @@ If it is acceptable to only alter the behaviour of import statements without aff
 
 To selectively prevent the import of some modules from a hook early on the meta path (rather than disabling the standard import system entirely), it is sufficient to raise [`ModuleNotFoundError`](https://docs.python.org/3/library/exceptions.html#ModuleNotFoundError) directly from [`find_spec()`](https://docs.python.org/3/library/importlib.html#importlib.abc.MetaPathFinder.find_spec) instead of returning `None`. The latter indicates that the meta path search should continue, while raising an exception terminates it immediately.
 
-<span id="import--relativeimports"></span>
 
 ## 5.7. Package Relative Imports
 
@@ -4329,13 +4221,11 @@ Absolute imports may use either the `import <>` or `from <> import <>` syntax, b
 
 should expose `XXX.YYY.ZZZ` as a usable expression, but .moduleY is not a valid expression.
 
-<span id="import--import-dunder-main"></span>
 
 ## 5.8. Special considerations for \_\_main\_\_
 
 The [`__main__`](https://docs.python.org/3/library/__main__.html#module-__main__) module is a special case relative to Python’s import system. As noted [elsewhere](#toplevel_components--programs), the `__main__` module is directly initialized at interpreter startup, much like [`sys`](https://docs.python.org/3/library/sys.html#module-sys) and [`builtins`](https://docs.python.org/3/library/builtins.html#module-builtins). However, unlike those two, it doesn’t strictly qualify as a built-in module. This is because the manner in which `__main__` is initialized depends on the flags and other options with which the interpreter is invoked.
 
-<span id="import--id5"></span>
 
 ## 5.8.1. \_\_main\_\_.\_\_spec\_\_
 
@@ -4361,17 +4251,17 @@ Note also that even when `__main__` corresponds with an importable module and `_
 
 The import machinery has evolved considerably since Python’s early days. The original [specification for packages](https://www.python.org/doc/essays/packages/) is still available to read, although some details have changed since the writing of that document.
 
-The original specification for [`sys.meta_path`](https://docs.python.org/3/library/sys.html#sys.meta_path) was <span id="import--index-17"></span>[**PEP 302**](https://peps.python.org/pep-0302/), with subsequent extension in <span id="import--index-18"></span>[**PEP 420**](https://peps.python.org/pep-0420/).
+The original specification for [`sys.meta_path`](https://docs.python.org/3/library/sys.html#sys.meta_path) was [**PEP 302**](https://peps.python.org/pep-0302/), with subsequent extension in [**PEP 420**](https://peps.python.org/pep-0420/).
 
-<span id="import--index-19"></span>[**PEP 420**](https://peps.python.org/pep-0420/) introduced [namespace packages](https://docs.python.org/3/glossary.html#term-namespace-package) for Python 3.3. <span id="import--index-20"></span>[**PEP 420**](https://peps.python.org/pep-0420/) also introduced the `find_loader()` protocol as an alternative to `find_module()`.
+[**PEP 420**](https://peps.python.org/pep-0420/) introduced [namespace packages](https://docs.python.org/3/glossary.html#term-namespace-package) for Python 3.3. [**PEP 420**](https://peps.python.org/pep-0420/) also introduced the `find_loader()` protocol as an alternative to `find_module()`.
 
-<span id="import--index-21"></span>[**PEP 366**](https://peps.python.org/pep-0366/) describes the addition of the `__package__` attribute for explicit relative imports in main modules.
+[**PEP 366**](https://peps.python.org/pep-0366/) describes the addition of the `__package__` attribute for explicit relative imports in main modules.
 
-<span id="import--index-22"></span>[**PEP 328**](https://peps.python.org/pep-0328/) introduced absolute and explicit relative imports and initially proposed `__name__` for semantics <span id="import--index-23"></span>[**PEP 366**](https://peps.python.org/pep-0366/) would eventually specify for `__package__`.
+[**PEP 328**](https://peps.python.org/pep-0328/) introduced absolute and explicit relative imports and initially proposed `__name__` for semantics [**PEP 366**](https://peps.python.org/pep-0366/) would eventually specify for `__package__`.
 
-<span id="import--index-24"></span>[**PEP 338**](https://peps.python.org/pep-0338/) defines executing modules as scripts.
+[**PEP 338**](https://peps.python.org/pep-0338/) defines executing modules as scripts.
 
-<span id="import--index-25"></span>[**PEP 451**](https://peps.python.org/pep-0451/) adds the encapsulation of per-module import state in spec objects. It also off-loads most of the boilerplate responsibilities of loaders back onto the import machinery. These changes allow the deprecation of several APIs in the import system and also addition of new methods to finders and loaders.
+[**PEP 451**](https://peps.python.org/pep-0451/) adds the encapsulation of per-module import state in spec objects. It also off-loads most of the boilerplate responsibilities of loaders back onto the import machinery. These changes allow the deprecation of several APIs in the import system and also addition of new methods to finders and loaders.
 
 Footnotes
 
@@ -4383,7 +4273,6 @@ See [`types.ModuleType`](https://docs.python.org/3/library/types.html#types.Modu
 
 The importlib implementation avoids using the return value directly. Instead, it gets the module object by looking the module name up in [`sys.modules`](https://docs.python.org/3/library/sys.html#sys.modules). The indirect effect of this is that an imported module may replace itself in `sys.modules`. This is implementation-specific behavior that is not guaranteed to work in other Python implementations.
 
-<span id="expressions--id1"></span>
 
 ## 6. Expressions
 
@@ -4397,7 +4286,6 @@ When (one alternative of) a syntax rule has the form:
 
 and no semantics are given, the semantics of this form of `name` are the same as for `othername`.
 
-<span id="expressions--conversions"></span>
 
 ## 6.1. Arithmetic conversions
 
@@ -4405,7 +4293,6 @@ When a description of an arithmetic operator below uses the phrase “the numeri
 
 Some additional rules apply for certain operators and non-numeric operands (for example, a string as a left argument to the `%` operator). Extensions must define their own conversion behavior.
 
-<span id="expressions--id2"></span>
 
 ## 6.2. Atoms
 
@@ -4429,7 +4316,6 @@ Formally, the syntax for atoms is:
        | generator_expression
        | yield_atom
 
-<span id="expressions--atom-singletons"></span>
 
 ## 6.2.1. Built-in constants
 
@@ -4447,7 +4333,6 @@ Several more built-in constants are available as global variables, but only the 
        ^^^^^
     SyntaxError: cannot assign to False
 
-<span id="expressions--identifiers-names"></span>
 
 ## 6.2.2. Identifiers (Names)
 
@@ -4455,7 +4340,6 @@ An identifier occurring as an atom is a name. See section [Names (identifiers an
 
 When the name is bound to an object, evaluation of the atom yields that object. When a name is not bound, an attempt to evaluate it raises a [`NameError`](https://docs.python.org/3/library/exceptions.html#NameError) exception.
 
-<span id="expressions--private-name-mangling"></span> <span id="expressions--id3"></span>
 
 ## 6.2.2.1. Private name mangling
 
@@ -4483,7 +4367,6 @@ The transformation rule is defined as follows:
 
 - If the class name consists only of underscores, the transformation is the identity, e.g., the identifier `__spam` occurring in a class named `_` or `__` is left as is.
 
-<span id="expressions--atom-literals"></span>
 
 ## 6.2.3. Literals
 
@@ -4501,7 +4384,6 @@ The formal grammar for literals is:
 
     literal: strings | NUMBER
 
-<span id="expressions--index-7"></span>
 
 ## 6.2.3.1. Literals and object identity
 
@@ -4538,7 +4420,6 @@ See [When can I rely on identity tests with the is operator?](https://docs.pytho
 
 **CPython implementation detail:** Currently, each evaluation of a template string results in a different object.
 
-<span id="expressions--string-concatenation"></span>
 
 ## 6.2.3.2. String literal concatenation
 
@@ -4575,7 +4456,6 @@ Formally:
 
     strings: (STRING | fstring)+ | tstring+
 
-<span id="expressions--parenthesized"></span>
 
 ## 6.2.4. Parenthesized forms
 
@@ -4589,7 +4469,6 @@ An empty pair of parentheses yields an empty tuple object. Since tuples are immu
 
 Note that tuples are not formed by the parentheses, but rather by use of the comma. The exception is the empty tuple, for which parentheses *are* required — allowing unparenthesized “nothing” in expressions would cause ambiguities and allow common typos to pass uncaught.
 
-<span id="expressions--comprehensions"></span>
 
 ## 6.2.5. Displays for lists, sets and dictionaries
 
@@ -4616,7 +4495,7 @@ To ensure the comprehension always results in a container of the appropriate typ
 
 Since Python 3.6, in an [`async def`](#compound_stmts--async-def) function, an `async for` clause may be used to iterate over a [asynchronous iterator](https://docs.python.org/3/glossary.html#term-asynchronous-iterator). A comprehension in an `async def` function may consist of either a `for` or `async for` clause following the leading expression, may contain additional `for` or `async for` clauses, and may also use [`await`](#expressions--await) expressions.
 
-If a comprehension contains `async for` clauses, or if it contains `await` expressions or other asynchronous comprehensions anywhere except the iterable expression in the leftmost `for` clause, it is called an *asynchronous comprehension*. An asynchronous comprehension may suspend the execution of the coroutine function in which it appears. See also <span id="expressions--index-14"></span>[**PEP 530**](https://peps.python.org/pep-0530/).
+If a comprehension contains `async for` clauses, or if it contains `await` expressions or other asynchronous comprehensions anywhere except the iterable expression in the leftmost `for` clause, it is called an *asynchronous comprehension*. An asynchronous comprehension may suspend the execution of the coroutine function in which it appears. See also [**PEP 530**](https://peps.python.org/pep-0530/).
 
 Added in version 3.6: Asynchronous comprehensions were introduced.
 
@@ -4624,7 +4503,6 @@ Changed in version 3.8: `yield` and `yield from` prohibited in the implicitly ne
 
 Changed in version 3.11: Asynchronous comprehensions are now allowed inside comprehensions in asynchronous functions. Outer comprehensions implicitly become asynchronous.
 
-<span id="expressions--lists"></span>
 
 ## 6.2.6. List displays
 
@@ -4634,7 +4512,6 @@ A list display is a possibly empty series of expressions enclosed in square brac
 
 A list display yields a new list object, the contents being specified by either a list of expressions or a comprehension. When a comma-separated list of expressions is supplied, its elements are evaluated from left to right and placed into the list object in that order. When a comprehension is supplied, the list is constructed from the elements resulting from the comprehension.
 
-<span id="expressions--set"></span>
 
 ## 6.2.7. Set displays
 
@@ -4646,7 +4523,6 @@ A set display yields a new mutable set object, the contents being specified by e
 
 An empty set cannot be constructed with `{}`; this literal constructs an empty dictionary.
 
-<span id="expressions--dict"></span>
 
 ## 6.2.8. Dictionary displays
 
@@ -4663,15 +4539,14 @@ If a comma-separated sequence of dict items is given, they are evaluated from le
 
 A double asterisk `**` denotes *dictionary unpacking*. Its operand must be a [mapping](https://docs.python.org/3/glossary.html#term-mapping). Each mapping item is added to the new dictionary. Later values replace values already set by earlier dict items and earlier dictionary unpackings.
 
-Added in version 3.5: Unpacking into dictionary displays, originally proposed by <span id="expressions--index-19"></span>[**PEP 448**](https://peps.python.org/pep-0448/).
+Added in version 3.5: Unpacking into dictionary displays, originally proposed by [**PEP 448**](https://peps.python.org/pep-0448/).
 
 A dict comprehension, in contrast to list and set comprehensions, needs two expressions separated with a colon followed by the usual “for” and “if” clauses. When the comprehension is run, the resulting key and value elements are inserted in the new dictionary in the order they are produced.
 
 Restrictions on the types of the key values are listed earlier in section [The standard type hierarchy](#datamodel--types). (To summarize, the key type should be [hashable](https://docs.python.org/3/glossary.html#term-hashable), which excludes all mutable objects.) Clashes between duplicate keys are not detected; the last value (textually rightmost in the display) stored for a given key value prevails.
 
-Changed in version 3.8: Prior to Python 3.8, in dict comprehensions, the evaluation order of key and value was not well-defined. In CPython, the value was evaluated before the key. Starting with 3.8, the key is evaluated before the value, as proposed by <span id="expressions--index-21"></span>[**PEP 572**](https://peps.python.org/pep-0572/).
+Changed in version 3.8: Prior to Python 3.8, in dict comprehensions, the evaluation order of key and value was not well-defined. In CPython, the value was evaluated before the key. Starting with 3.8, the key is evaluated before the value, as proposed by [**PEP 572**](https://peps.python.org/pep-0572/).
 
-<span id="expressions--genexpr"></span>
 
 ## 6.2.9. Generator expressions
 
@@ -4750,7 +4625,6 @@ Changed in version 3.7: Prior to Python 3.7, asynchronous generator expressions 
 
 Changed in version 3.8: `yield` and `yield from` prohibited in the implicitly nested scope.
 
-<span id="expressions--yieldexpr"></span>
 
 ## 6.2.10. Yield expressions
 
@@ -4790,19 +4664,18 @@ The parentheses may be omitted when the yield expression is the sole expression 
 
 See also
 
-<span id="expressions--index-26"></span>[**PEP 255**](https://peps.python.org/pep-0255/) - Simple Generators  
+[**PEP 255**](https://peps.python.org/pep-0255/) - Simple Generators  
 The proposal for adding generators and the [`yield`](#simple_stmts--yield) statement to Python.
 
-<span id="expressions--index-27"></span>[**PEP 342**](https://peps.python.org/pep-0342/) - Coroutines via Enhanced Generators  
+[**PEP 342**](https://peps.python.org/pep-0342/) - Coroutines via Enhanced Generators  
 The proposal to enhance the API and syntax of generators, making them usable as simple coroutines.
 
-<span id="expressions--index-28"></span>[**PEP 380**](https://peps.python.org/pep-0380/) - Syntax for Delegating to a Subgenerator  
+[**PEP 380**](https://peps.python.org/pep-0380/) - Syntax for Delegating to a Subgenerator  
 The proposal to introduce the [`yield_from`](#expressions--grammar-token-python-grammar-yield_from) syntax, making delegation to subgenerators easy.
 
-<span id="expressions--index-29"></span>[**PEP 525**](https://peps.python.org/pep-0525/) - Asynchronous Generators  
-The proposal that expanded on <span id="expressions--index-30"></span>[**PEP 492**](https://peps.python.org/pep-0492/) by adding generator capabilities to coroutine functions.
+[**PEP 525**](https://peps.python.org/pep-0525/) - Asynchronous Generators  
+The proposal that expanded on [**PEP 492**](https://peps.python.org/pep-0492/) by adding generator capabilities to coroutine functions.
 
-<span id="expressions--generator-methods"></span> <span id="expressions--index-31"></span>
 
 ## 6.2.10.1. Generator-iterator methods
 
@@ -4839,7 +4712,6 @@ Raises a [`GeneratorExit`](https://docs.python.org/3/library/exceptions.html#Gen
 
 Changed in version 3.13: If a generator returns a value upon being closed, the value is returned by `close()`.
 
-<span id="expressions--index-34"></span>
 
 ## 6.2.10.2. Examples
 
@@ -4871,7 +4743,6 @@ Here is a simple example that demonstrates the behavior of generators and genera
 
 For examples using `yield from`, see [PEP 380: Syntax for Delegating to a Subgenerator](https://docs.python.org/3/whatsnew/3.3.html#pep-380) in “What’s New in Python.”
 
-<span id="expressions--id4"></span>
 
 ## 6.2.10.3. Asynchronous generator functions
 
@@ -4889,7 +4760,6 @@ To take care of finalization upon event loop termination, an event loop should d
 
 The expression `yield from <expr>` is a syntax error when used in an asynchronous generator function.
 
-<span id="expressions--asynchronous-generator-methods"></span> <span id="expressions--index-35"></span>
 
 ## 6.2.10.4. Asynchronous generator-iterator methods
 
@@ -4918,7 +4788,6 @@ Changed in version 3.12: The second signature (type\[, value\[, traceback\]\]) i
 *async* agen.aclose()  
 Returns an awaitable that when run will throw a [`GeneratorExit`](https://docs.python.org/3/library/exceptions.html#GeneratorExit) into the asynchronous generator function at the point where it was paused. If the asynchronous generator function then exits gracefully, is already closed, or raises `GeneratorExit` (by not catching the exception), then the returned awaitable will raise a [`StopIteration`](https://docs.python.org/3/library/exceptions.html#StopIteration) exception. Any further awaitables returned by subsequent calls to the asynchronous generator will raise a [`StopAsyncIteration`](https://docs.python.org/3/library/exceptions.html#StopAsyncIteration) exception. If the asynchronous generator yields a value, a [`RuntimeError`](https://docs.python.org/3/library/exceptions.html#RuntimeError) is raised by the awaitable. If the asynchronous generator raises any other exception, it is propagated to the caller of the awaitable. If the asynchronous generator has already exited due to an exception or normal exit, then further calls to `aclose()` will return an awaitable that does nothing.
 
-<span id="expressions--id5"></span>
 
 ## 6.3. Primaries
 
@@ -4926,7 +4795,6 @@ Primaries represent the most tightly bound operations of the language. Their syn
 
     primary: atom | attributeref | subscription | call
 
-<span id="expressions--id6"></span>
 
 ## 6.3.1. Attribute references
 
@@ -4940,11 +4808,10 @@ This production can be customized by overriding the [`__getattribute__()`](#data
 
 If an [`AttributeError`](https://docs.python.org/3/library/exceptions.html#AttributeError) is raised and the object has a `__getattr__()` method, that method is called as a fallback.
 
-<span id="expressions--subscriptions"></span>
 
 ## 6.3.2. Subscriptions and slicings
 
-<span id="expressions--index-41"></span>The *subscription* syntax is usually used for selecting an element from a [container](#datamodel--sequence-types) – for example, to get a value from a [`dict`](https://docs.python.org/3/library/stdtypes.html#dict):
+The *subscription* syntax is usually used for selecting an element from a [container](#datamodel--sequence-types) – for example, to get a value from a [`dict`](https://docs.python.org/3/library/stdtypes.html#dict):
 
     >>> digits_by_name = {'one': 1, 'two': 2}
     >>> digits_by_name['two']  # Subscripting a dictionary using the key 'two'
@@ -4989,7 +4856,6 @@ Subscriptions may also be used as targets in [assignment](#simple_stmts--assignm
 
 All advanced forms of *subscript* documented in the following sections are also usable for assignment and deletion.
 
-<span id="expressions--index-44"></span> <span id="expressions--index-43"></span> <span id="expressions--id7"></span>
 
 ## 6.3.2.1. Slicings
 
@@ -5039,7 +4905,7 @@ The subscript may also be given as a single expression or slice followed by a co
 
 ## 6.3.2.3. “Starred” subscriptions
 
-Added in version 3.11: Expressions in *tuple_slices* may be starred. See <span id="expressions--index-45"></span>[**PEP 646**](https://peps.python.org/pep-0646/).
+Added in version 3.11: Expressions in *tuple_slices* may be starred. See [**PEP 646**](https://peps.python.org/pep-0646/).
 
 The subscript can also contain a starred expression. In this case, the interpreter unpacks the result into a tuple, and passes this tuple to [`__getitem__()`](#datamodel--object.__getitem__) or [`__class_getitem__()`](#datamodel--object.__class_getitem__):
 
@@ -5062,7 +4928,6 @@ Starred expressions may be combined with comma-separated expressions and slices:
 
 Recall that the `|` operator [denotes ordered choice](#introduction--notation). Specifically, in `subscript`, if both alternatives would match, the first (`single_subscript`) has priority.
 
-<span id="expressions--index-46"></span> <span id="expressions--id8"></span>
 
 ## 6.3.3. Calls
 
@@ -5117,7 +4982,7 @@ When `**expression` is used, each key in this mapping must be a string. Each val
 
 Formal parameters using the syntax `*identifier` or `**identifier` cannot be used as positional argument slots or as keyword argument names.
 
-Changed in version 3.5: Function calls accept any number of `*` and `**` unpackings, positional arguments may follow iterable unpackings (`*`), and keyword arguments may follow dictionary unpackings (`**`). Originally proposed by <span id="expressions--index-50"></span>[**PEP 448**](https://peps.python.org/pep-0448/).
+Changed in version 3.5: Function calls accept any number of `*` and `**` unpackings, positional arguments may follow iterable unpackings (`*`), and keyword arguments may follow dictionary unpackings (`**`). Originally proposed by [**PEP 448**](https://peps.python.org/pep-0448/).
 
 A call always returns some value, possibly `None`, unless it raises an exception. How this value is computed depends on the type of the callable object.
 
@@ -5138,7 +5003,6 @@ The corresponding user-defined function is called, with an argument list that is
 a class instance:  
 The class must define a [`__call__()`](#datamodel--object.__call__) method; the effect is then the same as if that method was called.
 
-<span id="expressions--await"></span> <span id="expressions--index-56"></span>
 
 ## 6.4. Await expression
 
@@ -5148,7 +5012,6 @@ Suspend the execution of [coroutine](https://docs.python.org/3/glossary.html#ter
 
 Added in version 3.5.
 
-<span id="expressions--power"></span>
 
 ## 6.5. The power operator
 
@@ -5166,7 +5029,6 @@ Raising `0.0` to a negative power results in a [`ZeroDivisionError`](https://doc
 
 This operation can be customized using the special [`__pow__()`](#datamodel--object.__pow__) and [`__rpow__()`](#datamodel--object.__rpow__) methods.
 
-<span id="expressions--unary"></span>
 
 ## 6.6. Unary arithmetic and bitwise operations
 
@@ -5182,7 +5044,6 @@ The unary `~` (invert) operator yields the bitwise inversion of its integer argu
 
 In all three cases, if the argument does not have the proper type, a [`TypeError`](https://docs.python.org/3/library/exceptions.html#TypeError) exception is raised.
 
-<span id="expressions--binary"></span>
 
 ## 6.7. Binary arithmetic operations
 
@@ -5231,7 +5092,6 @@ This operation can be customized using the special [`__sub__()`](#datamodel--obj
 
 Changed in version 3.14: If only one operand is a complex number, the other operand is converted to a floating-point number.
 
-<span id="expressions--shifting"></span>
 
 ## 6.8. Shifting operations
 
@@ -5245,7 +5105,6 @@ The left shift operation can be customized using the special [`__lshift__()`](#d
 
 A right shift by *n* bits is defined as floor division by `pow(2,n)`. A left shift by *n* bits is defined as multiplication with `pow(2,n)`.
 
-<span id="expressions--bitwise"></span>
 
 ## 6.9. Binary bitwise operations
 
@@ -5261,7 +5120,6 @@ The `^` operator yields the bitwise XOR (exclusive OR) of its arguments, which m
 
 The `|` operator yields the bitwise (inclusive) OR of its arguments, which must be integers or one of them must be a custom object overriding [`__or__()`](#datamodel--object.__or__) or [`__ror__()`](#datamodel--object.__ror__) special methods.
 
-<span id="expressions--id11"></span>
 
 ## 6.10. Comparisons
 
@@ -5279,7 +5137,6 @@ Formally, if *a*, *b*, *c*, …, *y*, *z* are expressions and *op1*, *op2*, …,
 
 Note that `a op1 b op2 c` doesn’t imply any kind of comparison between *a* and *c*, so that, e.g., `x < y > z` is perfectly legal (though perhaps not pretty).
 
-<span id="expressions--expressions-value-comparisons"></span>
 
 ## 6.10.1. Value comparisons
 
@@ -5301,7 +5158,7 @@ The following list describes the comparison behavior of the most important built
 
   The not-a-number values `float('NaN')` and `decimal.Decimal('NaN')` are special. Any ordered comparison of a number to a not-a-number value is false. A counter-intuitive implication is that not-a-number values are not equal to themselves. For example, if `x = float('NaN')`, `3 < x`, `x < 3` and `x == x` are all false, while `x != x` is true. This behavior is compliant with IEEE 754.
 
-- `None` and [`NotImplemented`](https://docs.python.org/3/library/constants.html#NotImplemented) are singletons. <span id="expressions--index-78"></span>[**PEP 8**](https://peps.python.org/pep-0008/) advises that comparisons for singletons should always be done with `is` or `is not`, never the equality operators.
+- `None` and [`NotImplemented`](https://docs.python.org/3/library/constants.html#NotImplemented) are singletons. [**PEP 8**](https://peps.python.org/pep-0008/) advises that comparisons for singletons should always be done with `is` or `is not`, never the equality operators.
 
 - Binary sequences (instances of [`bytes`](https://docs.python.org/3/library/stdtypes.html#bytes) or [`bytearray`](https://docs.python.org/3/library/stdtypes.html#bytearray)) can be compared within and across their types. They compare lexicographically using the numeric values of their elements.
 
@@ -5367,7 +5224,6 @@ User-defined classes that customize their comparison behavior should follow some
 
 Python does not enforce these consistency rules. In fact, the not-a-number values are an example for not following these rules.
 
-<span id="expressions--membership-test-details"></span> <span id="expressions--not-in"></span> <span id="expressions--in"></span>
 
 ## 6.10.2. Membership test operations
 
@@ -5383,13 +5239,11 @@ Lastly, the old-style iteration protocol is tried: if a class defines [`__getite
 
 The operator [`not in`](#expressions--not-in) is defined to have the inverse truth value of [`in`](#expressions--in).
 
-<span id="expressions--is"></span> <span id="expressions--index-80"></span> <span id="expressions--identity-comparisons"></span>
 
 ## 6.10.3. Identity comparisons
 
 The operators [`is`](#expressions--is) and [`is not`](#expressions--is-not) test for an object’s identity: `x is y` is true if and only if *x* and *y* are the same object. An Object’s identity is determined using the [`id()`](https://docs.python.org/3/library/functions.html#id) function. `x is not y` yields the inverse truth value. [\[4\]](#expressions--id21){#expressions--id13}
 
-<span id="expressions--not"></span> <span id="expressions--or"></span> <span id="expressions--and"></span> <span id="expressions--booleans"></span>
 
 ## 6.11. Boolean operations
 
@@ -5409,7 +5263,6 @@ The expression `x or y` first evaluates *x*; if *x* is true, its value is return
 
 Note that neither [`and`](#expressions--and) nor [`or`](#expressions--or) restrict the value and type they return to `False` and `True`, but rather return the last evaluated argument. This is sometimes useful, e.g., if `s` is a string that should be replaced by a default value if it is empty, the expression `s or 'foo'` yields the desired value. Because [`not`](#expressions--not) has to create a new value, it returns a boolean value regardless of the type of its argument (for example, `not 'foo'` produces `False` rather than `''`.)
 
-<span id="expressions--index-85"></span> <span id="expressions--id14"></span>
 
 ## 6.12. Assignment expressions
 
@@ -5429,9 +5282,8 @@ Or, when processing a file stream in chunks:
 
 Assignment expressions must be surrounded by parentheses when used as expression statements and when used as sub-expressions in slicing, conditional, lambda, keyword-argument, and comprehension-if expressions and in `assert`, `with`, and `assignment` statements. In all other places where they can be used, parentheses are not required, including in `if` and `while` statements.
 
-Added in version 3.8: See <span id="expressions--index-86"></span>[**PEP 572**](https://peps.python.org/pep-0572/) for more details about assignment expressions.
+Added in version 3.8: See [**PEP 572**](https://peps.python.org/pep-0572/) for more details about assignment expressions.
 
-<span id="expressions--if-expr"></span>
 
 ## 6.13. Conditional expressions
 
@@ -5444,9 +5296,8 @@ A conditional expression (sometimes called a “ternary operator”) is an alter
 
 The expression `x if C else y` first evaluates the condition, *C* rather than *x*. If *C* is true, *x* is evaluated and its value is returned; otherwise, *y* is evaluated and its value is returned.
 
-See <span id="expressions--index-88"></span>[**PEP 308**](https://peps.python.org/pep-0308/) for more details about conditional expressions.
+See [**PEP 308**](https://peps.python.org/pep-0308/) for more details about conditional expressions.
 
-<span id="expressions--lambdas"></span> <span id="expressions--id15"></span>
 
 ## 6.14. Lambdas
 
@@ -5461,7 +5312,6 @@ Lambda expressions (sometimes called lambda forms) are used to create anonymous 
 
 See section [Function definitions](#compound_stmts--function) for the syntax of parameter lists. Note that functions created with lambda expressions cannot contain statements or annotations.
 
-<span id="expressions--exprlists"></span>
 
 ## 6.15. Expression lists
 
@@ -5478,13 +5328,12 @@ Except when part of a list or set display, an expression list containing at leas
 
 An asterisk `*` denotes *iterable unpacking*. Its operand must be an [iterable](https://docs.python.org/3/glossary.html#term-iterable). The iterable is expanded into a sequence of items, which are included in the new tuple, list, or set, at the site of the unpacking.
 
-Added in version 3.5: Iterable unpacking in expression lists, originally proposed by <span id="expressions--index-93"></span>[**PEP 448**](https://peps.python.org/pep-0448/).
+Added in version 3.5: Iterable unpacking in expression lists, originally proposed by [**PEP 448**](https://peps.python.org/pep-0448/).
 
-Added in version 3.11: Any item in an expression list may be starred. See <span id="expressions--index-94"></span>[**PEP 646**](https://peps.python.org/pep-0646/).
+Added in version 3.11: Any item in an expression list may be starred. See [**PEP 646**](https://peps.python.org/pep-0646/).
 
 A trailing comma is required only to create a one-item tuple, such as `1,`; it is optional in all other cases. A single expression without a trailing comma doesn’t create a tuple, but rather yields the value of that expression. (To create an empty tuple, use an empty pair of parentheses: `()`.)
 
-<span id="expressions--evalorder"></span>
 
 ## 6.16. Evaluation order
 
@@ -5499,7 +5348,6 @@ In the following lines, expressions will be evaluated in the arithmetic order of
     expr1(expr2, expr3, *expr4, **expr5)
     expr3, expr4 = expr1, expr2
 
-<span id="expressions--operator-summary"></span>
 
 ## 6.17. Operator precedence
 
@@ -5625,7 +5473,6 @@ The power operator `**` binds less tightly than an arithmetic or bitwise unary o
 
 The `%` operator is also used for string formatting; the same precedence applies.
 
-<span id="simple_stmts--simple"></span>
 
 ## 7. Simple statements
 
@@ -5649,11 +5496,10 @@ A simple statement is comprised within a single logical line. Several simple sta
                  | nonlocal_stmt
                  | type_stmt
 
-<span id="simple_stmts--exprstmts"></span>
 
 ## 7.1. Expression statements
 
-<span id="simple_stmts--index-1"></span>Expression statements are used (mostly interactively) to compute and write a value, or (usually) to call a procedure (a function that returns no meaningful result; in Python, procedures return the value `None`). Other uses of expression statements are allowed and occasionally useful. The syntax for an expression statement is:
+Expression statements are used (mostly interactively) to compute and write a value, or (usually) to call a procedure (a function that returns no meaningful result; in Python, procedures return the value `None`). Other uses of expression statements are allowed and occasionally useful. The syntax for an expression statement is:
 
     expression_stmt: starred_expression
 
@@ -5661,7 +5507,6 @@ An expression statement evaluates the expression list (which may be a single exp
 
 In interactive mode, if the value is not `None`, it is converted to a string using the built-in [`repr()`](https://docs.python.org/3/library/functions.html#repr) function and the resulting string is written to standard output on a line by itself (except if the result is `None`, so that procedure calls do not cause any output.)
 
-<span id="simple_stmts--assignment"></span>
 
 ## 7.2. Assignment statements
 
@@ -5740,10 +5585,9 @@ Although the definition of assignment implies that overlaps between the left-han
 
 See also
 
-<span id="simple_stmts--index-13"></span>[**PEP 3132**](https://peps.python.org/pep-3132/) - Extended Iterable Unpacking  
+[**PEP 3132**](https://peps.python.org/pep-3132/) - Extended Iterable Unpacking  
 The specification for the `*target` feature.
 
-<span id="simple_stmts--augassign"></span>
 
 ## 7.2.1. Augmented assignment statements
 
@@ -5766,7 +5610,6 @@ With the exception of assigning to tuples and multiple targets in a single state
 
 For targets which are attribute references, the same [caveat about class and instance attributes](#simple_stmts--attr-target-note) applies as for regular assignments.
 
-<span id="simple_stmts--annassign"></span>
 
 ## 7.2.2. Annotated assignment statements
 
@@ -5787,17 +5630,16 @@ If the right hand side is present, an annotated assignment performs the actual a
 
 See also
 
-<span id="simple_stmts--index-16"></span>[**PEP 526**](https://peps.python.org/pep-0526/) - Syntax for Variable Annotations  
+[**PEP 526**](https://peps.python.org/pep-0526/) - Syntax for Variable Annotations  
 The proposal that added syntax for annotating the types of variables (including class variables and instance variables), instead of expressing them through comments.
 
-<span id="simple_stmts--index-17"></span>[**PEP 484**](https://peps.python.org/pep-0484/) - Type hints  
+[**PEP 484**](https://peps.python.org/pep-0484/) - Type hints  
 The proposal that added the [`typing`](https://docs.python.org/3/library/typing.html#module-typing) module to provide a standard syntax for type annotations that can be used in static analysis tools and IDEs.
 
 Changed in version 3.8: Now annotated assignments allow the same expressions in the right hand side as regular assignments. Previously, some expressions (like un-parenthesized tuple expressions) caused a syntax error.
 
 Changed in version 3.14: Annotations are now lazily evaluated in a separate [annotation scope](#executionmodel--annotation-scopes). If the assignment target is not simple, annotations are never evaluated.
 
-<span id="simple_stmts--assert"></span>
 
 ## 7.3. The `assert` statement
 
@@ -5819,7 +5661,6 @@ These equivalences assume that [`__debug__`](https://docs.python.org/3/library/c
 
 Assignments to [`__debug__`](https://docs.python.org/3/library/constants.html#debug__) are illegal. The value for the built-in variable is determined when the interpreter starts.
 
-<span id="simple_stmts--pass"></span>
 
 ## 7.4. The `pass` statement
 
@@ -5833,7 +5674,6 @@ pass_stmt: "pass"
 
     class C: pass       # a class with no methods (yet)
 
-<span id="simple_stmts--del"></span>
 
 ## 7.5. The `del` statement
 
@@ -5851,7 +5691,6 @@ Deletion of attribute references and subscriptions is passed to the primary obje
 
 Changed in version 3.2: Previously it was illegal to delete a name from the local namespace if it occurs as a free variable in a nested block.
 
-<span id="simple_stmts--return"></span>
 
 ## 7.6. The `return` statement
 
@@ -5871,7 +5710,6 @@ In a generator function, the [`return`](#simple_stmts--return) statement indicat
 
 In an asynchronous generator function, an empty [`return`](#simple_stmts--return) statement indicates that the asynchronous generator is done and will cause [`StopAsyncIteration`](https://docs.python.org/3/library/exceptions.html#StopAsyncIteration) to be raised. A non-empty `return` statement is a syntax error in an asynchronous generator function.
 
-<span id="simple_stmts--yield"></span>
 
 ## 7.7. The `yield` statement
 
@@ -5893,7 +5731,6 @@ Yield expressions and statements are only used when defining a [generator](https
 
 For full details of [`yield`](#simple_stmts--yield) semantics, refer to the [Yield expressions](#expressions--yieldexpr) section.
 
-<span id="simple_stmts--raise"></span>
 
 ## 7.8. The `raise` statement
 
@@ -5970,7 +5807,6 @@ Added the [`__suppress_context__`](https://docs.python.org/3/library/exceptions.
 
 Changed in version 3.11: If the traceback of the active exception is modified in an [`except`](#compound_stmts--except) clause, a subsequent `raise` statement re-raises the exception with the modified traceback. Previously, the exception was re-raised with the traceback it had when it was caught.
 
-<span id="simple_stmts--break"></span>
 
 ## 7.9. The `break` statement
 
@@ -5986,7 +5822,6 @@ If a [`for`](#compound_stmts--for) loop is terminated by [`break`](#simple_stmts
 
 When [`break`](#simple_stmts--break) passes control out of a [`try`](#compound_stmts--try) statement with a [`finally`](#compound_stmts--finally) clause, that `finally` clause is executed before really leaving the loop.
 
-<span id="simple_stmts--continue"></span>
 
 ## 7.10. The `continue` statement
 
@@ -5998,7 +5833,6 @@ continue_stmt: "continue"
 
 When [`continue`](#simple_stmts--continue) passes control out of a [`try`](#compound_stmts--try) statement with a [`finally`](#compound_stmts--finally) clause, that `finally` clause is executed before really starting the next loop cycle.
 
-<span id="simple_stmts--from"></span> <span id="simple_stmts--import"></span>
 
 ## 7.11. The `import` statement
 
@@ -6055,7 +5889,7 @@ Examples:
 
 If the list of identifiers is replaced by a star (`'*'`), all public names defined in the module are bound in the local namespace for the scope where the [`import`](#simple_stmts--import) statement occurs.
 
-<span id="simple_stmts--index-38"></span>The *public names* defined by a module are determined by checking the module’s namespace for a variable named `__all__`; if defined, it must be a sequence of strings which are names defined or imported by that module. Names containing non-ASCII characters must be in the [normalization form](https://www.unicode.org/reports/tr15/#Norm_Forms) NFKC; see [Non-ASCII characters in names](#lexical_analysis--lexical-names-nonascii) for details. The names given in `__all__` are all considered public and are required to exist. If `__all__` is not defined, the set of public names includes all names found in the module’s namespace which do not begin with an underscore character (`'_'`). `__all__` should contain the entire public API. It is intended to avoid accidentally exporting items that are not part of the API (such as library modules which were imported and used within the module).
+The *public names* defined by a module are determined by checking the module’s namespace for a variable named `__all__`; if defined, it must be a sequence of strings which are names defined or imported by that module. Names containing non-ASCII characters must be in the [normalization form](https://www.unicode.org/reports/tr15/#Norm_Forms) NFKC; see [Non-ASCII characters in names](#lexical_analysis--lexical-names-nonascii) for details. The names given in `__all__` are all considered public and are required to exist. If `__all__` is not defined, the set of public names includes all names found in the module’s namespace which do not begin with an underscore character (`'_'`). `__all__` should contain the entire public API. It is intended to avoid accidentally exporting items that are not part of the API (such as library modules which were imported and used within the module).
 
 The wild card form of import — `from module import *` — is only allowed at the module level. Attempting to use it in class or function definitions will raise a [`SyntaxError`](https://docs.python.org/3/library/exceptions.html#SyntaxError).
 
@@ -6065,7 +5899,6 @@ When specifying what module to import you do not have to specify the absolute na
 
 Raises an [auditing event](https://docs.python.org/3/library/sys.html#auditing) `import` with arguments `module`, `filename`, `sys.path`, `sys.meta_path`, `sys.path_hooks`.
 
-<span id="simple_stmts--future"></span>
 
 ## 7.11.1. Future statements
 
@@ -6089,7 +5922,7 @@ A future statement must appear near the top of the module. The only lines that c
 
 - other future statements.
 
-The only feature that requires using the future statement is `annotations` (see <span id="simple_stmts--index-41"></span>[**PEP 563**](https://peps.python.org/pep-0563/)).
+The only feature that requires using the future statement is `annotations` (see [**PEP 563**](https://peps.python.org/pep-0563/)).
 
 All historical features enabled by the future statement are still recognized by Python 3. The list includes `absolute_import`, `division`, `generators`, `generator_stop`, `unicode_literals`, `print_function`, `nested_scopes` and `with_statement`. They are all redundant because they are always enabled, and only kept for backwards compatibility.
 
@@ -6113,10 +5946,9 @@ A future statement typed at an interactive interpreter prompt will take effect f
 
 See also
 
-<span id="simple_stmts--index-42"></span>[**PEP 236**](https://peps.python.org/pep-0236/) - Back to the \_\_future\_\_  
+[**PEP 236**](https://peps.python.org/pep-0236/) - Back to the \_\_future\_\_  
 The original proposal for the \_\_future\_\_ mechanism.
 
-<span id="simple_stmts--global"></span>
 
 ## 7.12. The `global` statement
 
@@ -6132,7 +5964,6 @@ At the module level, all variables are global, so a `global` statement has no ef
 
 **Programmer’s note:** [`global`](#simple_stmts--global) is a directive to the parser. It applies only to code parsed at the same time as the `global` statement. In particular, a `global` statement contained in a string or code object supplied to the built-in [`exec()`](https://docs.python.org/3/library/functions.html#exec) function does not affect the code block *containing* the function call, and code contained in such a string is unaffected by `global` statements in the code containing the function call. The same applies to the [`eval()`](https://docs.python.org/3/library/functions.html#eval) and [`compile()`](https://docs.python.org/3/library/functions.html#compile) functions.
 
-<span id="simple_stmts--nonlocal"></span>
 
 ## 7.13. The `nonlocal` statement
 
@@ -6146,12 +5977,11 @@ The [`nonlocal`](#simple_stmts--nonlocal) statement applies to the entire scope 
 
 See also
 
-<span id="simple_stmts--index-46"></span>[**PEP 3104**](https://peps.python.org/pep-3104/) - Access to Names in Outer Scopes  
+[**PEP 3104**](https://peps.python.org/pep-3104/) - Access to Names in Outer Scopes  
 The specification for the [`nonlocal`](#simple_stmts--nonlocal) statement.
 
 **Programmer’s note:** [`nonlocal`](#simple_stmts--nonlocal) is a directive to the parser and applies only to code parsed along with it. See the note for the [`global`](#simple_stmts--global) statement.
 
-<span id="simple_stmts--type"></span>
 
 ## 7.14. The `type` statement
 
@@ -6183,10 +6013,9 @@ Added in version 3.12.
 
 See also
 
-<span id="simple_stmts--index-48"></span>[**PEP 695**](https://peps.python.org/pep-0695/) - Type Parameter Syntax  
+[**PEP 695**](https://peps.python.org/pep-0695/) - Type Parameter Syntax  
 Introduced the `type` statement and syntax for generic classes and functions.
 
-<span id="compound_stmts--compound"></span>
 
 ## 8. Compound statements
 
@@ -6223,7 +6052,6 @@ Note that statements always end in a `NEWLINE` possibly followed by a `DEDENT`. 
 
 The formatting of the grammar rules in the following sections places each clause on a separate line for clarity.
 
-<span id="compound_stmts--else"></span> <span id="compound_stmts--elif"></span> <span id="compound_stmts--if"></span>
 
 ## 8.1. The `if` statement
 
@@ -6235,7 +6063,6 @@ The [`if`](#compound_stmts--if) statement is used for conditional execution:
 
 It selects exactly one of the suites by evaluating the expressions one by one until one is found to be true (see section [Boolean operations](#expressions--booleans) for the definition of true and false); then that suite is executed (and no other part of the [`if`](#compound_stmts--if) statement is executed or evaluated). If all expressions are false, the suite of the [`else`](#compound_stmts--else) clause, if present, is executed.
 
-<span id="compound_stmts--while"></span>
 
 ## 8.2. The `while` statement
 
@@ -6248,7 +6075,6 @@ This repeatedly tests the expression and, if it is true, executes the first suit
 
 A [`break`](#simple_stmts--break) statement executed in the first suite terminates the loop without executing the `else` clause’s suite. A [`continue`](#simple_stmts--continue) statement executed in the first suite skips the rest of the suite and goes back to testing the expression.
 
-<span id="compound_stmts--for"></span>
 
 ## 8.3. The `for` statement
 
@@ -6273,7 +6099,6 @@ Names in the target list are not deleted when the loop is finished, but if the s
 
 Changed in version 3.11: Starred elements are now allowed in the expression list.
 
-<span id="compound_stmts--try"></span>
 
 ## 8.4. The `try` statement
 
@@ -6293,9 +6118,8 @@ The `try` statement specifies exception handlers and/or cleanup code for a group
 
 Additional information on exceptions can be found in section [Exceptions](#executionmodel--exceptions), and information on using the [`raise`](#simple_stmts--raise) statement to generate exceptions may be found in section [The raise statement](#simple_stmts--raise).
 
-Changed in version 3.14: Support for optionally dropping grouping parentheses when using multiple exception types. See <span id="compound_stmts--index-10"></span>[**PEP 758**](https://peps.python.org/pep-0758/).
+Changed in version 3.14: Support for optionally dropping grouping parentheses when using multiple exception types. See [**PEP 758**](https://peps.python.org/pep-0758/).
 
-<span id="compound_stmts--except"></span>
 
 ## 8.4.1. `except` clause
 
@@ -6344,7 +6168,6 @@ Before an `except` clause’s suite is executed, the exception is stored in the 
     >>> print(sys.exception())
     None
 
-<span id="compound_stmts--index-13"></span> <span id="compound_stmts--id2"></span>
 
 ## 8.4.2. `except*` clause
 
@@ -6384,13 +6207,11 @@ If the exception raised from the [`try`](#compound_stmts--try) block is not an e
 
 [`break`](#simple_stmts--break), [`continue`](#simple_stmts--continue) and [`return`](#simple_stmts--return) cannot appear in an `except*` clause.
 
-<span id="compound_stmts--except-else"></span> <span id="compound_stmts--index-14"></span>
 
 ## 8.4.3. `else` clause
 
 The optional `else` clause is executed if the control flow leaves the [`try`](#compound_stmts--try) suite, no exception was raised, and no [`return`](#simple_stmts--return), [`continue`](#simple_stmts--continue), or [`break`](#simple_stmts--break) statement was executed. Exceptions in the `else` clause are not handled by the preceding [`except`](#compound_stmts--except) clauses.
 
-<span id="compound_stmts--finally"></span> <span id="compound_stmts--index-15"></span>
 
 ## 8.4.4. `finally` clause
 
@@ -6416,9 +6237,8 @@ The return value of a function is determined by the last [`return`](#simple_stmt
 
 Changed in version 3.8: Prior to Python 3.8, a [`continue`](#simple_stmts--continue) statement was illegal in the `finally` clause due to a problem with the implementation.
 
-Changed in version 3.14: The compiler emits a [`SyntaxWarning`](https://docs.python.org/3/library/exceptions.html#SyntaxWarning) when a [`return`](#simple_stmts--return), [`break`](#simple_stmts--break) or [`continue`](#simple_stmts--continue) appears in a `finally` block (see <span id="compound_stmts--index-17"></span>[**PEP 765**](https://peps.python.org/pep-0765/)).
+Changed in version 3.14: The compiler emits a [`SyntaxWarning`](https://docs.python.org/3/library/exceptions.html#SyntaxWarning) when a [`return`](#simple_stmts--return), [`break`](#simple_stmts--break) or [`continue`](#simple_stmts--continue) appears in a `finally` block (see [**PEP 765**](https://peps.python.org/pep-0765/)).
 
-<span id="compound_stmts--as"></span> <span id="compound_stmts--with"></span>
 
 ## 8.5. The `with` statement
 
@@ -6503,10 +6323,9 @@ Changed in version 3.10: Support for using grouping parentheses to break the sta
 
 See also
 
-<span id="compound_stmts--index-19"></span>[**PEP 343**](https://peps.python.org/pep-0343/) - The “with” statement  
+[**PEP 343**](https://peps.python.org/pep-0343/) - The “with” statement  
 The specification, background, and examples for the Python [`with`](#compound_stmts--with) statement.
 
-<span id="compound_stmts--case"></span> <span id="compound_stmts--match"></span>
 
 ## 8.6. The `match` statement
 
@@ -6533,9 +6352,9 @@ The `match` and `case` keywords are [soft keywords](#lexical_analysis--soft-keyw
 
 See also
 
-- <span id="compound_stmts--index-21"></span>[**PEP 634**](https://peps.python.org/pep-0634/) – Structural Pattern Matching: Specification
+- [**PEP 634**](https://peps.python.org/pep-0634/) – Structural Pattern Matching: Specification
 
-- <span id="compound_stmts--index-22"></span>[**PEP 636**](https://peps.python.org/pep-0636/) – Structural Pattern Matching: Tutorial
+- [**PEP 636**](https://peps.python.org/pep-0636/) – Structural Pattern Matching: Tutorial
 
 ## 8.6.1. Overview
 
@@ -6600,7 +6419,6 @@ The logical flow of a `case` block with a `guard` follows:
 
 Guards are allowed to have side effects as they are expressions. Guard evaluation must proceed from the first to the last case block, one at a time, skipping case blocks whose pattern(s) don’t all succeed. (I.e., guard evaluation must happen in order.) Guard evaluation must stop once a case block is selected.
 
-<span id="compound_stmts--irrefutable-case"></span>
 
 ## 8.6.3. Irrefutable Case Blocks
 
@@ -6643,7 +6461,6 @@ The top-level syntax for `patterns` is:
 
 The descriptions below will include a description “in simple terms” of what a pattern does for illustration purposes (credits to Raymond Hettinger for a document that inspired most of the descriptions). Note that these descriptions are purely for illustration purposes and **may not** reflect the underlying implementation. Furthermore, they do not cover all valid forms.
 
-<span id="compound_stmts--id3"></span>
 
 ## 8.6.4.1. OR Patterns
 
@@ -6657,7 +6474,6 @@ An OR pattern matches each of its subpatterns in turn to the subject value, unti
 
 In simple terms, `P1 | P2 | ...` will try to match `P1`, if it fails it will try to match `P2`, succeeding immediately if any succeeds, failing otherwise.
 
-<span id="compound_stmts--id4"></span>
 
 ## 8.6.4.2. AS Patterns
 
@@ -6669,7 +6485,6 @@ If the OR pattern fails, the AS pattern fails. Otherwise, the AS pattern binds t
 
 In simple terms `P as NAME` will match with `P`, and on success it will set `NAME = <subject>`.
 
-<span id="compound_stmts--id5"></span>
 
 ## 8.6.4.3. Literal Patterns
 
@@ -6690,7 +6505,6 @@ The forms `signed_number '+' NUMBER` and `signed_number '-' NUMBER` are for expr
 
 In simple terms, `LITERAL` will succeed only if `<subject> == LITERAL`. For the singletons `None`, `True` and `False`, the [`is`](#expressions--is) operator is used.
 
-<span id="compound_stmts--id6"></span>
 
 ## 8.6.4.4. Capture Patterns
 
@@ -6702,11 +6516,10 @@ A single underscore `_` is not a capture pattern (this is what `!'_'` expresses)
 
 In a given pattern, a given name can only be bound once. E.g. `case x, x: ...` is invalid while `case [x] | x: ...` is allowed.
 
-Capture patterns always succeed. The binding follows scoping rules established by the assignment expression operator in <span id="compound_stmts--index-26"></span>[**PEP 572**](https://peps.python.org/pep-0572/); the name becomes a local variable in the closest containing function scope unless there’s an applicable [`global`](#simple_stmts--global) or [`nonlocal`](#simple_stmts--nonlocal) statement.
+Capture patterns always succeed. The binding follows scoping rules established by the assignment expression operator in [**PEP 572**](https://peps.python.org/pep-0572/); the name becomes a local variable in the closest containing function scope unless there’s an applicable [`global`](#simple_stmts--global) or [`nonlocal`](#simple_stmts--nonlocal) statement.
 
 In simple terms `NAME` will always succeed and it will set `NAME = <subject>`.
 
-<span id="compound_stmts--id7"></span>
 
 ## 8.6.4.5. Wildcard Patterns
 
@@ -6718,7 +6531,6 @@ A wildcard pattern always succeeds (matches anything) and binds no name. Syntax:
 
 In simple terms, `_` will always succeed.
 
-<span id="compound_stmts--id8"></span>
 
 ## 8.6.4.6. Value Patterns
 
@@ -6736,7 +6548,6 @@ Note
 
 If the same value occurs multiple times in the same match statement, the interpreter may cache the first value found and reuse it rather than repeat the same lookup. This cache is strictly tied to a given execution of a given match statement.
 
-<span id="compound_stmts--id9"></span>
 
 ## 8.6.4.7. Group Patterns
 
@@ -6746,7 +6557,6 @@ A group pattern allows users to add parentheses around patterns to emphasize the
 
 In simple terms `(P)` has the same effect as `P`.
 
-<span id="compound_stmts--id10"></span>
 
 ## 8.6.4.8. Sequence Patterns
 
@@ -6807,7 +6617,6 @@ In simple terms `[P1, P2, P3,` … `, P<N>]` matches only if all the following h
 
 - … and so on for the corresponding pattern/element.
 
-<span id="compound_stmts--id12"></span>
 
 ## 8.6.4.9. Mapping Patterns
 
@@ -6845,7 +6654,6 @@ In simple terms `{KEY1: P1, KEY2: P2, ... }` matches only if all the following h
 
 - … and so on for the corresponding KEY/pattern pair.
 
-<span id="compound_stmts--id14"></span>
 
 ## 8.6.4.10. Class Patterns
 
@@ -6944,11 +6752,10 @@ In simple terms `CLS(P1, attr=P2)` matches only if the following happens:
 
 See also
 
-- <span id="compound_stmts--index-27"></span>[**PEP 634**](https://peps.python.org/pep-0634/) – Structural Pattern Matching: Specification
+- [**PEP 634**](https://peps.python.org/pep-0634/) – Structural Pattern Matching: Specification
 
-- <span id="compound_stmts--index-28"></span>[**PEP 636**](https://peps.python.org/pep-0636/) – Structural Pattern Matching: Tutorial
+- [**PEP 636**](https://peps.python.org/pep-0636/) – Structural Pattern Matching: Tutorial
 
-<span id="compound_stmts--def"></span> <span id="compound_stmts--function"></span> <span id="compound_stmts--index-29"></span>
 
 ## 8.7. Function definitions
 
@@ -6988,7 +6795,7 @@ is roughly equivalent to
 
 except that the original function is not temporarily bound to the name `func`.
 
-Changed in version 3.9: Functions may be decorated with any valid [`assignment_expression`](#expressions--grammar-token-python-grammar-assignment_expression). Previously, the grammar was much more restrictive; see <span id="compound_stmts--index-32"></span>[**PEP 614**](https://peps.python.org/pep-0614/) for details.
+Changed in version 3.9: Functions may be decorated with any valid [`assignment_expression`](#expressions--grammar-token-python-grammar-assignment_expression). Previously, the grammar was much more restrictive; see [**PEP 614**](https://peps.python.org/pep-0614/) for details.
 
 A list of [type parameters](#compound_stmts--type-params) may be given in square brackets between the function’s name and the opening parenthesis for its parameter list. This indicates to static type checkers that the function is generic. At runtime, the type parameters can be retrieved from the function’s [`__type_params__`](#datamodel--function.__type_params__) attribute. See [Generic functions](#compound_stmts--generic-functions) for more.
 
@@ -7006,11 +6813,11 @@ When one or more [parameters](https://docs.python.org/3/glossary.html#term-param
 
 Function call semantics are described in more detail in section [Calls](#expressions--calls). A function call always assigns values to all parameters mentioned in the parameter list, either from positional arguments, from keyword arguments, or from default values. If the form “`*identifier`” is present, it is initialized to a tuple receiving any excess positional parameters, defaulting to the empty tuple. If the form “`**identifier`” is present, it is initialized to a new ordered mapping receiving any excess keyword arguments, defaulting to a new empty mapping of the same type. Parameters after “`*`” or “`*identifier`” are keyword-only parameters and may only be passed by keyword arguments. Parameters before “`/`” are positional-only parameters and may only be passed by positional arguments.
 
-Changed in version 3.8: The `/` function parameter syntax may be used to indicate positional-only parameters. See <span id="compound_stmts--index-35"></span>[**PEP 570**](https://peps.python.org/pep-0570/) for details.
+Changed in version 3.8: The `/` function parameter syntax may be used to indicate positional-only parameters. See [**PEP 570**](https://peps.python.org/pep-0570/) for details.
 
 Parameters may have an [annotation](https://docs.python.org/3/glossary.html#term-function-annotation) of the form “`: expression`” following the parameter name. Any parameter may have an annotation, even those of the form `*identifier` or `**identifier`. (As a special case, parameters of the form `*identifier` may have an annotation “`: *expression`”.) Functions may have “return” annotation of the form “`-> expression`” after the parameter list. These annotations can be any valid Python expression. The presence of annotations does not change the semantics of a function. See [Annotations](#compound_stmts--annotations) for more information on annotations.
 
-Changed in version 3.11: Parameters of the form “`*identifier`” may have an annotation “`: *expression`”. See <span id="compound_stmts--index-37"></span>[**PEP 646**](https://peps.python.org/pep-0646/).
+Changed in version 3.11: Parameters of the form “`*identifier`” may have an annotation “`: *expression`”. See [**PEP 646**](https://peps.python.org/pep-0646/).
 
 It is also possible to create anonymous functions (functions not bound to a name), for immediate use in expressions. This uses lambda expressions, described in section [Lambdas](#expressions--lambda). Note that the lambda expression is merely a shorthand for a simplified function definition; a function defined in a “[`def`](#compound_stmts--def)” statement can be passed around or assigned to another name just like a function defined by a lambda expression. The “`def`” form is actually more powerful since it allows the execution of multiple statements and annotations.
 
@@ -7018,22 +6825,21 @@ It is also possible to create anonymous functions (functions not bound to a name
 
 See also
 
-<span id="compound_stmts--index-39"></span>[**PEP 3107**](https://peps.python.org/pep-3107/) - Function Annotations  
+[**PEP 3107**](https://peps.python.org/pep-3107/) - Function Annotations  
 The original specification for function annotations.
 
-<span id="compound_stmts--index-40"></span>[**PEP 484**](https://peps.python.org/pep-0484/) - Type Hints  
+[**PEP 484**](https://peps.python.org/pep-0484/) - Type Hints  
 Definition of a standard meaning for annotations: type hints.
 
-<span id="compound_stmts--index-41"></span>[**PEP 526**](https://peps.python.org/pep-0526/) - Syntax for Variable Annotations  
+[**PEP 526**](https://peps.python.org/pep-0526/) - Syntax for Variable Annotations  
 Ability to type hint variable declarations, including class variables and instance variables.
 
-<span id="compound_stmts--index-42"></span>[**PEP 563**](https://peps.python.org/pep-0563/) - Postponed Evaluation of Annotations  
+[**PEP 563**](https://peps.python.org/pep-0563/) - Postponed Evaluation of Annotations  
 Support for forward references within annotations by preserving annotations in a string form at runtime instead of eager evaluation.
 
-<span id="compound_stmts--index-43"></span>[**PEP 318**](https://peps.python.org/pep-0318/) - Decorators for Functions and Methods  
-Function and method decorators were introduced. Class decorators were introduced in <span id="compound_stmts--index-44"></span>[**PEP 3129**](https://peps.python.org/pep-3129/).
+[**PEP 318**](https://peps.python.org/pep-0318/) - Decorators for Functions and Methods  
+Function and method decorators were introduced. Class decorators were introduced in [**PEP 3129**](https://peps.python.org/pep-3129/).
 
-<span id="compound_stmts--class"></span>
 
 ## 8.8. Class definitions
 
@@ -7072,7 +6878,7 @@ is roughly equivalent to
 
 The evaluation rules for the decorator expressions are the same as for function decorators. The result is then bound to the class name.
 
-Changed in version 3.9: Classes may be decorated with any valid [`assignment_expression`](#expressions--grammar-token-python-grammar-assignment_expression). Previously, the grammar was much more restrictive; see <span id="compound_stmts--index-47"></span>[**PEP 614**](https://peps.python.org/pep-0614/) for details.
+Changed in version 3.9: Classes may be decorated with any valid [`assignment_expression`](#expressions--grammar-token-python-grammar-assignment_expression). Previously, the grammar was much more restrictive; see [**PEP 614**](https://peps.python.org/pep-0614/) for details.
 
 A list of [type parameters](#compound_stmts--type-params) may be given in square brackets immediately after the class’s name. This indicates to static type checkers that the class is generic. At runtime, the type parameters can be retrieved from the class’s [`__type_params__`](#datamodel--type.__type_params__) attribute. See [Generic classes](#compound_stmts--generic-classes) for more.
 
@@ -7082,19 +6888,17 @@ Changed in version 3.12: Type parameter lists are new in Python 3.12.
 
 See also
 
-<span id="compound_stmts--index-48"></span>[**PEP 3115**](https://peps.python.org/pep-3115/) - Metaclasses in Python 3000  
+[**PEP 3115**](https://peps.python.org/pep-3115/) - Metaclasses in Python 3000  
 The proposal that changed the declaration of metaclasses to the current syntax, and the semantics for how classes with metaclasses are constructed.
 
-<span id="compound_stmts--index-49"></span>[**PEP 3129**](https://peps.python.org/pep-3129/) - Class Decorators  
-The proposal that added class decorators. Function and method decorators were introduced in <span id="compound_stmts--index-50"></span>[**PEP 318**](https://peps.python.org/pep-0318/).
+[**PEP 3129**](https://peps.python.org/pep-3129/) - Class Decorators  
+The proposal that added class decorators. Function and method decorators were introduced in [**PEP 318**](https://peps.python.org/pep-0318/).
 
-<span id="compound_stmts--async"></span>
 
 ## 8.9. Coroutines
 
 Added in version 3.5.
 
-<span id="compound_stmts--async-def"></span> <span id="compound_stmts--index-51"></span>
 
 ## 8.9.1. Coroutine function definition
 
@@ -7115,7 +6919,6 @@ An example of a coroutine function:
 
 Changed in version 3.7: `await` and `async` are now keywords; previously they were only treated as such inside the body of a coroutine function.
 
-<span id="compound_stmts--async-for"></span> <span id="compound_stmts--index-53"></span>
 
 ## 8.9.2. The `async for` statement
 
@@ -7151,7 +6954,6 @@ except that implicit [special method lookup](#datamodel--special-lookup) is used
 
 It is a [`SyntaxError`](https://docs.python.org/3/library/exceptions.html#SyntaxError) to use an `async for` statement outside the body of a coroutine function.
 
-<span id="compound_stmts--async-with"></span> <span id="compound_stmts--index-54"></span>
 
 ## 8.9.3. The `async with` statement
 
@@ -7189,16 +6991,15 @@ It is a [`SyntaxError`](https://docs.python.org/3/library/exceptions.html#Syntax
 
 See also
 
-<span id="compound_stmts--index-55"></span>[**PEP 492**](https://peps.python.org/pep-0492/) - Coroutines with async and await syntax  
+[**PEP 492**](https://peps.python.org/pep-0492/) - Coroutines with async and await syntax  
 The proposal that made coroutines a proper standalone concept in Python, and added supporting syntax.
 
-<span id="compound_stmts--type-params"></span>
 
 ## 8.10. Type parameter lists
 
 Added in version 3.12.
 
-Changed in version 3.13: Support for default values was added (see <span id="compound_stmts--index-56"></span>[**PEP 696**](https://peps.python.org/pep-0696/)).
+Changed in version 3.13: Support for default values was added (see [**PEP 696**](https://peps.python.org/pep-0696/)).
 
 ``` {#compound_stmts--index-57}
 type_params:  "[" type_param ("," type_param)* "]"
@@ -7264,7 +7065,6 @@ The following example indicates the full set of allowed type parameter declarati
        *e: SimpleTypeVarTuple,
     ): ...
 
-<span id="compound_stmts--id17"></span>
 
 ## 8.10.1. Generic functions
 
@@ -7314,7 +7114,6 @@ Except for the [lazy evaluation](#executionmodel--lazy-evaluation) of the [`Type
 
 The capitalized names like `DEFAULT_OF_arg` are not actually bound at runtime.
 
-<span id="compound_stmts--id18"></span>
 
 ## 8.10.2. Generic classes
 
@@ -7349,7 +7148,6 @@ This is equivalent to:
         return Bag
     Bag = decorator(TYPE_PARAMS_OF_Bag())
 
-<span id="compound_stmts--id19"></span>
 
 ## 8.10.3. Generic type aliases
 
@@ -7370,7 +7168,6 @@ Except for the [lazy evaluation](#executionmodel--lazy-evaluation) of the value,
 
 Here, `annotation-def` (not a real keyword) indicates an [annotation scope](#executionmodel--annotation-scopes). The capitalized names like `TYPE_PARAMS_OF_ListOrSet` are not actually bound at runtime.
 
-<span id="compound_stmts--id20"></span>
 
 ## 8.11. Annotations
 
@@ -7396,7 +7193,7 @@ If the [future statement](#simple_stmts--future) `from __future__ import annotat
     >>> f.__annotations__
     {'param': 'annotation'}
 
-This future statement will be deprecated and removed in a future version of Python, but not before Python 3.13 reaches its end of life (see <span id="compound_stmts--index-58"></span>[**PEP 749**](https://peps.python.org/pep-0749/)). When it is used, introspection tools like [`annotationlib.get_annotations()`](https://docs.python.org/3/library/annotationlib.html#annotationlib.get_annotations) and [`typing.get_type_hints()`](https://docs.python.org/3/library/typing.html#typing.get_type_hints) are less likely to be able to resolve annotations at runtime.
+This future statement will be deprecated and removed in a future version of Python, but not before Python 3.13 reaches its end of life (see [**PEP 749**](https://peps.python.org/pep-0749/)). When it is used, introspection tools like [`annotationlib.get_annotations()`](https://docs.python.org/3/library/annotationlib.html#annotationlib.get_annotations) and [`typing.get_type_hints()`](https://docs.python.org/3/library/typing.html#typing.get_type_hints) are less likely to be able to resolve annotations at runtime.
 
 Footnotes
 
@@ -7456,17 +7253,15 @@ A string literal appearing as the first statement in the function body is transf
 
 A string literal appearing as the first statement in the class body is transformed into the namespace’s [`__doc__`](#datamodel--type.__doc__) item and therefore the class’s [docstring](https://docs.python.org/3/glossary.html#term-docstring).
 
-<span id="toplevel_components--top-level"></span>
 
 ## 9. Top-level components
 
 The Python interpreter can get its input from a number of sources: from a script passed to it as standard input or as program argument, typed in interactively, from a module source file, etc. This chapter gives the syntax used in these cases.
 
-<span id="toplevel_components--programs"></span>
 
 ## 9.1. Complete Python programs
 
-<span id="toplevel_components--index-1"></span>While a language specification need not prescribe how the language interpreter is invoked, it is useful to have a notion of a complete Python program. A complete Python program is executed in a minimally initialized environment: all built-in and standard modules are available, but none have been initialized, except for [`sys`](https://docs.python.org/3/library/sys.html#module-sys) (various system services), [`builtins`](https://docs.python.org/3/library/builtins.html#module-builtins) (built-in functions, exceptions and `None`) and [`__main__`](https://docs.python.org/3/library/__main__.html#module-__main__). The latter is used to provide the local and global namespace for execution of the complete program.
+While a language specification need not prescribe how the language interpreter is invoked, it is useful to have a notion of a complete Python program. A complete Python program is executed in a minimally initialized environment: all built-in and standard modules are available, but none have been initialized, except for [`sys`](https://docs.python.org/3/library/sys.html#module-sys) (various system services), [`builtins`](https://docs.python.org/3/library/builtins.html#module-builtins) (built-in functions, exceptions and `None`) and [`__main__`](https://docs.python.org/3/library/__main__.html#module-__main__). The latter is used to provide the local and global namespace for execution of the complete program.
 
 The syntax for a complete Python program is that for file input, described in the next section.
 
@@ -7474,7 +7269,6 @@ The interpreter may also be invoked in interactive mode; in this case, it does n
 
 A complete program can be passed to the interpreter in three forms: with the [`-c`](https://docs.python.org/3/using/cmdline.html#cmdoption-c) *string* command line option, as a file passed as the first command line argument, or as standard input. If the file or standard input is a tty device, the interpreter enters interactive mode; otherwise, it executes the file as a complete program.
 
-<span id="toplevel_components--id1"></span>
 
 ## 9.2. File input
 
@@ -7490,7 +7284,6 @@ This syntax is used in the following situations:
 
 - when parsing a string passed to the [`exec()`](https://docs.python.org/3/library/functions.html#exec) function;
 
-<span id="toplevel_components--interactive"></span>
 
 ## 9.3. Interactive input
 
@@ -7500,15 +7293,13 @@ Input in interactive mode is parsed using the following grammar:
 
 Note that a (top-level) compound statement must be followed by a blank line in interactive mode; this is needed to help the parser detect the end of the input.
 
-<span id="toplevel_components--id2"></span>
 
 ## 9.4. Expression input
 
-<span id="toplevel_components--index-5"></span>[`eval()`](https://docs.python.org/3/library/functions.html#eval) is used for expression input. It ignores leading whitespace. The string argument to `eval()` must have the following form:
+[`eval()`](https://docs.python.org/3/library/functions.html#eval) is used for expression input. It ignores leading whitespace. The string argument to `eval()` must have the following form:
 
     eval_input: expression_list NEWLINE* ENDMARKER
 
-<span id="grammar--id1"></span>
 
 ## 10. Full Grammar specification
 
