@@ -74,6 +74,34 @@ def test_render_raises_when_the_tool_does_not_return():
                 mermaid.render(SOURCE)
 
 
+def test_render_raises_when_the_tool_cannot_be_started():
+    """TimeoutExpired 以外に OSError（実行権限が無い等）も投げうる。
+
+    ここを拾わないと、設計書10節の「失敗しても生成は止めない」がこの1枝だけ
+    破られ、生の例外がそのまま呼び出し元まで抜ける。
+    """
+    with patch("docgen.mermaid.shutil.which", return_value="mmdc.cmd"):
+        with patch("docgen.mermaid.subprocess.run", side_effect=OSError("Permission denied")):
+            with pytest.raises(mermaid.MermaidError):
+                mermaid.render(SOURCE)
+
+
+def test_render_raises_when_the_tool_writes_nothing_despite_success():
+    """mmdc が 0 で終わったのに画像を書かない枝。
+
+    空のPNGが黙って埋め込まれるのを止める唯一の砦であり、ここが壊れても
+    どのテストも落ちない状態を防ぐ。
+    """
+    def fake_run(command, **kwargs):
+        # 出力ファイルを書かないまま正常終了を装う。
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    with patch("docgen.mermaid.shutil.which", return_value="mmdc.cmd"):
+        with patch("docgen.mermaid.subprocess.run", side_effect=fake_run):
+            with pytest.raises(mermaid.MermaidError, match="画像を書きませんでした"):
+                mermaid.render(SOURCE)
+
+
 def test_rendered_keeps_plain_values_as_text():
     texts, images = mermaid.rendered({"会議名": "第5回 定例会議"})
     assert texts == {"会議名": "第5回 定例会議"}

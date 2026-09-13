@@ -53,8 +53,13 @@ def render(source: str) -> bytes:
                 text=True,
                 timeout=RENDER_TIMEOUT,
             )
-        except subprocess.TimeoutExpired as error:
-            raise MermaidError(f"{RENDER_TIMEOUT}秒で描き終わりませんでした") from error
+        except (subprocess.TimeoutExpired, OSError) as error:
+            # OSError は実行権限が無い等、起動そのものに失敗する場合に出る。
+            # ここも図の失敗として扱わないと、設計書10節の「失敗しても生成は
+            # 止めない」が守れず、この1枝だけ生の例外が上へ抜けてしまう。
+            if isinstance(error, subprocess.TimeoutExpired):
+                raise MermaidError(f"{RENDER_TIMEOUT}秒で描き終わりませんでした") from error
+            raise MermaidError(f"mmdc を起動できませんでした: {error}") from error
         if completed.returncode != 0:
             raise MermaidError(completed.stderr.strip() or "mmdc が失敗しました")
         if not output_path.is_file():
@@ -62,7 +67,9 @@ def render(source: str) -> bytes:
         return output_path.read_bytes()
 
 
-def rendered(values: dict[str, str], on_diagram_error=None):
+def rendered(
+    values: dict[str, str], on_diagram_error=None
+) -> tuple[dict[str, str], dict[str, bytes]]:
     """値を「文字列として入れるもの」と「画像として入れるもの」に分ける。
 
     描けなかった値は文字列の側へ戻す。印が消えるのでも空になるのでもなく、

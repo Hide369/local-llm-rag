@@ -7,6 +7,12 @@
 差し込みは、段落のテキストを組み立てて置換し、先頭の run に書き戻して残りの
 run を空にする。書式は先頭 run のものになる。印を含まない段落には触らない。
 触ると、書式の違う run が先頭のものに潰れる。
+
+書き戻す先は「文字を持つ run」に限る。実測 2026-09-13:
+`run.text = ...` の setter は `CT_R.clear_content()` を呼び、w:rPr 以外の
+子要素を全部消す。画像だけの run（w:drawing）を書き戻し先にすると、その run
+にある画像が消える。ヘッダーにロゴを置く雛形では、印より画像の run が先に
+来る並びの方が普通であり、位置で「先頭かどうか」を判断すると事故る。
 """
 import io
 from pathlib import Path
@@ -67,10 +73,14 @@ def fill(path: Path, values: dict[str, str], on_diagram_error=None) -> bytes:
 
 
 def _fill_paragraph(paragraph, values: dict[str, str], images=None) -> None:
-    if not paragraph.runs:
-        return
     images = images or {}
-    original = "".join(run.text for run in paragraph.runs)
+    # 文字を持つ run だけを書き戻し先の候補にする。位置に関係なく、文字を
+    # 持たない run（画像だけの run 等）には一切触らない。段落の先頭がロゴの
+    # run というヘッダーの並びでも、これでロゴは消えない。
+    carriers = [run for run in paragraph.runs if run.text]
+    if not carriers:
+        return
+    original = "".join(run.text for run in carriers)
     here = [name for name in marks.names(original) if name in images]
     # 図にする印はいったん空文字にしてから画像を足す。消さないと、画像の脇に
     # {{シーケンス図}} の文字が残る。
@@ -81,12 +91,8 @@ def _fill_paragraph(paragraph, values: dict[str, str], images=None) -> None:
         return
     # 改行は run.text の setter が <w:br/> に変換する（実測 2026-09-13）。
     # タブも同じで、run.text は w:tab を \t として往復する。
-    paragraph.runs[0].text = replaced
-    for run in paragraph.runs[1:]:
-        # 文字を持たない run は触らない。run.text の setter（CT_R.clear_content）は
-        # w:rPr 以外の子を全部消すため、段落の中に差し込まれたロゴ（w:drawing）が
-        # 一緒に消える。文字が無い run は original にも現れておらず、消す必要もない。
-        if run.text:
-            run.text = ""
+    carriers[0].text = replaced
+    for run in carriers[1:]:
+        run.text = ""
     for name in here:
-        paragraph.runs[0].add_picture(io.BytesIO(images[name]), width=DIAGRAM_WIDTH)
+        carriers[0].add_picture(io.BytesIO(images[name]), width=DIAGRAM_WIDTH)

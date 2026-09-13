@@ -47,3 +47,10 @@ def test_a_multi_line_value_is_inserted_as_is():
 def test_a_mark_containing_braces_is_not_matched():
     """入れ子の { } は印ではない。コード例を載せた雛形を壊さない。"""
     assert marks.names("{{ {x} }}") == []
+
+
+def test_a_name_with_surrounding_whitespace_is_stripped():
+    """`{{ 会議名 }}` のように印の名前の内側に空白があっても、
+    利用者が書く `{{会議名}}` と同じ名前として扱う。"""
+    assert marks.names("{{ 会議名 }}") == ["会議名"]
+    assert marks.replace("{{ 会議名 }}", {"会議名": "第5回"}) == "第5回"

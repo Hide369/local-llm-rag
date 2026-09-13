@@ -64,7 +64,10 @@ def fill(path: Path, values: dict[str, str], on_diagram_error=None) -> bytes:
         # 空のまま残ると、利用者は図が消えたことに気づけない。
         texts[name] = values[name]
         if on_diagram_error is not None:
-            on_diagram_error(name, "グループ図形の中の印は図にできません")
+            # 貼れない理由は「グループ図形の中」だけではない。スライド上の
+            # 表のセルに図の印を置いた場合もここに来るが、表の中にグループは
+            # ないため、グループと決め打つ文言は嘘になる（レビューで実測）。
+            on_diagram_error(name, "この場所には図を貼れません（グループ図形や表の中）")
     for paragraph in _paragraphs(presentation):
         _fill_paragraph(paragraph, texts)
     buffer = io.BytesIO()

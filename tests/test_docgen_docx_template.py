@@ -122,6 +122,28 @@ def test_a_placeholder_with_an_image_in_another_run_is_filled_and_image_is_prese
     assert len(filled.inline_shapes) == 1
 
 
+def test_a_placeholder_with_an_image_in_the_first_run_is_filled_and_image_is_preserved(tmp_path):
+    """ヘッダーにロゴを置く雛形では、印の run より画像の run が先に来る並びが普通である。
+
+    位置を「先頭かどうか」で判断すると、先頭 run が画像だけの run のときに
+    `run.text = replaced` が無条件に走り、run.text の setter
+    （CT_R.clear_content）が w:drawing ごと消してロゴが消える（実測
+    2026-09-13）。文字を持つ run だけを対象にすることで、位置に関わらず残る。
+    """
+    PNG = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+    )
+    document = docx.Document()
+    paragraph = document.add_paragraph()
+    image_run = paragraph.add_run()
+    image_run.add_picture(io.BytesIO(PNG))
+    paragraph.add_run("会議名：{{会議名}}")
+    path = _save(tmp_path, document)
+    filled = docx.Document(io.BytesIO(docgen.fill(path, {"会議名": "第5回"})))
+    assert filled.paragraphs[0].text == "会議名：第5回"
+    assert len(filled.inline_shapes) == 1
+
+
 def test_a_placeholder_in_the_footer_is_found_and_filled(tmp_path):
     """フッターの印も対象にする。"""
     document = docx.Document()
