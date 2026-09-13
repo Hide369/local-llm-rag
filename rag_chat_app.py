@@ -738,18 +738,13 @@ attachments = []
 use_internal, use_docs = True, False
 if mode == MODE_COWORK:
     available = docgen_templates.templates()
-    if not available:
-        st.warning(
-            "雛形が登録されていません。下のボタンから登録してください。"
-            "空欄は {{会議名}} のように書きます。"
-        )
-    else:
-        left, right = st.columns([3, 1])
-        # 生成は30〜60秒かかる。その最中にここを触れると、その場で再実行が
-        # 走って生成が打ち切られ、雛形や参照先が入れ替わった状態のまま
-        # generating と pending_question だけが前回の質問を抱えて残る。
-        # サイドバーのコーパス切り替えラジオ（上の約510行）と同じ食い違いが
-        # 起きるため、同じく生成中は無効化する。
+    left, right = st.columns([3, 1])
+    # 生成は30〜60秒かかる。その最中にここを触れると、その場で再実行が
+    # 走って生成が打ち切られ、雛形や参照先が入れ替わった状態のまま
+    # generating と pending_question だけが前回の質問を抱えて残る。
+    # サイドバーのコーパス切り替えラジオ（上の約510行）と同じ食い違いが
+    # 起きるため、同じく生成中は無効化する。
+    if available:
         template_path = left.selectbox(
             "雛形",
             available,
@@ -757,10 +752,17 @@ if mode == MODE_COWORK:
             key="template",
             disabled=st.session_state.generating,
         )
-        if right.button(
-            "雛形を登録・削除", disabled=st.session_state.generating
-        ):
-            st.session_state.template_dialog_open = True
+    else:
+        left.warning(
+            "雛形が登録されていません。右のボタンから登録してください。"
+            "空欄は {{会議名}} のように書きます。"
+        )
+    # 登録ボタンは雛形が0件でも出す。ここを「1件以上あるとき」の側に置くと、
+    # 初めて Cowork を開いた人の画面に雛形を登録する手段が1つも無くなり、
+    # 警告文だけが存在しないボタンを指す行き止まりになる。
+    if right.button("雛形を登録・削除", disabled=st.session_state.generating):
+        st.session_state.template_dialog_open = True
+    if available:
         # どの資料を引くかは雛形と依頼で決まるので、利用者に選ばせる。
         # 技術ドキュメントを入れると英訳のLLM呼び出しが1回と検索が1本増え、
         # 生成が30〜60秒遅くなる。要らない回に払う理由がない。

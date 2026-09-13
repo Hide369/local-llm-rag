@@ -87,6 +87,29 @@ def test_cowork_without_any_template_tells_the_user_to_register_one(app, tmp_pat
     assert any("雛形" in warning.value for warning in app.warning)
 
 
+def test_cowork_offers_the_register_button_before_any_template_exists(app, tmp_path):
+    """雛形が0件のときこそ登録ボタンが要る。
+
+    ボタンを「雛形が1つ以上あるとき」の側に置いていたため、初めて Cowork を
+    開いた人の画面には雛形を登録する手段が1つも無く、警告文だけが存在しない
+    ボタンを指していた。登録できなければ Cowork は何もできない（実機で確認
+    2026-09-13）。
+    """
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+        button = next(b for b in app.button if b.label == "雛形を登録・削除")
+        button.click().run()
+
+    assert not app.exception
+    # 押した先が登録の画面であることまで見る。ボタンだけ出て何も開かなければ
+    # 行き止まりは解けていない。
+    assert app.file_uploader(key="template_files") is not None
+
+
 def test_cowork_without_a_template_does_not_silently_answer_as_chat(app, tmp_path):
     """雛形が無いまま Cowork で送ると、黙ってチャットの回答を返さない。
 
