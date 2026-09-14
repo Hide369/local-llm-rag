@@ -6,6 +6,7 @@ Markdown を一度だけ解析して共通の構造にするのは、形式ご�
 import io
 
 import docx
+import openpyxl
 from pptx import Presentation
 
 from docgen import markdown_document as md
@@ -311,3 +312,79 @@ def test_build_pptx_raises_on_unhandled_block_type():
 
     with pytest.raises(md.UnsupportedOutputError):
         md.build([UnknownBlock("本文")], ".pptx")
+
+
+def _workbook(data: bytes):
+    return openpyxl.load_workbook(io.BytesIO(data))
+
+
+def test_build_xlsx_puts_each_table_on_its_own_sheet():
+    blocks = [
+        md.Heading(2, "付与日数"),
+        md.Table(["区分", "日数"], [["6か月", "10日"]]),
+    ]
+
+    book = _workbook(md.build(blocks, ".xlsx")[0])
+
+    assert book.sheetnames == ["付与日数"]
+    assert [cell.value for cell in book["付与日数"][1]] == ["区分", "日数"]
+    assert [cell.value for cell in book["付与日数"][2]] == ["6か月", "10日"]
+
+
+def test_build_xlsx_numbers_a_table_that_has_no_heading():
+    book = _workbook(md.build([md.Table(["A"], [["1"]])], ".xlsx")[0])
+
+    assert book.sheetnames == ["表1"]
+
+
+def test_build_xlsx_shortens_a_sheet_name_that_excel_rejects():
+    """Excel のシート名は31文字以内で、: \\ / ? * [ ] を含められない。
+    そのまま渡すと保存時に落ちる。"""
+    blocks = [md.Heading(2, "あ" * 40 + "/x"), md.Table(["A"], [["1"]])]
+
+    book = _workbook(md.build(blocks, ".xlsx")[0])
+
+    assert len(book.sheetnames[0]) <= 31
+    assert "/" not in book.sheetnames[0]
+
+
+def test_build_xlsx_makes_duplicate_sheet_names_unique():
+    blocks = [
+        md.Heading(2, "表"), md.Table(["A"], [["1"]]),
+        md.Heading(2, "表"), md.Table(["B"], [["2"]]),
+    ]
+
+    assert len(_workbook(md.build(blocks, ".xlsx")[0]).sheetnames) == 2
+
+
+def test_build_xlsx_without_a_table_falls_back_to_two_columns_and_warns():
+    """空のブックを渡さない。書かれた内容そのものは必ず渡す。"""
+    blocks = [md.Heading(2, "現状"), md.Paragraph("遅い")]
+
+    data, warnings = md.build(blocks, ".xlsx")
+    book = _workbook(data)
+
+    assert warnings and "表" in warnings[0]
+    assert [cell.value for cell in book.worksheets[0][1]] == ["現状", "遅い"]
+
+
+def test_build_xlsx_puts_the_references_on_their_own_sheet():
+    blocks = [md.Table(["A"], [["1"]]), md.References(["main.go"], [])]
+
+    book = _workbook(md.build(blocks, ".xlsx")[0])
+
+    assert md.REFERENCES_HEADING in book.sheetnames
+    assert book[md.REFERENCES_HEADING]["A1"].value == "main.go"
+
+
+def test_build_xlsx_raises_on_unhandled_block_type():
+    """黙って飛ばすと利用者が受け取る文書から本文が消え、例外も警告も出ないため気づけない。"""
+    import pytest
+    from dataclasses import dataclass
+
+    @dataclass
+    class UnknownBlock:
+        content: str
+
+    with pytest.raises(md.UnsupportedOutputError):
+        md.build([UnknownBlock("本文")], ".xlsx")

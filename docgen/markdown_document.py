@@ -17,6 +17,7 @@ import re
 from dataclasses import dataclass, field
 
 import docx
+import openpyxl
 from docx.shared import Inches, Pt
 from pptx import Presentation
 
@@ -328,6 +329,93 @@ def _build_pptx(blocks, on_diagram_error=None) -> tuple[bytes, list[str]]:
     return buffer.getvalue(), []
 
 
+# Excel のシート名の制限。31文字以内で、この文字を含められない。
+_SHEET_NAME_LIMIT = 31
+_SHEET_NAME_FORBIDDEN = re.compile(r"[:\\/?*\[\]]")
+
+
+def _sheet_name(wanted: str, used: set[str]) -> str:
+    """Excel が受け取れるシート名にする。重なったら連番を足す。
+
+    そのまま渡すと保存時に落ちる。落ちると成果物が1つも手に入らない。
+    """
+    name = _SHEET_NAME_FORBIDDEN.sub("_", wanted).strip() or "表"
+    name = name[:_SHEET_NAME_LIMIT]
+    if name not in used:
+        used.add(name)
+        return name
+    serial = 2
+    while True:
+        suffix = f"_{serial}"
+        candidate = name[: _SHEET_NAME_LIMIT - len(suffix)] + suffix
+        if candidate not in used:
+            used.add(candidate)
+            return candidate
+        serial += 1
+
+
+def _build_xlsx(blocks, on_diagram_error=None) -> tuple[bytes, list[str]]:
+    """表1つにつき1シート。シート名は直前の見出しにする。
+
+    表が1つも無いときは見出しと本文の2列で1シートを出し、警告する。空のブックを
+    返さないのは、利用者が受け取るものを空にしないためである。
+    """
+    book = openpyxl.Workbook()
+    book.remove(book.active)
+    warnings: list[str] = []
+    used: set[str] = set()
+    heading = ""
+    table_serial = 1
+    rows: list[tuple[str, str]] = []
+
+    for block in blocks:
+        if isinstance(block, Heading):
+            heading = block.text
+        elif isinstance(block, Table):
+            sheet = book.create_sheet(_sheet_name(heading or f"表{table_serial}", used))
+            sheet.append(block.header)
+            for row in block.rows:
+                sheet.append(row)
+            table_serial += 1
+            heading = ""
+        elif isinstance(block, References):
+            sheet = book.create_sheet(_sheet_name(REFERENCES_HEADING, used))
+            for name in block.paths + block.citations:
+                sheet.append([name])
+        elif isinstance(block, Paragraph):
+            rows.append((heading, block.text))
+            heading = ""
+        elif isinstance(block, Bullets):
+            for item in block.items:
+                rows.append((heading, item))
+                heading = ""
+        elif isinstance(block, (Code, Diagram)):
+            source = block.text if isinstance(block, Code) else block.source
+            rows.append((heading, source))
+            heading = ""
+        else:
+            _unhandled(block)
+
+    # 末尾に見出しだけ残っていた場合
+    if heading:
+        rows.append((heading, ""))
+
+    if not any(isinstance(block, Table) for block in blocks):
+        warnings.append(
+            "表が1つも書かれなかったため、見出しと本文の2列で出しました。"
+            "表が欲しい場合は依頼文で「表で」と指定してください。"
+        )
+        sheet = book.create_sheet(_sheet_name("本文", used), 0)
+        for left, right in rows:
+            sheet.append([left, right])
+
+    if not book.sheetnames:
+        book.create_sheet(_sheet_name("本文", used))
+    buffer = io.BytesIO()
+    book.save(buffer)
+    return buffer.getvalue(), warnings
+
+
 def _build_md(blocks, on_diagram_error=None) -> tuple[bytes, list[str]]:
     parts: list[str] = []
     for block in blocks:
@@ -351,7 +439,7 @@ def _build_md(blocks, on_diagram_error=None) -> tuple[bytes, list[str]]:
     return ("\n\n".join(parts) + "\n").encode("utf-8"), []
 
 
-_BUILDERS = {".md": _build_md, ".docx": _build_docx, ".pptx": _build_pptx}
+_BUILDERS = {".md": _build_md, ".docx": _build_docx, ".pptx": _build_pptx, ".xlsx": _build_xlsx}
 
 OUTPUT_SUFFIXES = (".md", ".docx", ".xlsx", ".pptx")
 
