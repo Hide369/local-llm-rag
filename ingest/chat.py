@@ -75,6 +75,44 @@ def ask_json(model: str, prompt: str, session=None, num_ctx: int = NUM_CTX) -> s
             session.close()
 
 
+def ask_text(model: str, prompt: str, session=None, num_ctx: int = NUM_CTX) -> str:
+    """平文をそのまま返させる。文書生成用。
+
+    ask_json と違って format を送らない。数千字の Markdown を JSON 文字列へ
+    押し込ませると、改行・引用符・バックスラッシュのエスケープで壊れる。
+
+    temperature も送らない。ask_json が 0 を固定するのは条件抽出で答えが揺れると
+    再現性のない誤りになるためで、文章生成にその要求はない。
+    """
+    own_session = session is None
+    session = session or new_session()
+    try:
+        url = f"{OLLAMA_HOST}/api/chat"
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": False,
+            "keep_alive": "30m",
+            "options": {"num_ctx": num_ctx},
+        }
+        last_error = None
+        for attempt in range(_MAX_ATTEMPTS):
+            try:
+                response = session.post(url, json=payload, timeout=_TIMEOUT)
+                response.raise_for_status()
+                return response.json()["message"]["content"]
+            except (requests.RequestException, KeyError, ValueError) as error:
+                last_error = error
+                if attempt < _MAX_ATTEMPTS - 1:
+                    time.sleep(2**attempt)
+        raise ChatError(
+            f"{OLLAMA_HOST} への生成リクエストが{_MAX_ATTEMPTS}回失敗しました: {last_error}"
+        )
+    finally:
+        if own_session:
+            session.close()
+
+
 def stream_chat(
     model: str, messages: list[dict], temperature: float, session=None
 ) -> Iterator[str]:

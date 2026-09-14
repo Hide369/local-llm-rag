@@ -14,6 +14,7 @@ from streamlit.testing.v1 import AppTest
 
 import ingest.retrieval as retrieval
 from docgen import filling
+from docgen import markdown_document
 from docgen import mermaid
 from docgen import templates as templates_module
 from ingest import chat
@@ -74,8 +75,14 @@ def test_the_mode_toggle_offers_both_modes(app, tmp_path):
     assert "Cowork" in str(app)
 
 
-def test_cowork_without_any_template_tells_the_user_to_register_one(app, tmp_path):
-    """雛形が0件のまま生成ボタンだけ出すと、押しても何も起きない。"""
+def test_cowork_without_any_template_does_not_tell_the_user_to_register_one(app, tmp_path):
+    """雛形が0件でも、雛形なしの選択肢があるため行き止まりにならない。
+
+    以前は0件のとき「雛形が登録されていません」という警告だけを出し、生成の
+    手段が無い行き止まりだった。雛形なしが正規の選択肢になった今、その警告は
+    出ない（雛形なしで生成できることは test_cowork_offers_generating_without_a_template
+    が確かめる）。
+    """
     with (
         patch.object(store_module, "open_store", _stub_store()),
         patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
@@ -84,7 +91,7 @@ def test_cowork_without_any_template_tells_the_user_to_register_one(app, tmp_pat
         app.segmented_control[0].set_value("Cowork").run()
 
     assert not app.exception
-    assert any("雛形" in warning.value for warning in app.warning)
+    assert not any("雛形が登録されていません" in warning.value for warning in app.warning)
 
 
 def test_cowork_offers_the_register_button_before_any_template_exists(app, tmp_path):
@@ -111,23 +118,32 @@ def test_cowork_offers_the_register_button_before_any_template_exists(app, tmp_p
 
 
 def test_cowork_without_a_template_does_not_silently_answer_as_chat(app, tmp_path):
-    """雛形が無いまま Cowork で送ると、黙ってチャットの回答を返さない。
+    """雛形を選ばないまま Cowork で送っても、黙ってチャットの回答を返さない。
 
     元の分岐は「Cowork かつ雛形あり」以外を全部チャットの else 節に落として
     いたため、雛形0件で送信すると通常のチャット回答が返っていた。利用者は
-    Cowork のつもりで読むため、どこから来た答えなのかを取り違える。
+    Cowork のつもりで読むため、どこから来た答えなのかを取り違える。雛形なしが
+    正規の選択肢になった今も、この経路がチャットの else 節へ落ちないことに
+    変わりはない。
+
+    messages が空であることだけでは、リクエストが黙って握りつぶされた場合
+    （何も生成されない）とも区別が付かない。雛形なしの生成が実際に結果を
+    残したこと（ダウンロードボタンが出て、エラーが無いこと）まで確かめる。
     """
     with (
         patch.object(store_module, "open_store", _stub_store()),
         patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
         patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+        patch.object(chat, "ask_text", lambda *a, **k: "# 議事録\n\n本文\n"),
     ):
         app.run()
         app.segmented_control[0].set_value("Cowork").run()
         app.chat_input[0].set_value("第5回会議の議事録を作って").run()
 
     assert not app.exception
-    assert any("雛形が登録されていません" in error.value for error in app.error)
+    assert app.session_state["messages"] == []
+    assert app.download_button
+    assert not app.error
 
 
 def test_cowork_shows_the_error_when_generation_fails(app, tmp_path):
@@ -152,6 +168,7 @@ def test_cowork_shows_the_error_when_generation_fails(app, tmp_path):
     ):
         app.run()
         app.segmented_control[0].set_value("Cowork").run()
+        app.selectbox(key="template").set_value(store / "議事録.docx").run()
         app.chat_input[0].set_value("第5回会議の議事録を作って").run()
 
     assert not app.exception
@@ -175,6 +192,7 @@ def test_cowork_generates_a_file_and_offers_it_for_download(app, tmp_path):
     ):
         app.run()
         app.segmented_control[0].set_value("Cowork").run()
+        app.selectbox(key="template").set_value(store / "議事録.docx").run()
         app.chat_input[0].set_value("第5回会議の議事録を作って").run()
 
     assert not app.exception
@@ -199,6 +217,7 @@ def test_cowork_lists_the_marks_it_could_not_fill(app, tmp_path):
     ):
         app.run()
         app.segmented_control[0].set_value("Cowork").run()
+        app.selectbox(key="template").set_value(store / "議事録.docx").run()
         app.chat_input[0].set_value("第5回会議の議事録を作って").run()
 
     assert not app.exception
@@ -223,6 +242,7 @@ def test_cowork_uses_a_larger_context_size(app, tmp_path):
     ):
         app.run()
         app.segmented_control[0].set_value("Cowork").run()
+        app.selectbox(key="template").set_value(store / "議事録.docx").run()
         app.chat_input[0].set_value("議事録を作って").run()
 
     from docgen import filling
@@ -256,6 +276,7 @@ def test_cowork_does_not_search_the_documentation_unless_it_is_asked(app, tmp_pa
     ):
         app.run()
         app.segmented_control[0].set_value("Cowork").run()
+        app.selectbox(key="template").set_value(store / "議事録.docx").run()
         app.chat_input[0].set_value("第5回会議の議事録を作って").run()
 
     assert not app.exception
@@ -288,6 +309,7 @@ def test_cowork_tells_the_user_when_a_diagram_could_not_be_drawn(app, tmp_path):
     ):
         app.run()
         app.segmented_control[0].set_value("Cowork").run()
+        app.selectbox(key="template").set_value(store / "議事録.docx").run()
         app.chat_input[0].set_value("設計書を作って").run()
 
     assert not app.exception
@@ -313,6 +335,7 @@ def test_cowork_reports_a_broken_template_instead_of_crashing(app, tmp_path):
     ):
         app.run()
         app.segmented_control[0].set_value("Cowork").run()
+        app.selectbox(key="template").set_value(store / "壊れた.docx").run()
         app.chat_input[0].set_value("第5回会議の議事録を作って").run()
 
     assert not app.exception
@@ -367,6 +390,7 @@ def test_cowork_does_not_leave_the_request_in_the_chat_history(app, tmp_path):
     ):
         app.run()
         app.segmented_control[0].set_value("Cowork").run()
+        app.selectbox(key="template").set_value(store / "議事録.docx").run()
         app.chat_input[0].set_value("第5回会議の議事録を作って").run()
 
     assert not app.exception
@@ -402,6 +426,7 @@ def test_cowork_attachments_are_captioned_through_the_vlm(app, tmp_path):
     ):
         app.run()
         app.segmented_control[0].set_value("Cowork").run()
+        app.selectbox(key="template").set_value(store / "議事録.docx").run()
         app.file_uploader(key="cowork_files").set_value(
             ("画面.png", b"\x89PNG\r\n\x1a\n", "image/png")
         )
@@ -410,6 +435,74 @@ def test_cowork_attachments_are_captioned_through_the_vlm(app, tmp_path):
 
     assert not app.exception
     assert seen == [vlm_module.caption_image]
+
+
+NO_TEMPLATE = "（雛形なし）"
+
+
+def test_cowork_offers_generating_without_a_template(app, tmp_path):
+    """雛形を作る手間のほうが大きい仕事がある。雛形が0件でも画面は成立する。"""
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+
+    assert not app.exception
+    assert NO_TEMPLATE in app.selectbox(key="template").options
+
+
+def test_cowork_without_a_template_generates_markdown(app, tmp_path):
+    """雛形なしの生成が実際に .md のバイト列を組み立てることまで確かめる。
+
+    AppTest の DownloadButton は proto.url しか持たず、st.download_button に
+    渡した bytes を属性としては公開していない（実データは AppTest が
+    実行のたびに作り直す MediaFileManager が握っており、app.run() の外から
+    覗けない）。そこで markdown_document.build に実装をそのまま素通りさせる
+    スパイを挟み、実際に生成へ渡されたバイト列を横取りする。
+    """
+    built = {}
+    real_build = markdown_document.build
+
+    def spy_build(blocks, suffix, on_diagram_error=None):
+        data, warnings = real_build(blocks, suffix, on_diagram_error)
+        built["data"] = data
+        return data, warnings
+
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+        patch.object(chat, "ask_text", lambda *a, **k: "# 設計書\n\n本文\n"),
+        patch.object(chat, "ask_json", lambda *a, **k: "{}"),
+        patch.object(markdown_document, "build", spy_build),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+        app.selectbox(key="template").set_value(NO_TEMPLATE).run()
+        app.selectbox(key="output_suffix").set_value(".md").run()
+        app.chat_input[0].set_value("設計書を書いて").run()
+
+    assert not app.exception
+    assert app.download_button
+    assert built["data"].decode("utf-8").startswith("# 設計書")
+
+
+def test_cowork_without_a_template_stops_when_there_is_no_evidence(app, tmp_path):
+    """根拠が1つも無ければ、呼んでも中身の無い文書が出るだけである。"""
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+        app.selectbox(key="template").set_value(NO_TEMPLATE).run()
+        app.checkbox(key="cowork_internal").set_value(False).run()
+        app.chat_input[0].set_value("設計書を書いて").run()
+
+    assert not app.exception
+    assert any("根拠" in error.value for error in app.error)
 
 
 def test_cowork_warns_when_an_attachment_yields_no_text(app, tmp_path):
@@ -439,6 +532,7 @@ def test_cowork_warns_when_an_attachment_yields_no_text(app, tmp_path):
     ):
         app.run()
         app.segmented_control[0].set_value("Cowork").run()
+        app.selectbox(key="template").set_value(store / "議事録.docx").run()
         app.file_uploader(key="cowork_files").set_value(
             ("画面.png", b"\x89PNG\r\n\x1a\n", "image/png")
         )
@@ -447,3 +541,188 @@ def test_cowork_warns_when_an_attachment_yields_no_text(app, tmp_path):
 
     assert not app.exception
     assert any("本文を取り出せませんでした" in warning.value for warning in app.warning)
+
+
+def test_cowork_reads_the_project_folder_and_writes_the_result_into_it(app, tmp_path):
+    """成果物はダウンロードだけでなくフォルダにも残す。"""
+    folder = tmp_path / "myproject"
+    folder.mkdir()
+    (folder / "main.go").write_text("package main\n", encoding="utf-8")
+
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+        patch.object(chat, "ask_json", lambda *a, **k: '["main.go"]'),
+        patch.object(chat, "ask_text", lambda *a, **k: "# 設計書\n\n本文\n"),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+        app.selectbox(key="template").set_value(NO_TEMPLATE).run()
+        app.text_input(key="project_folder").set_value(str(folder)).run()
+        app.chat_input[0].set_value("設計書を書いて").run()
+
+    assert not app.exception
+    written = list((folder / "generated_docs").glob("*.md"))
+    assert len(written) == 1
+    assert "# 設計書" in written[0].read_text(encoding="utf-8")
+
+
+def test_the_generated_document_lists_the_files_it_used(app, tmp_path):
+    """何を根拠にしたかを後から辿れるようにする。"""
+    folder = tmp_path / "myproject"
+    folder.mkdir()
+    (folder / "main.go").write_text("package main\n", encoding="utf-8")
+
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+        patch.object(chat, "ask_json", lambda *a, **k: '["main.go"]'),
+        patch.object(chat, "ask_text", lambda *a, **k: "# 設計書\n\n本文\n"),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+        app.selectbox(key="template").set_value(NO_TEMPLATE).run()
+        app.text_input(key="project_folder").set_value(str(folder)).run()
+        app.chat_input[0].set_value("設計書を書いて").run()
+
+    written = list((folder / "generated_docs").glob("*.md"))
+    assert len(written) == 1
+    text = written[0].read_text(encoding="utf-8")
+    assert "## 参照したファイル" in text
+    assert "main.go" in text
+
+
+def _embed_query_must_not_be_called(*args, **kwargs):
+    raise AssertionError("embed_query was called before the folder was validated")
+
+
+def test_a_folder_that_does_not_exist_stops_before_calling_the_model(app, tmp_path):
+    """呼んでから落ちると、利用者は30〜60秒待たされたうえで何も受け取れない。
+
+    パスの打ち間違いを伝えるのに、埋め込み検索と翻訳の LLM を通す理由がない。
+    社内資料を参照するチェックは既定でオンのままにしておき、
+    `retrieval.embed_query` が「呼ばれたら失敗する」関数に差し替えてある
+    ことで、フォルダの検証（`docgen_project.tree`）が検索より先に実行される
+    順序をロックする。以前はこの検証が検索より後にあり、フォルダを打ち
+    間違えただけでも埋め込み検索（と技術ドキュメント参照時は翻訳のLLM
+    呼び出しまで）を1回無駄に払ってから初めてエラーが出ていた。
+    """
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
+        patch.object(retrieval, "embed_query", _embed_query_must_not_be_called),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+        app.selectbox(key="template").set_value(NO_TEMPLATE).run()
+        app.text_input(key="project_folder").set_value(str(tmp_path / "無い")).run()
+        app.chat_input[0].set_value("設計書を書いて").run()
+
+    assert not app.exception
+    assert any("フォルダ" in error.value for error in app.error)
+
+
+def test_a_failed_selection_still_lets_the_template_path_see_the_listing(app, tmp_path):
+    """選択が0件でも、雛形ありの経路もツリーだけは載せる。
+
+    以前は _collect_project_files が「一覧だけ渡します」と警告する一方で、
+    _generate_document 側は tree_text をアンダースコア変数で受けて捨てて
+    いたため、警告の内容と実際の挙動が食い違っていた（設計書5節の
+    フォールバックは freeform 経路にしか効いていなかった）。
+    """
+    store = tmp_path / "templates"
+    _register(store)
+    folder = tmp_path / "myproject"
+    folder.mkdir()
+    (folder / "main.go").write_text("package main\n", encoding="utf-8")
+
+    seen_attachments = []
+    real_fill_values = filling.fill_values
+
+    def spy_fill_values(placeholders, question, sources, attachments, ask):
+        seen_attachments.append(attachments)
+        return real_fill_values(placeholders, question, sources, attachments, ask)
+
+    def ask_json(model, prompt, session=None, num_ctx=None):
+        if "読むべきファイルのパスだけを" in prompt:
+            return "[]"
+        return json.dumps({"会議名": "第5回"}, ensure_ascii=False)
+
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", store),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+        patch.object(chat, "ask_json", ask_json),
+        patch.object(filling, "fill_values", spy_fill_values),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+        app.selectbox(key="template").set_value(store / "議事録.docx").run()
+        app.text_input(key="project_folder").set_value(str(folder)).run()
+        app.chat_input[0].set_value("第5回会議の議事録を作って").run()
+
+    assert not app.exception
+    assert seen_attachments
+    names = [name for name, _ in seen_attachments[0]]
+    assert "（プロジェクトのファイル一覧）" in names
+    listing = next(text for name, text in seen_attachments[0] if name == "（プロジェクトのファイル一覧）")
+    assert "main.go" in listing
+
+
+def test_a_project_folder_too_big_for_the_listing_warns_with_the_exact_count(app, tmp_path):
+    """一覧がTREE_BUDGET_CHARSを超えるフォルダでは、モデルに見えていない
+    ファイルがあることを画面で伝える。伝えないと、選ばれなかったファイルが
+    「関係が無いから選ばれなかった」のか「一覧に載らなかったから選べな
+    かった」のか利用者には区別が付かない。
+    """
+    from docgen import project as project_module
+
+    folder = tmp_path / "myproject"
+    folder.mkdir()
+    entries_count = 400
+    for i in range(entries_count):
+        (folder / f"f{i:04d}.go").write_text("package main\n", encoding="utf-8")
+    entries = project_module.tree(folder)
+    _listing, expected_omitted = project_module.tree_text(entries)
+    assert expected_omitted > 0  # このテストの前提（実測で確かめる）
+
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
+        patch.object(chat, "ask_json", lambda *a, **k: "[]"),
+        patch.object(chat, "ask_text", lambda *a, **k: "# 設計書\n\n本文\n"),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+        app.selectbox(key="template").set_value(NO_TEMPLATE).run()
+        app.checkbox(key="cowork_internal").set_value(False).run()
+        app.text_input(key="project_folder").set_value(str(folder)).run()
+        app.chat_input[0].set_value("設計書を書いて").run()
+
+    assert not app.exception
+    assert any(str(expected_omitted) in warning.value for warning in app.warning)
+
+
+def test_a_project_folder_alone_is_enough_evidence(app, tmp_path):
+    """フォルダだけを指定した回は正当な使い方であり、止めてはならない。"""
+    folder = tmp_path / "myproject"
+    folder.mkdir()
+    (folder / "main.go").write_text("package main\n", encoding="utf-8")
+
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
+        patch.object(chat, "ask_json", lambda *a, **k: '["main.go"]'),
+        patch.object(chat, "ask_text", lambda *a, **k: "# 設計書\n\n本文\n"),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+        app.selectbox(key="template").set_value(NO_TEMPLATE).run()
+        app.checkbox(key="cowork_internal").set_value(False).run()
+        app.text_input(key="project_folder").set_value(str(folder)).run()
+        app.chat_input[0].set_value("設計書を書いて").run()
+
+    assert not app.exception
+    assert not app.error

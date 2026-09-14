@@ -1,0 +1,468 @@
+"""Markdown を中間構造へ解析し、4形式へ組む。
+
+Markdown を一度だけ解析して共通の構造にするのは、形式ごとに読み直すと記法の
+解釈が4箇所に分かれるためである。
+"""
+import base64
+import io
+
+import docx
+import openpyxl
+from pptx import Presentation
+from pptx.enum.shapes import MSO_SHAPE_TYPE
+
+from docgen import markdown_document as md
+from docgen import mermaid
+
+# 1x1 の PNG。python-pptx は Pillow で実際に開くため、でたらめなバイト列では
+# 差し込めない（tests/test_docgen_diagrams.py と同じ値）。
+_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+)
+
+
+def _docx_texts(data: bytes) -> list[str]:
+    return [p.text for p in docx.Document(io.BytesIO(data)).paragraphs]
+
+
+def test_headings_keep_their_level():
+    blocks = md.parse("# 設計書\n\n## 構成\n")
+
+    assert blocks == [md.Heading(1, "設計書"), md.Heading(2, "構成")]
+
+
+def test_consecutive_lines_become_one_paragraph():
+    """Markdown では空行が段落の区切りである。改行1つで切ると、
+    折り返しただけの文が別々の段落になる。"""
+    blocks = md.parse("これは1つの\n段落である。\n\n次の段落。\n")
+
+    assert blocks == [md.Paragraph("これは1つの 段落である。"), md.Paragraph("次の段落。")]
+
+
+def test_bullets_are_collected_into_one_block():
+    blocks = md.parse("- 一つ目\n- 二つ目\n")
+
+    assert blocks == [md.Bullets(["一つ目", "二つ目"])]
+
+
+def test_numbered_lists_are_bullets_too():
+    """番号付きも箇条書きとして扱う。docx と pptx で番号を復元する価値より、
+    2種類を持ち回る複雑さのほうが大きい。"""
+    blocks = md.parse("1. 一つ目\n2. 二つ目\n")
+
+    assert blocks == [md.Bullets(["一つ目", "二つ目"])]
+
+
+def test_a_table_keeps_its_header_and_rows():
+    text = "| 区分 | 日数 |\n| --- | --- |\n| 6か月 | 10日 |\n"
+
+    blocks = md.parse(text)
+
+    assert blocks == [md.Table(["区分", "日数"], [["6か月", "10日"]])]
+
+
+def test_a_fenced_block_is_code():
+    blocks = md.parse("```python\nprint(1)\n```\n")
+
+    assert blocks == [md.Code("print(1)")]
+
+
+def test_a_mermaid_fence_is_a_diagram():
+    """図として描ける可能性があるものを、ただのコードと区別する。"""
+    blocks = md.parse("```mermaid\ngraph TD\nA-->B\n```\n")
+
+    assert blocks == [md.Diagram("graph TD\nA-->B")]
+
+
+def test_a_heading_inside_a_fence_is_not_a_heading():
+    """コード例の中の # を見出しにすると、文書の構造が崩れる。"""
+    blocks = md.parse("```\n# これはコメント\n```\n")
+
+    assert blocks == [md.Code("# これはコメント")]
+
+
+def test_an_empty_document_has_no_blocks():
+    assert md.parse("   \n\n") == []
+
+
+def test_a_blank_line_is_what_separates_two_tables():
+    """2つの表を分ける方法は空行である。GFM の標準動作として、空行がなければ
+    2つのテーブル構文が1つにマージされる。これは仕様であり、バグではない。"""
+    # 空行なし：マージされて1つのテーブルになる
+    text_no_blank = "| a | b |\n| - | - |\n| 1 | 2 |\n| c | d |\n| - | - |\n| 3 | 4 |\n"
+    blocks_no_blank = md.parse(text_no_blank)
+    assert blocks_no_blank == [
+        md.Table(["a", "b"], [["1", "2"], ["c", "d"], ["-", "-"], ["3", "4"]])
+    ]
+
+    # 空行あり：2つの別々のテーブルになる
+    text_with_blank = "| a | b |\n| - | - |\n| 1 | 2 |\n\n| c | d |\n| - | - |\n| 3 | 4 |\n"
+    blocks_with_blank = md.parse(text_with_blank)
+    assert blocks_with_blank == [
+        md.Table(["a", "b"], [["1", "2"]]),
+        md.Table(["c", "d"], [["3", "4"]])
+    ]
+
+
+def test_a_short_row_is_padded_to_header_width():
+    """セル数がヘッダーより少ない行は、空文字列でパディングされる。
+    docx/xlsx/pptx レンダラーは固定列数で構築されるため、不揃いな行が
+    列ずれを引き起こさないように正規化が必須である。"""
+    text = "| a | b |\n| - | - |\n| 1 |\n"
+
+    blocks = md.parse(text)
+
+    assert blocks == [md.Table(["a", "b"], [["1", ""]])]
+
+
+def test_a_long_row_surplus_cells_are_dropped():
+    """セル数がヘッダーより多い行の余剰セルは削除される。
+    GFM の仕様に準じ、下流レンダラーが誤配置しない形に整形する。"""
+    text = "| a | b |\n| - | - |\n| 1 | 2 | 3 |\n"
+
+    blocks = md.parse(text)
+
+    assert blocks == [md.Table(["a", "b"], [["1", "2"]])]
+
+
+def test_a_table_with_legitimate_dash_data_rows_keeps_all_rows():
+    """データ行に | - | - | が含まれる場合、先読みで表を分けようとすると
+    区切り行と見分けが付かず、この行が消える。複数の表でマージを許容する以上、
+    シンプルな停止条件（空行まで続ける）が唯一の正解である。"""
+    text = "| a | b |\n| - | - |\n| 1 | 2 |\n| - | - |\n| 3 | 4 |\n"
+
+    blocks = md.parse(text)
+
+    assert blocks == [md.Table(["a", "b"], [["1", "2"], ["-", "-"], ["3", "4"]])]
+
+
+def test_build_md_round_trips_the_blocks():
+    blocks = [md.Heading(1, "設計書"), md.Paragraph("本文"), md.Bullets(["一つ目"])]
+
+    data, warnings = md.build(blocks, ".md")
+
+    assert warnings == []
+    assert data.decode("utf-8") == "# 設計書\n\n本文\n\n- 一つ目\n"
+
+
+def test_build_md_keeps_mermaid_as_a_fence():
+    """.md は GitHub・VS Code・画面のプレビューが図として表示する。
+    PNG にする理由が無い（docgen/md_template.py と同じ判断）。"""
+    data, _ = md.build([md.Diagram("graph TD\nA-->B")], ".md")
+
+    assert data.decode("utf-8") == "```mermaid\ngraph TD\nA-->B\n```\n"
+
+
+def test_build_md_writes_the_references_section():
+    blocks = [md.Paragraph("本文"), md.References(["main.go"], ["議事録.docx p.1"])]
+
+    text = md.build(blocks, ".md")[0].decode("utf-8")
+
+    assert "## 参照したファイル" in text
+    assert "- main.go" in text
+    assert "- 議事録.docx p.1" in text
+
+
+def test_build_rejects_an_unsupported_suffix():
+    import pytest
+    with pytest.raises(md.UnsupportedOutputError):
+        md.build([md.Paragraph("本文")], ".pdf")
+
+
+def test_build_raises_on_unhandled_block_type():
+    """黙って飛ばすと利用者が受け取る文書から本文が消え、例外も警告も出ないため気づけない。"""
+    import pytest
+    from dataclasses import dataclass
+
+    @dataclass
+    class UnknownBlock:
+        content: str
+
+    with pytest.raises(md.UnsupportedOutputError):
+        md.build([UnknownBlock("本文")], ".md")
+
+
+def test_build_docx_writes_headings_and_paragraphs():
+    blocks = [md.Heading(1, "設計書"), md.Paragraph("本文")]
+
+    data, warnings = md.build(blocks, ".docx")
+
+    assert warnings == []
+    assert "設計書" in _docx_texts(data)
+    assert "本文" in _docx_texts(data)
+
+
+def test_build_docx_writes_a_table():
+    blocks = [md.Table(["区分", "日数"], [["6か月", "10日"]])]
+
+    document = docx.Document(io.BytesIO(md.build(blocks, ".docx")[0]))
+
+    assert len(document.tables) == 1
+    assert document.tables[0].cell(0, 0).text == "区分"
+    assert document.tables[0].cell(1, 1).text == "10日"
+
+
+def test_build_docx_writes_the_references_section():
+    blocks = [md.References(["main.go"], ["議事録.docx p.1"])]
+
+    texts = _docx_texts(md.build(blocks, ".docx")[0])
+
+    assert md.REFERENCES_HEADING in texts
+    assert "main.go" in texts
+    assert "議事録.docx p.1" in texts
+
+
+def test_build_docx_keeps_the_mermaid_text_when_it_cannot_be_drawn(monkeypatch):
+    """図にできなかったことを黙って捨てると、利用者は成果物を開くまで
+    気づけない。テキストは残し、呼び出し元へ知らせる。"""
+    def _fail(source):
+        raise mermaid.MermaidError("mmdc を起動できませんでした")
+
+    monkeypatch.setattr(mermaid, "render", _fail)
+    seen = []
+
+    data, warnings = md.build(
+        [md.Diagram("graph TD\nA-->B")], ".docx",
+        lambda name, reason: seen.append((name, reason)),
+    )
+
+    assert "graph TD" in "\n".join(_docx_texts(data))
+    assert seen and "mmdc" in seen[0][1]
+
+
+def test_build_docx_raises_on_unhandled_block_type():
+    """黙って飛ばすと利用者が受け取る文書から本文が消え、例外も警告も出ないため気づけない。"""
+    import pytest
+    from dataclasses import dataclass
+
+    @dataclass
+    class UnknownBlock:
+        content: str
+
+    with pytest.raises(md.UnsupportedOutputError):
+        md.build([UnknownBlock("本文")], ".docx")
+
+
+def test_build_docx_writes_a_code_block():
+    """コードブロックのテキストが文書に含まれることを確認する。"""
+    blocks = [md.Code("print(1)")]
+
+    texts = _docx_texts(md.build(blocks, ".docx")[0])
+
+    assert "print(1)" in texts
+
+
+def test_build_docx_handles_empty_code_block():
+    """空のフェンスはモデルが書きうる。`runs[0]` を無条件に触ると、そこで生成ごと落ちる。"""
+    blocks = [md.Code("")]
+
+    data, warnings = md.build(blocks, ".docx")
+
+    assert warnings == []
+    assert data is not None  # 文書が正常に生成されることを確認
+
+
+def _slide_texts(data: bytes) -> list[list[str]]:
+    presentation = Presentation(io.BytesIO(data))
+    return [
+        [shape.text_frame.text for shape in slide.shapes if shape.has_text_frame]
+        for slide in presentation.slides
+    ]
+
+
+def test_build_pptx_makes_one_slide_per_second_level_heading():
+    blocks = [
+        md.Heading(1, "提案"),
+        md.Heading(2, "現状"),
+        md.Bullets(["遅い"]),
+        md.Heading(2, "対策"),
+        md.Bullets(["速くする"]),
+    ]
+
+    slides = _slide_texts(md.build(blocks, ".pptx")[0])
+
+    assert len(slides) == 3  # タイトル + 2枚
+    assert "提案" in slides[0][0]
+    assert "現状" in slides[1][0]
+    assert "遅い" in slides[1][1]
+
+
+def test_build_pptx_does_not_split_on_third_level_headings():
+    """見出しの深さでスライドを分けると、章立ての書き方しだいで
+    数十枚に膨らむ。"""
+    blocks = [md.Heading(2, "現状"), md.Heading(3, "細目"), md.Paragraph("本文")]
+
+    assert len(_slide_texts(md.build(blocks, ".pptx")[0])) == 1
+
+
+def test_build_pptx_puts_the_references_on_the_last_slide():
+    blocks = [md.Heading(2, "現状"), md.References(["main.go"], [])]
+
+    slides = _slide_texts(md.build(blocks, ".pptx")[0])
+
+    assert md.REFERENCES_HEADING in slides[-1][0]
+    assert "main.go" in slides[-1][1]
+
+
+def test_build_pptx_without_any_heading_still_produces_a_slide():
+    """見出しを1つも書かない回がある。空のファイルを渡さない。"""
+    assert len(_slide_texts(md.build([md.Paragraph("本文")], ".pptx")[0])) == 1
+
+
+def test_build_pptx_draws_a_diagram_on_its_own_slide(monkeypatch):
+    """本文と同じスライドに絶対位置で画像を置くと、本文プレースホルダの上に
+    重なる。図は専用の1枚にすることでこれを避ける（設計書7節）。"""
+    monkeypatch.setattr(mermaid, "render", lambda source: _PNG)
+    blocks = [md.Heading(2, "構成"), md.Bullets(["現状"]), md.Diagram("graph TD\nA-->B")]
+
+    data, warnings = md.build(blocks, ".pptx")
+    presentation = Presentation(io.BytesIO(data))
+    shapes = [shape for slide in presentation.slides for shape in slide.shapes]
+    pictures = [s for s in shapes if s.shape_type == MSO_SHAPE_TYPE.PICTURE]
+
+    assert warnings == []
+    assert len(pictures) == 1
+
+
+def test_build_pptx_keeps_the_mermaid_text_when_it_cannot_be_drawn(monkeypatch):
+    """図にできなかったことを黙って消さない。_build_docx と同じ判断で、
+    テキストを残し呼び出し元へ伝える。"""
+    def _fail(source):
+        raise mermaid.MermaidError("mmdc が見つかりません")
+
+    monkeypatch.setattr(mermaid, "render", _fail)
+    seen = []
+
+    data, warnings = md.build(
+        [md.Heading(2, "構成"), md.Diagram("graph TD\nA-->B")], ".pptx",
+        lambda name, reason: seen.append((name, reason)),
+    )
+
+    slides = _slide_texts(data)
+    assert any("graph TD" in "\n".join(texts) for texts in slides)
+    assert seen and "mmdc" in seen[0][1]
+
+
+def test_build_pptx_raises_on_unhandled_block_type():
+    """黙って飛ばすと利用者が受け取る文書から本文が消え、例外も警告も出ないため気づけない。"""
+    import pytest
+    from dataclasses import dataclass
+
+    @dataclass
+    class UnknownBlock:
+        content: str
+
+    with pytest.raises(md.UnsupportedOutputError):
+        md.build([UnknownBlock("本文")], ".pptx")
+
+
+def _workbook(data: bytes):
+    return openpyxl.load_workbook(io.BytesIO(data))
+
+
+def test_build_xlsx_puts_each_table_on_its_own_sheet():
+    blocks = [
+        md.Heading(2, "付与日数"),
+        md.Table(["区分", "日数"], [["6か月", "10日"]]),
+    ]
+
+    book = _workbook(md.build(blocks, ".xlsx")[0])
+
+    assert book.sheetnames == ["付与日数"]
+    assert [cell.value for cell in book["付与日数"][1]] == ["区分", "日数"]
+    assert [cell.value for cell in book["付与日数"][2]] == ["6か月", "10日"]
+
+
+def test_build_xlsx_numbers_a_table_that_has_no_heading():
+    book = _workbook(md.build([md.Table(["A"], [["1"]])], ".xlsx")[0])
+
+    assert book.sheetnames == ["表1"]
+
+
+def test_build_xlsx_shortens_a_sheet_name_that_excel_rejects():
+    """Excel のシート名は31文字以内で、: \\ / ? * [ ] を含められない。
+    そのまま渡すと保存時に落ちる。"""
+    blocks = [md.Heading(2, "あ" * 40 + "/x"), md.Table(["A"], [["1"]])]
+
+    book = _workbook(md.build(blocks, ".xlsx")[0])
+
+    assert len(book.sheetnames[0]) <= 31
+    assert "/" not in book.sheetnames[0]
+
+
+def test_build_xlsx_makes_duplicate_sheet_names_unique():
+    blocks = [
+        md.Heading(2, "表"), md.Table(["A"], [["1"]]),
+        md.Heading(2, "表"), md.Table(["B"], [["2"]]),
+    ]
+
+    assert len(_workbook(md.build(blocks, ".xlsx")[0]).sheetnames) == 2
+
+
+def test_build_xlsx_keeps_prose_alongside_a_table_instead_of_discarding_it():
+    """表が1つでもあると、本文（見出し・段落・箇条書き・コード・図）が
+    まるごと消えていた。表シートと本文シートの両方が残ることを確かめる。"""
+    blocks = [
+        md.Heading(1, "設計書"),
+        md.Paragraph("これは概要です。"),
+        md.Bullets(["項目1", "項目2"]),
+        md.Heading(2, "付与日数"),
+        md.Table(["区分", "日数"], [["6か月", "10日"]]),
+    ]
+
+    data, warnings = md.build(blocks, ".xlsx")
+    book = _workbook(data)
+
+    assert warnings == []
+    assert book.sheetnames == ["付与日数", "本文"]
+    assert [cell.value for cell in book["本文"][1]] == ["設計書", "これは概要です。"]
+    assert [cell.value for cell in book["本文"][2]] == [None, "項目1"]
+
+
+def test_build_xlsx_references_branch_resets_the_heading_like_its_siblings():
+    """References だけ heading をリセットしていなかったため、直前の見出しが
+    ループの後で本文シートに紛れ込んでいた。表とReferencesだけの回では
+    本文シートが1つも要らない。"""
+    blocks = [
+        md.Table(["A"], [["1"]]),
+        md.Heading(2, "残る見出し"),
+        md.References(["main.go"], []),
+    ]
+
+    data, warnings = md.build(blocks, ".xlsx")
+    book = _workbook(data)
+
+    assert "本文" not in book.sheetnames
+
+
+def test_build_xlsx_without_a_table_falls_back_to_two_columns_and_warns():
+    """空のブックを渡さない。書かれた内容そのものは必ず渡す。"""
+    blocks = [md.Heading(2, "現状"), md.Paragraph("遅い")]
+
+    data, warnings = md.build(blocks, ".xlsx")
+    book = _workbook(data)
+
+    assert warnings and "表" in warnings[0]
+    assert [cell.value for cell in book.worksheets[0][1]] == ["現状", "遅い"]
+
+
+def test_build_xlsx_puts_the_references_on_their_own_sheet():
+    blocks = [md.Table(["A"], [["1"]]), md.References(["main.go"], [])]
+
+    book = _workbook(md.build(blocks, ".xlsx")[0])
+
+    assert md.REFERENCES_HEADING in book.sheetnames
+    assert book[md.REFERENCES_HEADING]["A1"].value == "main.go"
+
+
+def test_build_xlsx_raises_on_unhandled_block_type():
+    """黙って飛ばすと利用者が受け取る文書から本文が消え、例外も警告も出ないため気づけない。"""
+    import pytest
+    from dataclasses import dataclass
+
+    @dataclass
+    class UnknownBlock:
+        content: str
+
+    with pytest.raises(md.UnsupportedOutputError):
+        md.build([UnknownBlock("本文")], ".xlsx")

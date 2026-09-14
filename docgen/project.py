@@ -1,0 +1,220 @@
+"""プロジェクトフォルダを資料源として扱う。
+
+走査して一覧を作り、依頼に要るファイルを選ばせ、本文を読み、成果物を書き戻す。
+
+除外する名前（EXCLUDED_DIR_NAMES）と書き出し先（OUTPUT_DIR_NAME）を同じ場所に
+置いているのは、この2つが必ず同時に動かなければならないためである。書き出し先を
+走査から外し忘れると、1回目は正しく動き、2回目から自分が書いた文書を根拠にして
+次の文書を書く。例外は出ないので気づけない。
+"""
+import json
+from pathlib import Path
+
+from ingest.parsers import SUPPORTED_SUFFIXES, parse
+
+# このシステム自身の出力先。走査から外す（モジュールdocstring参照）。
+OUTPUT_DIR_NAME = "generated_docs"
+
+# 隠しディレクトリ（.git .venv .pytest_cache 等）は名前の規則で一括して落とすので
+# ここには挙げない。ここに挙げるのは、隠しでない生成物・依存物である。
+EXCLUDED_DIR_NAMES = frozenset(
+    {OUTPUT_DIR_NAME, "__pycache__", "node_modules", "venv", ".venv"}
+)
+
+# 仮想環境のディレクトリ名は決まっていない（myvenv / myvenv313 / .venv など）。
+# 前方一致で落とす。
+EXCLUDED_DIR_PREFIXES = ("myvenv", "venv")
+
+# プロンプトへ載せるプロジェクト本文の上限。filling.MAX_PROMPT_CHARS(28,000)の
+# うち、検索結果・添付・依頼文・指示文に残す分を引いた値である。ここを超える分は
+# 落とし、落とした名前を呼び出し元へ返す。
+PROJECT_BUDGET_CHARS = 16000
+
+# ファイル一覧に載せる上限。MAX_PROMPT_CHARS(28,000)から PROJECT_BUDGET_CHARS
+# (16,000)を引いた12,000が、依頼文・指示文・検索結果・添付に残る分である。
+# 一覧はその半分までとする。ここを無制限にすると、このリポジトリのように
+# 一覧だけで MAX_PROMPT_CHARS を超え（実測 67,193文字）、雛形なしの生成が
+# 本文0件・検索結果0件のまま PromptTooLongError で止まる。
+TREE_BUDGET_CHARS = 6000
+
+
+class ProjectFolderError(Exception):
+    """指定されたパスをプロジェクトフォルダとして扱えない。"""
+
+
+def _excluded(name: str) -> bool:
+    return (
+        name.startswith(".")
+        or name in EXCLUDED_DIR_NAMES
+        or name.startswith(EXCLUDED_DIR_PREFIXES)
+    )
+
+
+def tree(root: Path) -> list[tuple[str, int]]:
+    """`(相対パス, バイト数)` をパスの昇順で返す。
+
+    大きさに文字数ではなくバイト数を使うのは、文字数を出すには全ファイルを
+    parse する必要があり、PDF や docx が混ざったフォルダでは走査だけで数十秒
+    かかるためである。この一覧は LLM が「どれが要るか」を判断するための目安で
+    あり、その用途にはバイト数で足りる。
+    """
+    if not root.is_dir():
+        raise ProjectFolderError(f"フォルダではありません: {root}")
+    found = []
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(root)
+        if any(_excluded(part) for part in relative.parts[:-1]):
+            continue
+        if path.suffix.lower() not in SUPPORTED_SUFFIXES:
+            continue
+        found.append((relative.as_posix(), path.stat().st_size))
+    return sorted(found)
+
+
+def _resolved(root: Path, relative: str) -> Path | None:
+    """root の下にある実在のファイルなら絶対パスを、そうでなければ None を返す。
+
+    判定は解決後の絶対パスが root の下にあることで行う。文字列に '..' が含まれるか
+    で見ると、シンボリックリンクで外へ出る経路を見逃す。
+    """
+    root = root.resolve()
+    try:
+        candidate = (root / relative).resolve()
+    except OSError:
+        return None
+    if not candidate.is_relative_to(root):
+        return None
+    return candidate if candidate.is_file() else None
+
+
+def read(
+    root: Path, paths: list[str], budget: int = PROJECT_BUDGET_CHARS
+) -> tuple[list[tuple[str, str]], list[str]]:
+    """選ばれたファイルの本文を、予算の範囲で読む。
+
+    返り値の1つ目は (相対パス, 本文) の並びで、filling.fill_values の attachments に
+    そのまま渡せる形である。プロジェクトフォルダは「添付の自動版」であり、専用の
+    受け口を作らない。
+
+    2つ目は読まなかったファイル名の並びである。予算で溢れたもの、root の外を
+    指していたもの、開けなかったものをすべて含む。呼び出し元が画面で伝える。
+
+    予算で溢れたファイルは飛ばして次へ進む（そこで打ち切らない）。大きいファイルが
+    1つ先頭にあるだけで、後ろの小さいファイルまで捨てる理由がない。
+    """
+    files: list[tuple[str, str]] = []
+    skipped: list[str] = []
+    used = 0
+    for relative in paths:
+        path = _resolved(root, relative)
+        if path is None:
+            skipped.append(relative)
+            continue
+        try:
+            units = parse(path)
+        except Exception:
+            # 壊れたファイル1つで生成ごと落とすと、残りの根拠まで失う。
+            skipped.append(relative)
+            continue
+        text = "\n".join(unit.text for unit in units).strip()
+        if not text or used + len(text) > budget:
+            skipped.append(relative)
+            continue
+        files.append((relative, text))
+        used += len(text)
+    return files, skipped
+
+
+def tree_text(
+    entries: list[tuple[str, int]], budget: int = TREE_BUDGET_CHARS
+) -> tuple[str, int]:
+    """ツリーをプロンプトに載せる形にする。
+
+    2つ目の返り値は予算で落とした件数である。黙って全部載せると、この設計書
+    自身の参照実装であるこのリポジトリのように一覧だけで MAX_PROMPT_CHARS を
+    超えうる（TREE_BUDGET_CHARS のコメント参照）。落とすときは末尾に件数を
+    書いた行を足す。件数を書かないと、利用者はモデルが一覧の一部しか
+    見ていないことに気づけない。
+    """
+    lines: list[str] = []
+    used = 0
+    omitted = 0
+    for index, (name, size) in enumerate(entries):
+        line = f"- {name} ({size} bytes)"
+        cost = len(line) + (1 if lines else 0)  # 2行目以降は改行の1文字も数える
+        if used + cost > budget:
+            omitted = len(entries) - index
+            break
+        lines.append(line)
+        used += cost
+    if omitted:
+        lines.append(f"- （ほか {omitted} 件は一覧に載せきれませんでした）")
+    return "\n".join(lines), omitted
+
+
+def build_selection_prompt(entries: list[tuple[str, int]], question: str) -> str:
+    listing, _omitted = tree_text(entries)
+    return (
+        "あなたは社内文書を作成する担当者です。\n"
+        "次の依頼に答えるために、どのファイルの中身を読む必要があるかを選んで"
+        "ください。\n\n"
+        f"## 依頼\n{question}\n\n"
+        f"## ファイル一覧\n{listing}\n\n"
+        "読むべきファイルのパスだけを、JSONの配列で返してください。"
+        "説明や前置きは書かないでください。\n"
+        "一覧に無いパスは返さないでください。\n"
+        "依頼に関係のないファイルは選ばないでください。"
+        "多く選ぶほど1つあたりに割ける分量が減ります。\n"
+    )
+
+
+def select(entries: list[tuple[str, int]], question: str, ask) -> list[str]:
+    """読むべきファイルの相対パスを返す。決まらなければ空を返す。
+
+    壊れた JSON が返っても例外は投げない。止めるとツリーすら渡せず、利用者は
+    何も受け取れない。ツリーだけでもファイル構成は伝わる（fill_values が壊れた
+    JSON で止めず、ingest/query_translation.py が翻訳の失敗で原文に落ちるのと
+    同じ考え方）。
+
+    ask が投げる ChatError は投げ直す。LLM そのものが落ちたことは利用者に伝える
+    べき失敗であり、黙って「選択なし」にしてはいけない。
+
+    ここで MAX_PROMPT_CHARS 超過を測る実装にはしない。build_selection_prompt が
+    載せる一覧は tree_text により TREE_BUDGET_CHARS で頭打ちになっており、依頼文
+    (question) を除けばこのプロンプトの長さは構造的に上限内へ収まる。ここで
+    もう一度測っても、到達しない分岐が増えるだけである。
+    """
+    raw = ask(build_selection_prompt(entries, question))
+    try:
+        loaded = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(loaded, list):
+        return []
+    known = {name for name, _ in entries}
+    return [name for name in loaded if isinstance(name, str) and name in known]
+
+
+def write_output(root: Path, file_name: str, data: bytes) -> Path:
+    """成果物を <root>/generated_docs/ に書き、置いた場所を返す。
+
+    既存のファイルは上書きしない。ファイル名に日付が入っていても同じ日に2回
+    作れば衝突し、上書きすると1回目の成果物が黙って消える。
+
+    このフォルダは走査から外れている（EXCLUDED_DIR_NAMES）。外れていないと、
+    2回目から自分が書いた文書を根拠にして次の文書を書く。
+    """
+    if file_name != Path(file_name).name or file_name in ("", ".", ".."):
+        raise ValueError(f"成果物の名前はファイル名でなければなりません: {file_name}")
+    directory = root / OUTPUT_DIR_NAME
+    directory.mkdir(parents=True, exist_ok=True)
+    destination = directory / file_name
+    stem, suffix = destination.stem, destination.suffix
+    serial = 2
+    while destination.exists():
+        destination = directory / f"{stem}_{serial}{suffix}"
+        serial += 1
+    destination.write_bytes(data)
+    return destination

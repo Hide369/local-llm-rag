@@ -143,3 +143,22 @@ def test_ask_json_accepts_a_larger_context_size():
     assert result == '{"ok": true}'
     payload = session.payloads[0]
     assert payload["options"]["num_ctx"] == 32768
+
+
+def test_ask_text_does_not_ask_for_json():
+    """format: json を送ると、モデルは長い Markdown を JSON 文字列へ押し込もうと
+    して、改行と引用符のエスケープで壊れる。"""
+    session = _FakeSession([_reply("# 設計書\n\n本文")])
+    result = chat.ask_text("qwen3:32b", "設計書を書いて", session=session)
+    assert result == "# 設計書\n\n本文"
+    payload = session.payloads[0]
+    assert "format" not in payload
+
+
+def test_ask_text_leaves_temperature_to_the_model():
+    """temperature=0 は条件抽出の再現性のための値である。文章生成にその要求はない。"""
+    session = _FakeSession([_reply("本文")])
+    chat.ask_text("qwen3:32b", "依頼", session=session)
+    payload = session.payloads[0]
+    assert "temperature" not in payload["options"]
+    assert payload["options"]["num_ctx"] == NUM_CTX
