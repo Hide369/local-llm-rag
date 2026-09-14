@@ -21,6 +21,9 @@ load_dotenv()
 
 import docgen
 from docgen import filling as docgen_filling
+from docgen import freeform as docgen_freeform
+from docgen import markdown_document
+from docgen import project as docgen_project
 from docgen import templates as docgen_templates
 from ingest import (
     answer_text,
@@ -67,6 +70,10 @@ CORPUS_DOCS = "技術ドキュメント"
 
 MODE_CHAT = "チャット"
 MODE_COWORK = "Cowork"
+
+# 雛形を選ばない選択肢。プルダウンの先頭に置く。雛形が0件でも画面が成立する
+# ようにするため、選択肢そのものを常に存在させる。
+NO_TEMPLATE = "（雛形なし）"
 
 # 技術ドキュメントの取り込み・更新に使う2コマンド。空のときの警告と、空でない
 # ときのキャプションの両方で使うため、ここ一箇所にまとめる（二重管理を避ける）。
@@ -496,6 +503,58 @@ def _generate_document(template_path, names, question, attachments, use_internal
     st.session_state.cowork_result = result
 
 
+def _generate_freeform(suffix, question, attachments, use_internal, use_docs):
+    """雛形なしで文書を作り、結果を st.session_state.cowork_result に積む。
+
+    _generate_document と同じく、ここで st.error や st.download_button を直接
+    呼ばない（generating を戻す st.rerun() が同じ実行の描画ごと消すため）。
+    """
+    result = _empty_cowork_result()
+
+    def ask_text(prompt):
+        return chat.ask_text(model, prompt, num_ctx=docgen_filling.GENERATION_NUM_CTX)
+
+    collected = _collect_evidence(question, attachments, use_internal, use_docs, result)
+    if collected is None:
+        return
+    sources, texts = collected
+
+    try:
+        markdown = docgen_freeform.write_markdown(
+            question, sources, texts, "", suffix, ask_text
+        )
+    except (docgen_filling.PromptTooLongError, chat.ChatError) as error:
+        st.session_state.cowork_result = _cowork_error(str(error))
+        return
+
+    blocks = markdown_document.parse(markdown)
+    blocks.append(
+        markdown_document.References(
+            paths=[name for name, _ in texts],
+            citations=[hit.citation for _, hits in sources for hit in hits],
+        )
+    )
+    undrawn = []
+    data, warnings = markdown_document.build(
+        blocks, suffix, lambda name, reason: undrawn.append((name, reason))
+    )
+    result["warnings"].extend(warnings)
+    if undrawn:
+        result["warnings"].append(
+            "図にできなかった箇所: "
+            + "、".join(f"{name}（{reason}）" for name, reason in undrawn)
+        )
+    for name, hits in sources:
+        if not hits:
+            result["infos"].append(f"{name}の検索は0件でした。")
+    result["download"] = {
+        "data": data,
+        "file_name": f"文書_{date.today().isoformat()}{suffix}",
+    }
+    result["sources"] = sources
+    st.session_state.cowork_result = result
+
+
 def render_diagrams(text):
     """マーメイドの定義を図として描く。
 
@@ -754,56 +813,68 @@ attachments = []
 # 既定は社内資料だけ。議事録や報告書はそれで足りる。
 use_internal, use_docs = True, False
 if mode == MODE_COWORK:
-    available = docgen_templates.templates()
     left, right = st.columns([3, 1])
     # 生成は30〜60秒かかる。その最中にここを触れると、その場で再実行が
     # 走って生成が打ち切られ、雛形や参照先が入れ替わった状態のまま
     # generating と pending_question だけが前回の質問を抱えて残る。
     # サイドバーのコーパス切り替えラジオ（上の約510行）と同じ食い違いが
     # 起きるため、同じく生成中は無効化する。
-    if available:
-        template_path = left.selectbox(
-            "雛形",
-            available,
-            format_func=lambda path: path.name,
-            key="template",
-            disabled=st.session_state.generating,
-        )
-    else:
-        left.warning(
-            "雛形が登録されていません。右のボタンから登録してください。"
-            "空欄は {{会議名}} のように書きます。"
-        )
+    #
+    # 雛形が0件でも「（雛形なし）」があるので、プルダウンは常に出せる。
+    # 以前は0件のときプルダウンを出さず警告だけにしていたが、雛形なしが
+    # 正規の選択肢になった今、その警告は行き止まりを指すだけになる。
+    choices = [NO_TEMPLATE] + docgen_templates.templates()
+    template_choice = left.selectbox(
+        "雛形",
+        choices,
+        format_func=lambda item: item if item == NO_TEMPLATE else item.name,
+        key="template",
+        disabled=st.session_state.generating,
+    )
+    template_path = None if template_choice == NO_TEMPLATE else template_choice
     # 登録ボタンは雛形が0件でも出す。ここを「1件以上あるとき」の側に置くと、
     # 初めて Cowork を開いた人の画面に雛形を登録する手段が1つも無くなり、
     # 警告文だけが存在しないボタンを指す行き止まりになる。
     if right.button("雛形を登録・削除", disabled=st.session_state.generating):
         st.session_state.template_dialog_open = True
-    if available:
-        # どの資料を引くかは雛形と依頼で決まるので、利用者に選ばせる。
-        # 技術ドキュメントを入れると英訳のLLM呼び出しが1回と検索が1本増え、
-        # 生成が30〜60秒遅くなる。要らない回に払う理由がない。
-        corpora = st.columns(2)
-        use_internal = corpora[0].checkbox(
-            "社内資料を参照",
-            value=True,
-            key="cowork_internal",
+
+    output_suffix = markdown_document.OUTPUT_SUFFIXES[0]
+    if template_path is None:
+        output_suffix = st.selectbox(
+            "出力形式",
+            markdown_document.OUTPUT_SUFFIXES,
+            key="output_suffix",
             disabled=st.session_state.generating,
         )
-        use_docs = corpora[1].checkbox(
-            "技術ドキュメントを参照",
-            value=False,
-            key="cowork_docs",
-            disabled=st.session_state.generating,
-        )
-        attached = st.file_uploader(
-            "添付（この回だけ使い、DBには入れません）",
-            type=sorted(suffix.lstrip(".") for suffix in SUPPORTED_SUFFIXES),
-            accept_multiple_files=True,
-            key="cowork_files",
-            disabled=st.session_state.generating,
-        )
-        attachments = attached or []
+
+    # コーパスのチェックボックスと添付は、雛形の有無に関わらず出す。雛形
+    # なしの生成でも検索結果と添付を使うためである（if available: の中に
+    # あった頃は雛形なしのとき画面から消え、根拠を渡す手段が無かった）。
+    #
+    # どの資料を引くかは雛形と依頼で決まるので、利用者に選ばせる。
+    # 技術ドキュメントを入れると英訳のLLM呼び出しが1回と検索が1本増え、
+    # 生成が30〜60秒遅くなる。要らない回に払う理由がない。
+    corpora = st.columns(2)
+    use_internal = corpora[0].checkbox(
+        "社内資料を参照",
+        value=True,
+        key="cowork_internal",
+        disabled=st.session_state.generating,
+    )
+    use_docs = corpora[1].checkbox(
+        "技術ドキュメントを参照",
+        value=False,
+        key="cowork_docs",
+        disabled=st.session_state.generating,
+    )
+    attached = st.file_uploader(
+        "添付（この回だけ使い、DBには入れません）",
+        type=sorted(suffix.lstrip(".") for suffix in SUPPORTED_SUFFIXES),
+        accept_multiple_files=True,
+        key="cowork_files",
+        disabled=st.session_state.generating,
+    )
+    attachments = attached or []
 
     # 生成の結果は st.session_state に積んで次の実行で描く。generating を戻す
     # ための下の st.rerun()（チャットの入力欄再有効化と同じ理由）が、ここで
@@ -838,13 +909,17 @@ if st.session_state.generating:
     # ブラウザーのセッションを捨てる以外の出口を失う。
     try:
         if mode == MODE_COWORK and template_path is None:
-            # 雛形が無いまま Cowork で送られたら、黙ってチャットの回答を返さない
-            # （下の else 節に落として通常の検索・生成を行うと、利用者は Cowork の
-            # つもりで読むため、どこから来た答えなのかを取り違える）。事前の警告は
-            # 出ているが、無視して送信した人にも画面で伝える。
-            st.session_state.cowork_result = _cowork_error(
-                "雛形が登録されていません。先に「雛形を登録・削除」から登録してください。"
-            )
+            # template_path is None は「雛形が無い」ではなく「雛形なしを選んだ」
+            # という意味になった。根拠が1つも無ければ、呼んでも中身の無い文書が
+            # 出るだけなので、その場合だけ止める。
+            if not use_internal and not use_docs and not attachments:
+                st.session_state.cowork_result = _cowork_error(
+                    "参照する資料も添付ファイルもありません。根拠が無いため生成しません。"
+                )
+            else:
+                _generate_freeform(
+                    output_suffix, question, attachments, use_internal, use_docs
+                )
         elif mode == MODE_COWORK:
             try:
                 names = docgen.placeholders(template_path)
