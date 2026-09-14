@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from docgen import project
+from ingest import chat
 
 
 def _write(root: Path, relative: str, text: str) -> None:
@@ -161,3 +162,64 @@ def test_read_rejects_a_symlink_pointing_outside_the_root(tmp_path):
 
     assert files == []
     assert skipped == ["symlink.md"]
+
+
+def test_select_returns_the_paths_the_model_chose():
+    entries = [("main.go", 120), ("README.md", 800)]
+
+    chosen = project.select(entries, "設計書を書いて", lambda prompt: '["main.go"]')
+
+    assert chosen == ["main.go"]
+
+
+def test_select_drops_paths_that_are_not_in_the_tree():
+    """一覧に無いパスを返させない。read 側でも弾くが、ここで落とせば
+    存在しないファイル名が「読まなかった」一覧に並ぶのを防げる。"""
+    entries = [("main.go", 120)]
+
+    chosen = project.select(entries, "依頼", lambda prompt: '["main.go", "/etc/passwd"]')
+
+    assert chosen == ["main.go"]
+
+
+def test_select_returns_nothing_when_the_json_is_broken():
+    """止めない。ツリーだけでもファイル構成は伝わる。
+
+    fill_values が壊れた JSON で止めず、query_translation が翻訳の失敗で原文に
+    落ちるのと同じ考え方である。
+    """
+    entries = [("main.go", 120)]
+
+    assert project.select(entries, "依頼", lambda prompt: "すみません、") == []
+
+
+def test_select_returns_nothing_when_the_json_is_not_a_list():
+    entries = [("main.go", 120)]
+
+    assert project.select(entries, "依頼", lambda prompt: '{"file": "main.go"}') == []
+
+
+def test_select_reraises_when_the_model_itself_fails():
+    """LLM が落ちたことは利用者に伝えるべき失敗である。黙って空を返さない。"""
+    def ask(prompt):
+        raise chat.ChatError("Ollama に繋がりません")
+
+    with pytest.raises(chat.ChatError):
+        project.select([("main.go", 120)], "依頼", ask)
+
+
+def test_select_puts_the_tree_and_the_request_in_the_prompt():
+    seen = {}
+
+    def ask(prompt):
+        seen["prompt"] = prompt
+        return "[]"
+
+    project.select([("main.go", 120)], "設計書を書いて", ask)
+
+    assert "main.go" in seen["prompt"]
+    assert "設計書を書いて" in seen["prompt"]
+
+
+def test_tree_text_shows_the_size_of_each_file():
+    assert project.tree_text([("main.go", 120)]) == "- main.go (120 bytes)"

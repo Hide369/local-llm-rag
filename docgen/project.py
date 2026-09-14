@@ -7,6 +7,7 @@
 走査から外し忘れると、1回目は正しく動き、2回目から自分が書いた文書を根拠にして
 次の文書を書く。例外は出ないので気づけない。
 """
+import json
 from pathlib import Path
 
 from ingest.parsers import SUPPORTED_SUFFIXES, parse
@@ -117,3 +118,45 @@ def read(
         files.append((relative, text))
         used += len(text)
     return files, skipped
+
+
+def tree_text(entries: list[tuple[str, int]]) -> str:
+    """ツリーをプロンプトに載せる形にする。"""
+    return "\n".join(f"- {name} ({size} bytes)" for name, size in entries)
+
+
+def build_selection_prompt(entries: list[tuple[str, int]], question: str) -> str:
+    return (
+        "あなたは社内文書を作成する担当者です。\n"
+        "次の依頼に答えるために、どのファイルの中身を読む必要があるかを選んで"
+        "ください。\n\n"
+        f"## 依頼\n{question}\n\n"
+        f"## ファイル一覧\n{tree_text(entries)}\n\n"
+        "読むべきファイルのパスだけを、JSONの配列で返してください。"
+        "説明や前置きは書かないでください。\n"
+        "一覧に無いパスは返さないでください。\n"
+        "依頼に関係のないファイルは選ばないでください。"
+        "多く選ぶほど1つあたりに割ける分量が減ります。\n"
+    )
+
+
+def select(entries: list[tuple[str, int]], question: str, ask) -> list[str]:
+    """読むべきファイルの相対パスを返す。決まらなければ空を返す。
+
+    壊れた JSON が返っても例外は投げない。止めるとツリーすら渡せず、利用者は
+    何も受け取れない。ツリーだけでもファイル構成は伝わる（fill_values が壊れた
+    JSON で止めず、ingest/query_translation.py が翻訳の失敗で原文に落ちるのと
+    同じ考え方）。
+
+    ask が投げる ChatError は投げ直す。LLM そのものが落ちたことは利用者に伝える
+    べき失敗であり、黙って「選択なし」にしてはいけない。
+    """
+    raw = ask(build_selection_prompt(entries, question))
+    try:
+        loaded = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(loaded, list):
+        return []
+    known = {name for name, _ in entries}
+    return [name for name in loaded if isinstance(name, str) and name in known]
