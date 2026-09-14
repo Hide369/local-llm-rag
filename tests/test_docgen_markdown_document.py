@@ -231,3 +231,22 @@ def test_build_docx_raises_on_unhandled_block_type():
 
     with pytest.raises(md.UnsupportedOutputError):
         md.build([UnknownBlock("本文")], ".docx")
+
+
+def test_build_docx_writes_a_code_block():
+    """コードブロックのテキストが文書に含まれることを確認する。"""
+    blocks = [md.Code("print(1)")]
+
+    texts = _docx_texts(md.build(blocks, ".docx")[0])
+
+    assert "print(1)" in texts
+
+
+def test_build_docx_handles_empty_code_block():
+    """空のフェンスはモデルが書きうる。`runs[0]` を無条件に触ると、そこで生成ごと落ちる。"""
+    blocks = [md.Code("")]
+
+    data, warnings = md.build(blocks, ".docx")
+
+    assert warnings == []
+    assert data is not None  # 文書が正常に生成されることを確認

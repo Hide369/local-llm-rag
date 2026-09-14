@@ -227,9 +227,11 @@ def _build_docx(blocks, on_diagram_error=None) -> tuple[bytes, list[str]]:
                 for cell, text in zip(cells, row):
                     cell.text = text
         elif isinstance(block, Code):
-            paragraph = document.add_paragraph(block.text)
-            paragraph.runs[0].font.name = "Consolas"
-            paragraph.runs[0].font.size = Pt(9)
+            paragraph = document.add_paragraph()
+            # add_run を明示的に呼ぶことで、空の場合でも run が存在する。
+            run = paragraph.add_run(block.text)
+            run.font.name = "Consolas"
+            run.font.size = Pt(9)
         elif isinstance(block, Diagram):
             _add_diagram(document, block, on_diagram_error)
         elif isinstance(block, References):
