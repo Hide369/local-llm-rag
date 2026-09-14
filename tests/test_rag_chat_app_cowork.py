@@ -594,12 +594,25 @@ def test_the_generated_document_lists_the_files_it_used(app, tmp_path):
     assert "main.go" in text
 
 
+def _embed_query_must_not_be_called(*args, **kwargs):
+    raise AssertionError("embed_query was called before the folder was validated")
+
+
 def test_a_folder_that_does_not_exist_stops_before_calling_the_model(app, tmp_path):
-    """呼んでから落ちると、利用者は30〜60秒待たされたうえで何も受け取れない。"""
+    """呼んでから落ちると、利用者は30〜60秒待たされたうえで何も受け取れない。
+
+    パスの打ち間違いを伝えるのに、埋め込み検索と翻訳の LLM を通す理由がない。
+    社内資料を参照するチェックは既定でオンのままにしておき、
+    `retrieval.embed_query` が「呼ばれたら失敗する」関数に差し替えてある
+    ことで、フォルダの検証（`docgen_project.tree`）が検索より先に実行される
+    順序をロックする。以前はこの検証が検索より後にあり、フォルダを打ち
+    間違えただけでも埋め込み検索（と技術ドキュメント参照時は翻訳のLLM
+    呼び出しまで）を1回無駄に払ってから初めてエラーが出ていた。
+    """
     with (
         patch.object(store_module, "open_store", _stub_store()),
         patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
-        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+        patch.object(retrieval, "embed_query", _embed_query_must_not_be_called),
     ):
         app.run()
         app.segmented_control[0].set_value("Cowork").run()

@@ -417,7 +417,23 @@ def _collect_evidence(question, attachments, use_internal, use_docs, project_fol
     返り値の3つ目はプロジェクトフォルダのファイル一覧をプロンプトへ載せる形に
     したものである。freeform.write_markdown はモデルの選択が壊れて空になった
     回にもこれだけは渡すので、呼び出し元はここで捨てずに次へ渡すこと。
+
+    プロジェクトフォルダの検証を検索より先に行うのは、パスの打ち間違いを
+    伝えるのに、埋め込み検索や技術ドキュメントの英訳（LLM呼び出し）を
+    通す理由がないためである。呼んでから落ちると利用者は30〜60秒待たされた
+    うえで何も受け取れない。
     """
+
+    def ask_json_call(prompt):
+        return chat.ask_json(model, prompt, num_ctx=docgen_filling.GENERATION_NUM_CTX)
+
+    collected_project = _collect_project_files(
+        project_folder, question, ask_json_call, result
+    )
+    if collected_project is None:
+        return None
+    project_files, tree_text = collected_project
+
     sources = []
     try:
         if use_internal:
@@ -492,15 +508,6 @@ def _collect_evidence(question, attachments, use_internal, use_docs, project_fol
                     )
                 texts.append((file.name, text))
 
-    def ask_json_call(prompt):
-        return chat.ask_json(model, prompt, num_ctx=docgen_filling.GENERATION_NUM_CTX)
-
-    collected_project = _collect_project_files(
-        project_folder, question, ask_json_call, result
-    )
-    if collected_project is None:
-        return None
-    project_files, tree_text = collected_project
     # プロジェクトの本文は「添付の自動版」であり、専用の受け口を作らない
     # （docgen/project.py のモジュールdocstring参照）。先頭に置くのは、
     # 依頼者が明示的に選んだ添付より先に見せる理由が特にあるわけではなく、
