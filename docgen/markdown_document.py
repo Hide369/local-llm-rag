@@ -111,11 +111,7 @@ def parse(text: str) -> list:
             header = _cells(line)
             index += 2
             rows = []
-            # 行の収集。次の行がテーブル区切り行だと、現在の行は次のテーブルのヘッダーなので停止
             while index < len(lines) and _TABLE_ROW.match(lines[index]):
-                # 次行がテーブル区切り行なら、この行は次のテーブルのヘッダー。停止
-                if index + 1 < len(lines) and _TABLE_RULE.match(lines[index + 1]):
-                    break
                 row = _cells(lines[index])
                 # セル数をヘッダーの幅に正規化
                 if len(row) < len(header):

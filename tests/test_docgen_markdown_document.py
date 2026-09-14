@@ -66,14 +66,20 @@ def test_an_empty_document_has_no_blocks():
     assert md.parse("   \n\n") == []
 
 
-def test_adjacent_tables_with_no_blank_line_become_two_table_blocks():
-    """空行なしで連続する表は、別々のテーブルブロックとして認識される必要がある。
-    2番目の表のヘッダー行と区切り行が1番目の表に吸収されると、構造が崩れる。"""
-    text = "| a | b |\n| - | - |\n| 1 | 2 |\n| c | d |\n| - | - |\n| 3 | 4 |\n"
+def test_a_blank_line_is_what_separates_two_tables():
+    """2つの表を分ける方法は空行である。GFM の標準動作として、空行がなければ
+    2つのテーブル構文が1つにマージされる。これは仕様であり、バグではない。"""
+    # 空行なし：マージされて1つのテーブルになる
+    text_no_blank = "| a | b |\n| - | - |\n| 1 | 2 |\n| c | d |\n| - | - |\n| 3 | 4 |\n"
+    blocks_no_blank = md.parse(text_no_blank)
+    assert blocks_no_blank == [
+        md.Table(["a", "b"], [["1", "2"], ["c", "d"], ["-", "-"], ["3", "4"]])
+    ]
 
-    blocks = md.parse(text)
-
-    assert blocks == [
+    # 空行あり：2つの別々のテーブルになる
+    text_with_blank = "| a | b |\n| - | - |\n| 1 | 2 |\n\n| c | d |\n| - | - |\n| 3 | 4 |\n"
+    blocks_with_blank = md.parse(text_with_blank)
+    assert blocks_with_blank == [
         md.Table(["a", "b"], [["1", "2"]]),
         md.Table(["c", "d"], [["3", "4"]])
     ]
@@ -98,3 +104,14 @@ def test_a_long_row_surplus_cells_are_dropped():
     blocks = md.parse(text)
 
     assert blocks == [md.Table(["a", "b"], [["1", "2"]])]
+
+
+def test_a_table_with_legitimate_dash_data_rows_keeps_all_rows():
+    """データ行に | - | - | が含まれる場合、先読みで表を分けようとすると
+    区切り行と見分けが付かず、この行が消える。複数の表でマージを許容する以上、
+    シンプルな停止条件（空行まで続ける）が唯一の正解である。"""
+    text = "| a | b |\n| - | - |\n| 1 | 2 |\n| - | - |\n| 3 | 4 |\n"
+
+    blocks = md.parse(text)
+
+    assert blocks == [md.Table(["a", "b"], [["1", "2"], ["-", "-"], ["3", "4"]])]
