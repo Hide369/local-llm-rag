@@ -222,7 +222,35 @@ def test_select_puts_the_tree_and_the_request_in_the_prompt():
 
 
 def test_tree_text_shows_the_size_of_each_file():
-    assert project.tree_text([("main.go", 120)]) == "- main.go (120 bytes)"
+    text, omitted = project.tree_text([("main.go", 120)])
+
+    assert text == "- main.go (120 bytes)"
+    assert omitted == 0
+
+
+def test_tree_text_stays_unchanged_when_everything_fits_the_budget():
+    """予算に収まる一覧は、末尾に何も足さない。"""
+    entries = [(f"file{i}.go", 10) for i in range(5)]
+
+    text, omitted = project.tree_text(entries, budget=10_000)
+
+    assert omitted == 0
+    assert "載せきれません" not in text
+
+
+def test_tree_text_truncates_at_the_budget_and_names_the_exact_count_dropped():
+    """一覧を無制限に載せると、このリポジトリのように一覧だけで
+    MAX_PROMPT_CHARS を超え、雛形なしの生成が本文0件・検索結果0件のまま
+    PromptTooLongError で止まる。落とした件数を正確に伝える。"""
+    # 1行23文字（先頭以外は改行込みで24文字）になるよう桁数を揃える。
+    entries = [(f"file{i:03d}.go", 10) for i in range(20)]
+
+    text, omitted = project.tree_text(entries, budget=130)
+
+    expected_lines = [f"- file{i:03d}.go (10 bytes)" for i in range(5)]
+    expected_lines.append("- （ほか 15 件は一覧に載せきれませんでした）")
+    assert text == "\n".join(expected_lines)
+    assert omitted == 15
 
 
 def test_write_output_creates_the_output_directory(tmp_path):

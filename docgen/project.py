@@ -30,6 +30,13 @@ EXCLUDED_DIR_PREFIXES = ("myvenv", "venv")
 # 落とし、落とした名前を呼び出し元へ返す。
 PROJECT_BUDGET_CHARS = 16000
 
+# ファイル一覧に載せる上限。MAX_PROMPT_CHARS(28,000)から PROJECT_BUDGET_CHARS
+# (16,000)を引いた12,000が、依頼文・指示文・検索結果・添付に残る分である。
+# 一覧はその半分までとする。ここを無制限にすると、このリポジトリのように
+# 一覧だけで MAX_PROMPT_CHARS を超え（実測 67,193文字）、雛形なしの生成が
+# 本文0件・検索結果0件のまま PromptTooLongError で止まる。
+TREE_BUDGET_CHARS = 6000
+
 
 class ProjectFolderError(Exception):
     """指定されたパスをプロジェクトフォルダとして扱えない。"""
@@ -120,18 +127,41 @@ def read(
     return files, skipped
 
 
-def tree_text(entries: list[tuple[str, int]]) -> str:
-    """ツリーをプロンプトに載せる形にする。"""
-    return "\n".join(f"- {name} ({size} bytes)" for name, size in entries)
+def tree_text(
+    entries: list[tuple[str, int]], budget: int = TREE_BUDGET_CHARS
+) -> tuple[str, int]:
+    """ツリーをプロンプトに載せる形にする。
+
+    2つ目の返り値は予算で落とした件数である。黙って全部載せると、この設計書
+    自身の参照実装であるこのリポジトリのように一覧だけで MAX_PROMPT_CHARS を
+    超えうる（TREE_BUDGET_CHARS のコメント参照）。落とすときは末尾に件数を
+    書いた行を足す。件数を書かないと、利用者はモデルが一覧の一部しか
+    見ていないことに気づけない。
+    """
+    lines: list[str] = []
+    used = 0
+    omitted = 0
+    for index, (name, size) in enumerate(entries):
+        line = f"- {name} ({size} bytes)"
+        cost = len(line) + (1 if lines else 0)  # 2行目以降は改行の1文字も数える
+        if used + cost > budget:
+            omitted = len(entries) - index
+            break
+        lines.append(line)
+        used += cost
+    if omitted:
+        lines.append(f"- （ほか {omitted} 件は一覧に載せきれませんでした）")
+    return "\n".join(lines), omitted
 
 
 def build_selection_prompt(entries: list[tuple[str, int]], question: str) -> str:
+    listing, _omitted = tree_text(entries)
     return (
         "あなたは社内文書を作成する担当者です。\n"
         "次の依頼に答えるために、どのファイルの中身を読む必要があるかを選んで"
         "ください。\n\n"
         f"## 依頼\n{question}\n\n"
-        f"## ファイル一覧\n{tree_text(entries)}\n\n"
+        f"## ファイル一覧\n{listing}\n\n"
         "読むべきファイルのパスだけを、JSONの配列で返してください。"
         "説明や前置きは書かないでください。\n"
         "一覧に無いパスは返さないでください。\n"
@@ -150,6 +180,11 @@ def select(entries: list[tuple[str, int]], question: str, ask) -> list[str]:
 
     ask が投げる ChatError は投げ直す。LLM そのものが落ちたことは利用者に伝える
     べき失敗であり、黙って「選択なし」にしてはいけない。
+
+    ここで MAX_PROMPT_CHARS 超過を測る実装にはしない。build_selection_prompt が
+    載せる一覧は tree_text により TREE_BUDGET_CHARS で頭打ちになっており、依頼文
+    (question) を除けばこのプロンプトの長さは構造的に上限内へ収まる。ここで
+    もう一度測っても、到達しない分岐が増えるだけである。
     """
     raw = ask(build_selection_prompt(entries, question))
     try:

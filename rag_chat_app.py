@@ -387,6 +387,14 @@ def _collect_project_files(folder, question, ask_json_call, result):
             f"{root} に取り込める形式のファイルがありません。"
         )
         return None
+    listing, omitted = docgen_project.tree_text(entries)
+    if omitted:
+        # 選ばれなかった理由が「関係が無い」のか「一覧に載らなかった」のか、
+        # 伝えないと利用者には区別が付かない。
+        result["warnings"].append(
+            f"ファイルが多く、一覧に{omitted}件を載せきれませんでした。"
+            "モデルが選べるのは載った分だけです。"
+        )
     try:
         chosen = docgen_project.select(entries, question, ask_json_call)
     except chat.ChatError as error:
@@ -401,7 +409,7 @@ def _collect_project_files(folder, question, ask_json_call, result):
         result["warnings"].append(
             "読まなかったファイル: " + "、".join(skipped)
         )
-    return files, docgen_project.tree_text(entries)
+    return files, listing
 
 
 def _collect_evidence(question, attachments, use_internal, use_docs, project_folder, result):
@@ -538,10 +546,14 @@ def _generate_document(template_path, names, question, attachments, use_internal
     )
     if collected is None:
         return
-    # tree_text は雛形なしの経路（write_markdown の4番目の引数）でしか使わない。
-    # 雛形の欄は個別の値で埋めるので、ファイル一覧をそのままモデルへ見せる
-    # 出番が無い。
-    sources, texts, _tree_text = collected
+    sources, texts, tree_text = collected
+    if tree_text:
+        # 選択が壊れて空になっても、ツリーだけは載せる（設計書5節）。
+        # freeform 経路は write_markdown の4番目の引数で直接受け取るが、
+        # 雛形ありのこちらには専用の受け口が無いので、添付と同じ列（texts）に
+        # 1件足す。プロジェクトの本文は「添付の自動版」であり、専用の受け口を
+        # 作らない方針（docgen/project.py のモジュールdocstring）と同じ扱いにする。
+        texts = texts + [("（プロジェクトのファイル一覧）", tree_text)]
 
     try:
         values = docgen_filling.fill_values(names, question, sources, texts, ask)

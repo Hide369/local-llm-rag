@@ -75,7 +75,7 @@ def test_the_mode_toggle_offers_both_modes(app, tmp_path):
     assert "Cowork" in str(app)
 
 
-def test_cowork_without_any_template_tells_the_user_to_register_one(app, tmp_path):
+def test_cowork_without_any_template_does_not_tell_the_user_to_register_one(app, tmp_path):
     """雛形が0件でも、雛形なしの選択肢があるため行き止まりにならない。
 
     以前は0件のとき「雛形が登録されていません」という警告だけを出し、生成の
@@ -622,6 +622,87 @@ def test_a_folder_that_does_not_exist_stops_before_calling_the_model(app, tmp_pa
 
     assert not app.exception
     assert any("フォルダ" in error.value for error in app.error)
+
+
+def test_a_failed_selection_still_lets_the_template_path_see_the_listing(app, tmp_path):
+    """選択が0件でも、雛形ありの経路もツリーだけは載せる。
+
+    以前は _collect_project_files が「一覧だけ渡します」と警告する一方で、
+    _generate_document 側は tree_text をアンダースコア変数で受けて捨てて
+    いたため、警告の内容と実際の挙動が食い違っていた（設計書5節の
+    フォールバックは freeform 経路にしか効いていなかった）。
+    """
+    store = tmp_path / "templates"
+    _register(store)
+    folder = tmp_path / "myproject"
+    folder.mkdir()
+    (folder / "main.go").write_text("package main\n", encoding="utf-8")
+
+    seen_attachments = []
+    real_fill_values = filling.fill_values
+
+    def spy_fill_values(placeholders, question, sources, attachments, ask):
+        seen_attachments.append(attachments)
+        return real_fill_values(placeholders, question, sources, attachments, ask)
+
+    def ask_json(model, prompt, session=None, num_ctx=None):
+        if "読むべきファイルのパスだけを" in prompt:
+            return "[]"
+        return json.dumps({"会議名": "第5回"}, ensure_ascii=False)
+
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", store),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+        patch.object(chat, "ask_json", ask_json),
+        patch.object(filling, "fill_values", spy_fill_values),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+        app.selectbox(key="template").set_value(store / "議事録.docx").run()
+        app.text_input(key="project_folder").set_value(str(folder)).run()
+        app.chat_input[0].set_value("第5回会議の議事録を作って").run()
+
+    assert not app.exception
+    assert seen_attachments
+    names = [name for name, _ in seen_attachments[0]]
+    assert "（プロジェクトのファイル一覧）" in names
+    listing = next(text for name, text in seen_attachments[0] if name == "（プロジェクトのファイル一覧）")
+    assert "main.go" in listing
+
+
+def test_a_project_folder_too_big_for_the_listing_warns_with_the_exact_count(app, tmp_path):
+    """一覧がTREE_BUDGET_CHARSを超えるフォルダでは、モデルに見えていない
+    ファイルがあることを画面で伝える。伝えないと、選ばれなかったファイルが
+    「関係が無いから選ばれなかった」のか「一覧に載らなかったから選べな
+    かった」のか利用者には区別が付かない。
+    """
+    from docgen import project as project_module
+
+    folder = tmp_path / "myproject"
+    folder.mkdir()
+    entries_count = 400
+    for i in range(entries_count):
+        (folder / f"f{i:04d}.go").write_text("package main\n", encoding="utf-8")
+    entries = project_module.tree(folder)
+    _listing, expected_omitted = project_module.tree_text(entries)
+    assert expected_omitted > 0  # このテストの前提（実測で確かめる）
+
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
+        patch.object(chat, "ask_json", lambda *a, **k: "[]"),
+        patch.object(chat, "ask_text", lambda *a, **k: "# 設計書\n\n本文\n"),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+        app.selectbox(key="template").set_value(NO_TEMPLATE).run()
+        app.checkbox(key="cowork_internal").set_value(False).run()
+        app.text_input(key="project_folder").set_value(str(folder)).run()
+        app.chat_input[0].set_value("設計書を書いて").run()
+
+    assert not app.exception
+    assert any(str(expected_omitted) in warning.value for warning in app.warning)
 
 
 def test_a_project_folder_alone_is_enough_evidence(app, tmp_path):
