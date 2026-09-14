@@ -3,14 +3,22 @@
 Markdown を一度だけ解析して共通の構造にするのは、形式ごとに読み直すと記法の
 解釈が4箇所に分かれるためである。
 """
+import base64
 import io
 
 import docx
 import openpyxl
 from pptx import Presentation
+from pptx.enum.shapes import MSO_SHAPE_TYPE
 
 from docgen import markdown_document as md
 from docgen import mermaid
+
+# 1x1 の PNG。python-pptx は Pillow で実際に開くため、でたらめなバイト列では
+# 差し込めない（tests/test_docgen_diagrams.py と同じ値）。
+_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+)
 
 
 def _docx_texts(data: bytes) -> list[str]:
@@ -301,6 +309,40 @@ def test_build_pptx_without_any_heading_still_produces_a_slide():
     assert len(_slide_texts(md.build([md.Paragraph("本文")], ".pptx")[0])) == 1
 
 
+def test_build_pptx_draws_a_diagram_on_its_own_slide(monkeypatch):
+    """本文と同じスライドに絶対位置で画像を置くと、本文プレースホルダの上に
+    重なる。図は専用の1枚にすることでこれを避ける（設計書7節）。"""
+    monkeypatch.setattr(mermaid, "render", lambda source: _PNG)
+    blocks = [md.Heading(2, "構成"), md.Bullets(["現状"]), md.Diagram("graph TD\nA-->B")]
+
+    data, warnings = md.build(blocks, ".pptx")
+    presentation = Presentation(io.BytesIO(data))
+    shapes = [shape for slide in presentation.slides for shape in slide.shapes]
+    pictures = [s for s in shapes if s.shape_type == MSO_SHAPE_TYPE.PICTURE]
+
+    assert warnings == []
+    assert len(pictures) == 1
+
+
+def test_build_pptx_keeps_the_mermaid_text_when_it_cannot_be_drawn(monkeypatch):
+    """図にできなかったことを黙って消さない。_build_docx と同じ判断で、
+    テキストを残し呼び出し元へ伝える。"""
+    def _fail(source):
+        raise mermaid.MermaidError("mmdc が見つかりません")
+
+    monkeypatch.setattr(mermaid, "render", _fail)
+    seen = []
+
+    data, warnings = md.build(
+        [md.Heading(2, "構成"), md.Diagram("graph TD\nA-->B")], ".pptx",
+        lambda name, reason: seen.append((name, reason)),
+    )
+
+    slides = _slide_texts(data)
+    assert any("graph TD" in "\n".join(texts) for texts in slides)
+    assert seen and "mmdc" in seen[0][1]
+
+
 def test_build_pptx_raises_on_unhandled_block_type():
     """黙って飛ばすと利用者が受け取る文書から本文が消え、例外も警告も出ないため気づけない。"""
     import pytest
@@ -355,6 +397,42 @@ def test_build_xlsx_makes_duplicate_sheet_names_unique():
     ]
 
     assert len(_workbook(md.build(blocks, ".xlsx")[0]).sheetnames) == 2
+
+
+def test_build_xlsx_keeps_prose_alongside_a_table_instead_of_discarding_it():
+    """表が1つでもあると、本文（見出し・段落・箇条書き・コード・図）が
+    まるごと消えていた。表シートと本文シートの両方が残ることを確かめる。"""
+    blocks = [
+        md.Heading(1, "設計書"),
+        md.Paragraph("これは概要です。"),
+        md.Bullets(["項目1", "項目2"]),
+        md.Heading(2, "付与日数"),
+        md.Table(["区分", "日数"], [["6か月", "10日"]]),
+    ]
+
+    data, warnings = md.build(blocks, ".xlsx")
+    book = _workbook(data)
+
+    assert warnings == []
+    assert book.sheetnames == ["付与日数", "本文"]
+    assert [cell.value for cell in book["本文"][1]] == ["設計書", "これは概要です。"]
+    assert [cell.value for cell in book["本文"][2]] == [None, "項目1"]
+
+
+def test_build_xlsx_references_branch_resets_the_heading_like_its_siblings():
+    """References だけ heading をリセットしていなかったため、直前の見出しが
+    ループの後で本文シートに紛れ込んでいた。表とReferencesだけの回では
+    本文シートが1つも要らない。"""
+    blocks = [
+        md.Table(["A"], [["1"]]),
+        md.Heading(2, "残る見出し"),
+        md.References(["main.go"], []),
+    ]
+
+    data, warnings = md.build(blocks, ".xlsx")
+    book = _workbook(data)
+
+    assert "本文" not in book.sheetnames
 
 
 def test_build_xlsx_without_a_table_falls_back_to_two_columns_and_warns():

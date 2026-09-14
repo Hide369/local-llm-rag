@@ -253,7 +253,11 @@ _CONTENT_LAYOUT = 1
 
 
 def _pptx_lines(block) -> list[str]:
-    """1つのブロックをスライド本文の行の並びにする。"""
+    """1つのブロックをスライド本文の行の並びにする。
+
+    Diagram はここに来ない。_build_pptx が本文へ混ぜる前に横取りし、専用の
+    スライドへ回す（_add_diagram_slide 参照）。
+    """
     if isinstance(block, Heading):
         return [block.text]
     if isinstance(block, Paragraph):
@@ -264,8 +268,6 @@ def _pptx_lines(block) -> list[str]:
         return [" | ".join(block.header)] + [" | ".join(row) for row in block.rows]
     if isinstance(block, Code):
         return block.text.split("\n")
-    if isinstance(block, Diagram):
-        return block.source.split("\n")
     _unhandled(block)
 
 
@@ -278,29 +280,48 @@ def _add_slide(presentation, title: str, lines: list[str]) -> None:
         body.add_paragraph().text = line
 
 
+def _add_diagram_slide(presentation, title: str, image: bytes) -> None:
+    """図だけを乗せた専用のスライドを作る。
+
+    本文のプレースホルダへ文字を流し込んだ同じスライドへ絶対位置で画像を
+    置くと、画像が本文の上に重なる。図ごとに1枚使えば重ならない。本文の
+    プレースホルダは空のまま残す（未使用の空プレースホルダは保存しても
+    表示上は何も見せない）。
+    """
+    slide = presentation.slides.add_slide(presentation.slide_layouts[_CONTENT_LAYOUT])
+    slide.shapes.title.text = title
+    # docx builder の DIAGRAM_WIDTH と同じ値・同じ考え方で幅を決める。
+    left = (presentation.slide_width - DIAGRAM_WIDTH) // 2
+    slide.shapes.add_picture(io.BytesIO(image), left, Inches(1.8), width=DIAGRAM_WIDTH)
+
+
 def _build_pptx(blocks, on_diagram_error=None) -> tuple[bytes, list[str]]:
-    """`##` ごとに1スライドにする。
+    """`##` ごとに1スライドにする。図は専用の1枚を挟む。
 
     `###` 以下でスライドを分けないのは、見出しの深さで分けると章立ての書き方
     しだいでスライドが数十枚に膨らむためである。深い見出しは本文の1行にする。
 
-    図は当面 PNG にせず Mermaid のテキストを本文へ入れる。スライドは本文の
-    プレースホルダに文字を流し込む作りで、画像を置くと位置と大きさを決める
-    判断が要る。on_diagram_error を受け取るのは他の形式と署名を揃えるためである
-    （ingest/parsers/__init__.py と同じ方針）。
+    図は docx と同じ Mermaid 実装で PNG にする（設計書7節）。本文のプレース
+    ホルダへ絶対位置で画像を重ねると本文と重なるため、専用のスライドを挟む
+    （do not place a picture on a slide that also carries body text）。
+
+    section_emitted は「この `##` の区間で、既に何かスライドを出したか」を
+    覚える。図だけで区間が終わったとき、次の見出しへ移る際に中身の無い
+    同名スライドを重複して出さないために要る（flush 参照）。
     """
     presentation = Presentation()
     title = ""
     current: str | None = None
     lines: list[str] = []
     made = False
+    section_emitted = False
 
     def flush():
-        nonlocal current, lines, made
-        if current is not None or lines:
+        nonlocal current, lines, made, section_emitted
+        if lines or (current is not None and not section_emitted):
             _add_slide(presentation, current or title or "", lines)
             made = True
-        current, lines = None, []
+        current, lines, section_emitted = None, [], False
 
     for block in blocks:
         if isinstance(block, Heading) and block.level == 1 and not title:
@@ -317,6 +338,23 @@ def _build_pptx(blocks, on_diagram_error=None) -> tuple[bytes, list[str]]:
             flush()
             _add_slide(presentation, REFERENCES_HEADING, block.paths + block.citations)
             made = True
+            continue
+        if isinstance(block, Diagram):
+            try:
+                image = mermaid.render(block.source)
+            except mermaid.MermaidError as error:
+                # 図にできなかったときは _build_docx と同じ判断に戻す。
+                # 専用スライドは使わず、本文の行としてそのまま流す。
+                lines.extend(block.source.split("\n"))
+                if on_diagram_error is not None:
+                    on_diagram_error("図", str(error))
+                continue
+            if lines:
+                _add_slide(presentation, current or title or "", lines)
+                lines = []
+            _add_diagram_slide(presentation, current or title or "", image)
+            made = True
+            section_emitted = True
             continue
         lines.extend(_pptx_lines(block))
     flush()
@@ -357,8 +395,18 @@ def _sheet_name(wanted: str, used: set[str]) -> str:
 def _build_xlsx(blocks, on_diagram_error=None) -> tuple[bytes, list[str]]:
     """表1つにつき1シート。シート名は直前の見出しにする。
 
-    表が1つも無いときは見出しと本文の2列で1シートを出し、警告する。空のブックを
-    返さないのは、利用者が受け取るものを空にしないためである。
+    本文（見出し・段落・箇条書き・コード・図）は表の有無にかかわらず、内容が
+    あれば必ずシートにする。以前は「表が1つも無いとき」しか本文シートを
+    作らなかったため、表が1つでもあると見出し・段落・箇条書き・図が警告も
+    例外も無いまま消えていた（_unhandled が防ごうとした失敗を別の形で
+    起こしていた）。
+
+    シートの並びは、表が無ければ本文シートだけを先頭に、表があれば表の
+    後ろに本文シートを置く。表が依頼の主目的であり、開いて最初に見える
+    ものにする。
+
+    表が1つも無いときだけ警告する（設計書7節）。表があるのに本文が付随した
+    だけの回に、同じ文言で警告を出す理由は無い。
     """
     book = openpyxl.Workbook()
     book.remove(book.active)
@@ -367,11 +415,13 @@ def _build_xlsx(blocks, on_diagram_error=None) -> tuple[bytes, list[str]]:
     heading = ""
     table_serial = 1
     rows: list[tuple[str, str]] = []
+    has_table = False
 
     for block in blocks:
         if isinstance(block, Heading):
             heading = block.text
         elif isinstance(block, Table):
+            has_table = True
             sheet = book.create_sheet(_sheet_name(heading or f"表{table_serial}", used))
             sheet.append(block.header)
             for row in block.rows:
@@ -382,6 +432,10 @@ def _build_xlsx(blocks, on_diagram_error=None) -> tuple[bytes, list[str]]:
             sheet = book.create_sheet(_sheet_name(REFERENCES_HEADING, used))
             for name in block.paths + block.citations:
                 sheet.append([name])
+            # 他の分岐と同じく、この見出しは使い終わっている。ここを
+            # リセットし忘れると、直前の見出しがループの後の
+            # 「末尾に見出しだけ残っていた場合」に紛れ込む。
+            heading = ""
         elif isinstance(block, Paragraph):
             rows.append((heading, block.text))
             heading = ""
@@ -400,12 +454,16 @@ def _build_xlsx(blocks, on_diagram_error=None) -> tuple[bytes, list[str]]:
     if heading:
         rows.append((heading, ""))
 
-    if not any(isinstance(block, Table) for block in blocks):
+    if not has_table:
         warnings.append(
             "表が1つも書かれなかったため、見出しと本文の2列で出しました。"
             "表が欲しい場合は依頼文で「表で」と指定してください。"
         )
-        sheet = book.create_sheet(_sheet_name("本文", used), 0)
+
+    if rows:
+        # 表が無ければ唯一のシートとして先頭(0)に、表があれば末尾に置く。
+        index = 0 if not has_table else len(book.sheetnames)
+        sheet = book.create_sheet(_sheet_name("本文", used), index)
         for left, right in rows:
             sheet.append([left, right])
 
