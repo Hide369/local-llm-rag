@@ -160,3 +160,26 @@ def select(entries: list[tuple[str, int]], question: str, ask) -> list[str]:
         return []
     known = {name for name, _ in entries}
     return [name for name in loaded if isinstance(name, str) and name in known]
+
+
+def write_output(root: Path, file_name: str, data: bytes) -> Path:
+    """成果物を <root>/generated_docs/ に書き、置いた場所を返す。
+
+    既存のファイルは上書きしない。ファイル名に日付が入っていても同じ日に2回
+    作れば衝突し、上書きすると1回目の成果物が黙って消える。
+
+    このフォルダは走査から外れている（EXCLUDED_DIR_NAMES）。外れていないと、
+    2回目から自分が書いた文書を根拠にして次の文書を書く。
+    """
+    if file_name != Path(file_name).name or file_name in ("", ".", ".."):
+        raise ValueError(f"成果物の名前はファイル名でなければなりません: {file_name}")
+    directory = root / OUTPUT_DIR_NAME
+    directory.mkdir(parents=True, exist_ok=True)
+    destination = directory / file_name
+    stem, suffix = destination.stem, destination.suffix
+    serial = 2
+    while destination.exists():
+        destination = directory / f"{stem}_{serial}{suffix}"
+        serial += 1
+    destination.write_bytes(data)
+    return destination

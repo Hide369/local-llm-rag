@@ -223,3 +223,30 @@ def test_select_puts_the_tree_and_the_request_in_the_prompt():
 
 def test_tree_text_shows_the_size_of_each_file():
     assert project.tree_text([("main.go", 120)]) == "- main.go (120 bytes)"
+
+
+def test_write_output_creates_the_output_directory(tmp_path):
+    written = project.write_output(tmp_path, "設計_2026-09-14.md", b"# \xe8\xa8\xad\xe8\xa8\x88")
+
+    assert written == tmp_path / project.OUTPUT_DIR_NAME / "設計_2026-09-14.md"
+    assert written.read_bytes() == b"# \xe8\xa8\xad\xe8\xa8\x88"
+
+
+def test_write_output_never_overwrites(tmp_path):
+    """ファイル名に日付が入っていても、同じ日に2回作れば衝突する。
+    上書きすると1回目の成果物が黙って消える。"""
+    first = project.write_output(tmp_path, "設計_2026-09-14.md", b"one")
+    second = project.write_output(tmp_path, "設計_2026-09-14.md", b"two")
+    third = project.write_output(tmp_path, "設計_2026-09-14.md", b"three")
+
+    assert first.name == "設計_2026-09-14.md"
+    assert second.name == "設計_2026-09-14_2.md"
+    assert third.name == "設計_2026-09-14_3.md"
+    assert first.read_bytes() == b"one"
+
+
+def test_write_output_rejects_a_name_with_a_path_separator(tmp_path):
+    """名前は画面が組み立てるが、利用者が触れる値を信じる形にはしない
+    （docgen/templates.py の _checked と同じ理由）。"""
+    with pytest.raises(ValueError):
+        project.write_output(tmp_path, "../逃げる.md", b"x")
