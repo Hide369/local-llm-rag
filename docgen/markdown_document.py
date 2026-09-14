@@ -160,6 +160,18 @@ class UnsupportedOutputError(Exception):
     """出力形式として扱えない拡張子を渡された。"""
 
 
+def _unhandled(block) -> None:
+    """描き方の決まっていないブロックが来た。
+
+    ブロックの型は parse() が出す閉じた集合なので、ここへ来るのはプログラムの
+    誤りであって利用者の入力ではない。黙って飛ばすと、利用者が受け取る文書から
+    本文が消える。例外も警告も出ないため、開いて読むまで誰も気づけない。
+    """
+    raise UnsupportedOutputError(
+        f"描き方の決まっていないブロックです: {type(block).__name__}"
+    )
+
+
 def _table_markdown(block: Table) -> str:
     lines = ["| " + " | ".join(block.header) + " |"]
     lines.append("| " + " | ".join("---" for _ in block.header) + " |")
@@ -185,6 +197,8 @@ def _build_md(blocks, on_diagram_error=None) -> tuple[bytes, list[str]]:
         elif isinstance(block, References):
             parts.append(f"## {REFERENCES_HEADING}")
             parts.append("\n".join(f"- {name}" for name in block.paths + block.citations))
+        else:
+            _unhandled(block)
     return ("\n\n".join(parts) + "\n").encode("utf-8"), []
 
 

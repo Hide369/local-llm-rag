@@ -148,3 +148,16 @@ def test_build_rejects_an_unsupported_suffix():
     import pytest
     with pytest.raises(md.UnsupportedOutputError):
         md.build([md.Paragraph("本文")], ".pdf")
+
+
+def test_build_raises_on_unhandled_block_type():
+    """黙って飛ばすと利用者が受け取る文書から本文が消え、例外も警告も出ないため気づけない。"""
+    import pytest
+    from dataclasses import dataclass
+
+    @dataclass
+    class UnknownBlock:
+        content: str
+
+    with pytest.raises(md.UnsupportedOutputError):
+        md.build([UnknownBlock("本文")], ".md")
