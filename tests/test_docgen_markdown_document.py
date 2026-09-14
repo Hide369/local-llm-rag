@@ -115,3 +115,36 @@ def test_a_table_with_legitimate_dash_data_rows_keeps_all_rows():
     blocks = md.parse(text)
 
     assert blocks == [md.Table(["a", "b"], [["1", "2"], ["-", "-"], ["3", "4"]])]
+
+
+def test_build_md_round_trips_the_blocks():
+    blocks = [md.Heading(1, "設計書"), md.Paragraph("本文"), md.Bullets(["一つ目"])]
+
+    data, warnings = md.build(blocks, ".md")
+
+    assert warnings == []
+    assert data.decode("utf-8") == "# 設計書\n\n本文\n\n- 一つ目\n"
+
+
+def test_build_md_keeps_mermaid_as_a_fence():
+    """.md は GitHub・VS Code・画面のプレビューが図として表示する。
+    PNG にする理由が無い（docgen/md_template.py と同じ判断）。"""
+    data, _ = md.build([md.Diagram("graph TD\nA-->B")], ".md")
+
+    assert data.decode("utf-8") == "```mermaid\ngraph TD\nA-->B\n```\n"
+
+
+def test_build_md_writes_the_references_section():
+    blocks = [md.Paragraph("本文"), md.References(["main.go"], ["議事録.docx p.1"])]
+
+    text = md.build(blocks, ".md")[0].decode("utf-8")
+
+    assert "## 参照したファイル" in text
+    assert "- main.go" in text
+    assert "- 議事録.docx p.1" in text
+
+
+def test_build_rejects_an_unsupported_suffix():
+    import pytest
+    with pytest.raises(md.UnsupportedOutputError):
+        md.build([md.Paragraph("本文")], ".pdf")

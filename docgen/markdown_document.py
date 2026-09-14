@@ -150,3 +150,56 @@ def parse(text: str) -> list:
 
     flush()
     return blocks
+
+
+# 参照したファイルの節の見出し。4形式すべてがこの文字列を使う。
+REFERENCES_HEADING = "参照したファイル"
+
+
+class UnsupportedOutputError(Exception):
+    """出力形式として扱えない拡張子を渡された。"""
+
+
+def _table_markdown(block: Table) -> str:
+    lines = ["| " + " | ".join(block.header) + " |"]
+    lines.append("| " + " | ".join("---" for _ in block.header) + " |")
+    lines.extend("| " + " | ".join(row) + " |" for row in block.rows)
+    return "\n".join(lines)
+
+
+def _build_md(blocks, on_diagram_error=None) -> tuple[bytes, list[str]]:
+    parts: list[str] = []
+    for block in blocks:
+        if isinstance(block, Heading):
+            parts.append("#" * block.level + " " + block.text)
+        elif isinstance(block, Paragraph):
+            parts.append(block.text)
+        elif isinstance(block, Bullets):
+            parts.append("\n".join(f"- {item}" for item in block.items))
+        elif isinstance(block, Table):
+            parts.append(_table_markdown(block))
+        elif isinstance(block, Code):
+            parts.append(f"```\n{block.text}\n```")
+        elif isinstance(block, Diagram):
+            parts.append(f"```mermaid\n{block.source}\n```")
+        elif isinstance(block, References):
+            parts.append(f"## {REFERENCES_HEADING}")
+            parts.append("\n".join(f"- {name}" for name in block.paths + block.citations))
+    return ("\n\n".join(parts) + "\n").encode("utf-8"), []
+
+
+_BUILDERS = {".md": _build_md}
+
+OUTPUT_SUFFIXES = (".md", ".docx", ".xlsx", ".pptx")
+
+
+def build(blocks, suffix: str, on_diagram_error=None) -> tuple[bytes, list[str]]:
+    """ブロックの並びを1つの形式へ組み、(データ, 警告) を返す。
+
+    バイト列を返すのは st.download_button がそれを受け取るためで、中間ファイルを
+    作らずに済む（docgen/__init__.py の fill と同じ）。
+    """
+    builder = _BUILDERS.get(suffix.lower())
+    if builder is None:
+        raise UnsupportedOutputError(f"出力できない形式です: {suffix}")
+    return builder(blocks, on_diagram_error)
