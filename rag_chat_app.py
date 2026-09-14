@@ -345,23 +345,16 @@ def _cowork_error(message):
     return result
 
 
-def _generate_document(template_path, names, question, attachments, use_internal, use_docs):
-    """雛形を埋め、結果を st.session_state.cowork_result に積む。
+def _collect_evidence(question, attachments, use_internal, use_docs, result):
+    """検索結果と添付の本文を集める。失敗したら結果に積んで None を返す。
 
-    ここで直接 st.error や st.download_button を呼ばないのは、generating を
-    戻すための下の st.rerun() が同じ実行の描画ごと消してしまうためである。
-    render_cowork_result が次の実行でこれを描く。
+    雛形あり・なしの両方がこれを呼ぶ。どちらか一方にだけ検索の修正が入る状態を
+    作らないため、1つにまとめてある。
 
-    どのコーパスを引くかは画面が決め、filling.py へは (種類の名前, ヒット) の
-    並びで渡す。filling.py にコーパスの知識を持たせない（設計書6節）。
+    どのコーパスを引くかは画面が決め、filling.py / freeform.py へは
+    (種類の名前, ヒット) の並びで渡す。生成側にコーパスの知識を持たせない
+    （設計書6節）。
     """
-    result = _empty_cowork_result()
-
-    def ask(prompt):
-        return chat.ask_json(
-            model, prompt, num_ctx=docgen_filling.GENERATION_NUM_CTX
-        )
-
     sources = []
     try:
         if use_internal:
@@ -398,11 +391,11 @@ def _generate_document(template_path, names, question, attachments, use_internal
                 ))
     except embedder.EmbeddingError as error:
         st.session_state.cowork_result = _cowork_error(str(error))
-        return
+        return None
     except chat.ChatError as error:
         # 英訳もLLMである。落ちたら伝えて止める。
         st.session_state.cowork_result = _cowork_error(str(error))
-        return
+        return None
 
     texts = []
     if attachments:
@@ -426,7 +419,7 @@ def _generate_document(template_path, names, question, attachments, use_internal
                     st.session_state.cowork_result = _cowork_error(
                         f"{file.name} を開けませんでした: {error}"
                     )
-                    return
+                    return None
                 text = "\n".join(unit.text for unit in units)
                 if not text:
                     # 説明文もOCR文字も得られなかった画像。空の見出しだけが
@@ -435,6 +428,30 @@ def _generate_document(template_path, names, question, attachments, use_internal
                         f"{file.name} から本文を取り出せませんでした。"
                     )
                 texts.append((file.name, text))
+    return sources, texts
+
+
+def _generate_document(template_path, names, question, attachments, use_internal, use_docs):
+    """雛形を埋め、結果を st.session_state.cowork_result に積む。
+
+    ここで直接 st.error や st.download_button を呼ばないのは、generating を
+    戻すための下の st.rerun() が同じ実行の描画ごと消してしまうためである。
+    render_cowork_result が次の実行でこれを描く。
+
+    どのコーパスを引くかは画面が決め、filling.py へは (種類の名前, ヒット) の
+    並びで渡す。filling.py にコーパスの知識を持たせない（設計書6節）。
+    """
+    result = _empty_cowork_result()
+
+    def ask(prompt):
+        return chat.ask_json(
+            model, prompt, num_ctx=docgen_filling.GENERATION_NUM_CTX
+        )
+
+    collected = _collect_evidence(question, attachments, use_internal, use_docs, result)
+    if collected is None:
+        return
+    sources, texts = collected
 
     try:
         values = docgen_filling.fill_values(names, question, sources, texts, ask)
