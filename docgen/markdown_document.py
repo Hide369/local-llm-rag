@@ -111,8 +111,20 @@ def parse(text: str) -> list:
             header = _cells(line)
             index += 2
             rows = []
+            # 行の収集。次の行がテーブル区切り行だと、現在の行は次のテーブルのヘッダーなので停止
             while index < len(lines) and _TABLE_ROW.match(lines[index]):
-                rows.append(_cells(lines[index]))
+                # 次行がテーブル区切り行なら、この行は次のテーブルのヘッダー。停止
+                if index + 1 < len(lines) and _TABLE_RULE.match(lines[index + 1]):
+                    break
+                row = _cells(lines[index])
+                # セル数をヘッダーの幅に正規化
+                if len(row) < len(header):
+                    # 短い行は空文字列でパディング
+                    row.extend([""] * (len(header) - len(row)))
+                elif len(row) > len(header):
+                    # 長い行は余剰セルを削除
+                    row = row[:len(header)]
+                rows.append(row)
                 index += 1
             blocks.append(Table(header, rows))
             continue

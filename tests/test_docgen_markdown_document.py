@@ -64,3 +64,37 @@ def test_a_heading_inside_a_fence_is_not_a_heading():
 
 def test_an_empty_document_has_no_blocks():
     assert md.parse("   \n\n") == []
+
+
+def test_adjacent_tables_with_no_blank_line_become_two_table_blocks():
+    """空行なしで連続する表は、別々のテーブルブロックとして認識される必要がある。
+    2番目の表のヘッダー行と区切り行が1番目の表に吸収されると、構造が崩れる。"""
+    text = "| a | b |\n| - | - |\n| 1 | 2 |\n| c | d |\n| - | - |\n| 3 | 4 |\n"
+
+    blocks = md.parse(text)
+
+    assert blocks == [
+        md.Table(["a", "b"], [["1", "2"]]),
+        md.Table(["c", "d"], [["3", "4"]])
+    ]
+
+
+def test_a_short_row_is_padded_to_header_width():
+    """セル数がヘッダーより少ない行は、空文字列でパディングされる。
+    docx/xlsx/pptx レンダラーは固定列数で構築されるため、不揃いな行が
+    列ずれを引き起こさないように正規化が必須である。"""
+    text = "| a | b |\n| - | - |\n| 1 |\n"
+
+    blocks = md.parse(text)
+
+    assert blocks == [md.Table(["a", "b"], [["1", ""]])]
+
+
+def test_a_long_row_surplus_cells_are_dropped():
+    """セル数がヘッダーより多い行の余剰セルは削除される。
+    GFM の仕様に準じ、下流レンダラーが誤配置しない形に整形する。"""
+    text = "| a | b |\n| - | - |\n| 1 | 2 | 3 |\n"
+
+    blocks = md.parse(text)
+
+    assert blocks == [md.Table(["a", "b"], [["1", "2"]])]
