@@ -352,15 +352,71 @@ def _cowork_error(message):
     return result
 
 
-def _collect_evidence(question, attachments, use_internal, use_docs, result):
-    """検索結果と添付の本文を集める。失敗したら結果に積んで None を返す。
+def _has_no_evidence(use_internal, use_docs, attachments, project_folder):
+    """根拠が1つも無いかを判定する。
 
-    雛形あり・なしの両方がこれを呼ぶ。どちらか一方にだけ検索の修正が入る状態を
-    作らないため、1つにまとめてある。
+    雛形あり・なしの両方の分岐が同じ条件で「呼んでも中身の無い文書が出る
+    だけ」の回を止める。判定を2箇所に書くと、プロジェクトフォルダのような
+    根拠を1つ足すたびに片方だけ直して片方を古いまま取り残す恐れがある
+    ため、ここへ1つにまとめる。
+    """
+    return (
+        not use_internal
+        and not use_docs
+        and not attachments
+        and not project_folder.strip()
+    )
+
+
+def _collect_project_files(folder, question, ask_json_call, result):
+    """フォルダを走査して本文を読む。読めなければ None を返す。
+
+    LLM を呼ぶ前にパスと対象件数を確かめるのは、呼んでから落ちると利用者が
+    30〜60秒待たされたうえで何も受け取れないためである。
+    """
+    if not folder.strip():
+        return [], ""
+    root = Path(folder.strip())
+    try:
+        entries = docgen_project.tree(root)
+    except docgen_project.ProjectFolderError as error:
+        st.session_state.cowork_result = _cowork_error(str(error))
+        return None
+    if not entries:
+        st.session_state.cowork_result = _cowork_error(
+            f"{root} に取り込める形式のファイルがありません。"
+        )
+        return None
+    try:
+        chosen = docgen_project.select(entries, question, ask_json_call)
+    except chat.ChatError as error:
+        st.session_state.cowork_result = _cowork_error(str(error))
+        return None
+    if not chosen:
+        result["warnings"].append(
+            "読むファイルを選べませんでした。ファイル一覧だけを渡します。"
+        )
+    files, skipped = docgen_project.read(root, chosen)
+    if skipped:
+        result["warnings"].append(
+            "読まなかったファイル: " + "、".join(skipped)
+        )
+    return files, docgen_project.tree_text(entries)
+
+
+def _collect_evidence(question, attachments, use_internal, use_docs, project_folder, result):
+    """検索結果・添付・プロジェクトフォルダの本文を集める。
+
+    失敗したら結果に積んで None を返す。雛形あり・なしの両方がこれを呼ぶ。
+    どちらか一方にだけ検索の修正が入る状態を作らないため、1つにまとめてある。
 
     どのコーパスを引くかは画面が決め、filling.py / freeform.py へは
     (種類の名前, ヒット) の並びで渡す。生成側にコーパスの知識を持たせない
     （設計書6節）。
+
+    返り値の3つ目はプロジェクトフォルダのファイル一覧をプロンプトへ載せる形に
+    したものである。freeform.write_markdown はモデルの選択が壊れて空になった
+    回にもこれだけは渡すので、呼び出し元はここで捨てずに次へ渡すこと。
     """
     sources = []
     try:
@@ -435,10 +491,25 @@ def _collect_evidence(question, attachments, use_internal, use_docs, result):
                         f"{file.name} から本文を取り出せませんでした。"
                     )
                 texts.append((file.name, text))
-    return sources, texts
+
+    def ask_json_call(prompt):
+        return chat.ask_json(model, prompt, num_ctx=docgen_filling.GENERATION_NUM_CTX)
+
+    collected_project = _collect_project_files(
+        project_folder, question, ask_json_call, result
+    )
+    if collected_project is None:
+        return None
+    project_files, tree_text = collected_project
+    # プロジェクトの本文は「添付の自動版」であり、専用の受け口を作らない
+    # （docgen/project.py のモジュールdocstring参照）。先頭に置くのは、
+    # 依頼者が明示的に選んだ添付より先に見せる理由が特にあるわけではなく、
+    # 単に呼び出し順をそのまま反映しただけである。
+    texts = project_files + texts
+    return sources, texts, tree_text
 
 
-def _generate_document(template_path, names, question, attachments, use_internal, use_docs):
+def _generate_document(template_path, names, question, attachments, use_internal, use_docs, project_folder):
     """雛形を埋め、結果を st.session_state.cowork_result に積む。
 
     ここで直接 st.error や st.download_button を呼ばないのは、generating を
@@ -455,10 +526,15 @@ def _generate_document(template_path, names, question, attachments, use_internal
             model, prompt, num_ctx=docgen_filling.GENERATION_NUM_CTX
         )
 
-    collected = _collect_evidence(question, attachments, use_internal, use_docs, result)
+    collected = _collect_evidence(
+        question, attachments, use_internal, use_docs, project_folder, result
+    )
     if collected is None:
         return
-    sources, texts = collected
+    # tree_text は雛形なしの経路（write_markdown の4番目の引数）でしか使わない。
+    # 雛形の欄は個別の値で埋めるので、ファイル一覧をそのままモデルへ見せる
+    # 出番が無い。
+    sources, texts, _tree_text = collected
 
     try:
         values = docgen_filling.fill_values(names, question, sources, texts, ask)
@@ -499,11 +575,23 @@ def _generate_document(template_path, names, question, attachments, use_internal
         "data": data,
         "file_name": f"{stem}_{date.today().isoformat()}{template_path.suffix}",
     }
+    if project_folder.strip():
+        try:
+            written = docgen_project.write_output(
+                Path(project_folder.strip()),
+                result["download"]["file_name"],
+                result["download"]["data"],
+            )
+        except OSError as error:
+            # 書けなくても成果物そのものは渡す。ダウンロードボタンは出る。
+            result["warnings"].append(f"フォルダへ書き出せませんでした: {error}")
+        else:
+            result["infos"].append(f"{written} に書き出しました。")
     result["sources"] = sources
     st.session_state.cowork_result = result
 
 
-def _generate_freeform(suffix, question, attachments, use_internal, use_docs):
+def _generate_freeform(suffix, question, attachments, use_internal, use_docs, project_folder):
     """雛形なしで文書を作り、結果を st.session_state.cowork_result に積む。
 
     _generate_document と同じく、ここで st.error や st.download_button を直接
@@ -514,14 +602,16 @@ def _generate_freeform(suffix, question, attachments, use_internal, use_docs):
     def ask_text(prompt):
         return chat.ask_text(model, prompt, num_ctx=docgen_filling.GENERATION_NUM_CTX)
 
-    collected = _collect_evidence(question, attachments, use_internal, use_docs, result)
+    collected = _collect_evidence(
+        question, attachments, use_internal, use_docs, project_folder, result
+    )
     if collected is None:
         return
-    sources, texts = collected
+    sources, texts, tree_text = collected
 
     try:
         markdown = docgen_freeform.write_markdown(
-            question, sources, texts, "", suffix, ask_text
+            question, sources, texts, tree_text, suffix, ask_text
         )
     except (docgen_filling.PromptTooLongError, chat.ChatError) as error:
         st.session_state.cowork_result = _cowork_error(str(error))
@@ -547,10 +637,25 @@ def _generate_freeform(suffix, question, attachments, use_internal, use_docs):
     for name, hits in sources:
         if not hits:
             result["infos"].append(f"{name}の検索は0件でした。")
+    # 雛形が無いと拡張子だけでは名前を選べない。プロジェクトフォルダを
+    # 指定した回はそのフォルダ名を使う（設計書8節）。
+    stem = Path(project_folder.strip()).name if project_folder.strip() else "文書"
     result["download"] = {
         "data": data,
-        "file_name": f"文書_{date.today().isoformat()}{suffix}",
+        "file_name": f"{stem}_{date.today().isoformat()}{suffix}",
     }
+    if project_folder.strip():
+        try:
+            written = docgen_project.write_output(
+                Path(project_folder.strip()),
+                result["download"]["file_name"],
+                result["download"]["data"],
+            )
+        except OSError as error:
+            # 書けなくても成果物そのものは渡す。ダウンロードボタンは出る。
+            result["warnings"].append(f"フォルダへ書き出せませんでした: {error}")
+        else:
+            result["infos"].append(f"{written} に書き出しました。")
     result["sources"] = sources
     st.session_state.cowork_result = result
 
@@ -810,6 +915,7 @@ mode = st.segmented_control(
 
 template_path = None
 attachments = []
+project_folder = ""
 # 既定は社内資料だけ。議事録や報告書はそれで足りる。
 use_internal, use_docs = True, False
 if mode == MODE_COWORK:
@@ -875,6 +981,11 @@ if mode == MODE_COWORK:
         disabled=st.session_state.generating,
     )
     attachments = attached or []
+    project_folder = st.text_input(
+        "プロジェクトフォルダ（このマシン上のパス。空欄可）",
+        key="project_folder",
+        disabled=st.session_state.generating,
+    )
 
     # 生成の結果は st.session_state に積んで次の実行で描く。generating を戻す
     # ための下の st.rerun()（チャットの入力欄再有効化と同じ理由）が、ここで
@@ -912,13 +1023,18 @@ if st.session_state.generating:
             # template_path is None は「雛形が無い」ではなく「雛形なしを選んだ」
             # という意味になった。根拠が1つも無ければ、呼んでも中身の無い文書が
             # 出るだけなので、その場合だけ止める。
-            if not use_internal and not use_docs and not attachments:
+            if _has_no_evidence(use_internal, use_docs, attachments, project_folder):
                 st.session_state.cowork_result = _cowork_error(
                     "参照する資料も添付ファイルもありません。根拠が無いため生成しません。"
                 )
             else:
                 _generate_freeform(
-                    output_suffix, question, attachments, use_internal, use_docs
+                    output_suffix,
+                    question,
+                    attachments,
+                    use_internal,
+                    use_docs,
+                    project_folder,
                 )
         elif mode == MODE_COWORK:
             try:
@@ -938,15 +1054,21 @@ if st.session_state.generating:
                         f"{template_path.name} に {{{{印}}}} がありません。"
                         "埋める欄が無いため生成しません。"
                     )
-                elif not use_internal and not use_docs and not attachments:
-                    # 両方外して添付も無ければ、根拠が1つも無い。呼んでも全欄が
-                    # 埋まらないので、LLMを呼ぶ前に止める。
+                elif _has_no_evidence(use_internal, use_docs, attachments, project_folder):
+                    # 根拠が1つも無ければ、呼んでも全欄が埋まらない。
+                    # LLMを呼ぶ前に止める。
                     st.session_state.cowork_result = _cowork_error(
                         "参照する資料も添付ファイルもありません。根拠が無いため生成しません。"
                     )
                 else:
                     _generate_document(
-                        template_path, names, question, attachments, use_internal, use_docs
+                        template_path,
+                        names,
+                        question,
+                        attachments,
+                        use_internal,
+                        use_docs,
+                        project_folder,
                     )
         else:
             # 「マークダウンで表示して」と頼まれたら、描画せず記法のまま出す。

@@ -541,3 +541,94 @@ def test_cowork_warns_when_an_attachment_yields_no_text(app, tmp_path):
 
     assert not app.exception
     assert any("本文を取り出せませんでした" in warning.value for warning in app.warning)
+
+
+def test_cowork_reads_the_project_folder_and_writes_the_result_into_it(app, tmp_path):
+    """成果物はダウンロードだけでなくフォルダにも残す。"""
+    folder = tmp_path / "myproject"
+    folder.mkdir()
+    (folder / "main.go").write_text("package main\n", encoding="utf-8")
+
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+        patch.object(chat, "ask_json", lambda *a, **k: '["main.go"]'),
+        patch.object(chat, "ask_text", lambda *a, **k: "# 設計書\n\n本文\n"),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+        app.selectbox(key="template").set_value(NO_TEMPLATE).run()
+        app.text_input(key="project_folder").set_value(str(folder)).run()
+        app.chat_input[0].set_value("設計書を書いて").run()
+
+    assert not app.exception
+    written = list((folder / "generated_docs").glob("*.md"))
+    assert len(written) == 1
+    assert "# 設計書" in written[0].read_text(encoding="utf-8")
+
+
+def test_the_generated_document_lists_the_files_it_used(app, tmp_path):
+    """何を根拠にしたかを後から辿れるようにする。"""
+    folder = tmp_path / "myproject"
+    folder.mkdir()
+    (folder / "main.go").write_text("package main\n", encoding="utf-8")
+
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+        patch.object(chat, "ask_json", lambda *a, **k: '["main.go"]'),
+        patch.object(chat, "ask_text", lambda *a, **k: "# 設計書\n\n本文\n"),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+        app.selectbox(key="template").set_value(NO_TEMPLATE).run()
+        app.text_input(key="project_folder").set_value(str(folder)).run()
+        app.chat_input[0].set_value("設計書を書いて").run()
+
+    written = list((folder / "generated_docs").glob("*.md"))
+    assert len(written) == 1
+    text = written[0].read_text(encoding="utf-8")
+    assert "## 参照したファイル" in text
+    assert "main.go" in text
+
+
+def test_a_folder_that_does_not_exist_stops_before_calling_the_model(app, tmp_path):
+    """呼んでから落ちると、利用者は30〜60秒待たされたうえで何も受け取れない。"""
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+        app.selectbox(key="template").set_value(NO_TEMPLATE).run()
+        app.text_input(key="project_folder").set_value(str(tmp_path / "無い")).run()
+        app.chat_input[0].set_value("設計書を書いて").run()
+
+    assert not app.exception
+    assert any("フォルダ" in error.value for error in app.error)
+
+
+def test_a_project_folder_alone_is_enough_evidence(app, tmp_path):
+    """フォルダだけを指定した回は正当な使い方であり、止めてはならない。"""
+    folder = tmp_path / "myproject"
+    folder.mkdir()
+    (folder / "main.go").write_text("package main\n", encoding="utf-8")
+
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
+        patch.object(chat, "ask_json", lambda *a, **k: '["main.go"]'),
+        patch.object(chat, "ask_text", lambda *a, **k: "# 設計書\n\n本文\n"),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+        app.selectbox(key="template").set_value(NO_TEMPLATE).run()
+        app.checkbox(key="cowork_internal").set_value(False).run()
+        app.text_input(key="project_folder").set_value(str(folder)).run()
+        app.chat_input[0].set_value("設計書を書いて").run()
+
+    assert not app.exception
+    assert not app.error

@@ -64,4 +64,10 @@
   経路へ乗る。添付はDBに入れない（`docs/superpowers/specs/2026-09-13-document-generation-design.md`）
   が、DBに残らないことと外へ出ないことは別である。オフラインの資料を扱うときは
   `OLLAMA_HOST` がローカルを指していることを確かめること。
+  雛形からの文書生成に加え、雛形なしの生成（`docgen/freeform.py`）と
+  プロジェクトフォルダの参照（`docgen/project.py`）もこの経路を使う。
+  新しい宛先は増えないが、指定したフォルダのファイル一覧と、モデルが選んだ
+  ファイルの本文が `ingest/chat.py` の `ask_json` / `ask_text` に渡り、この
+  経路へ乗る。手元のソースコードを扱うときは `OLLAMA_HOST` がローカルを
+  指していることを確かめること。
 
