@@ -12,8 +12,14 @@ References）にする。形式ごとに Markdown を読み直すと、記法の
 埋める」役で、書式・レイアウト・ロゴを保つことが仕事である。こちらに原本は
 存在しない。混ぜない。
 """
+import io
 import re
 from dataclasses import dataclass, field
+
+import docx
+from docx.shared import Inches, Pt
+
+from docgen import mermaid
 
 
 @dataclass
@@ -179,6 +185,64 @@ def _table_markdown(block: Table) -> str:
     return "\n".join(lines)
 
 
+# mmdc の既定の PNG は幅800px（約8.3インチ）で、A4縦の段幅（約6.5インチ）より
+# 広い。docgen/docx_template.py と同じ値にする。
+DIAGRAM_WIDTH = Inches(6.0)
+
+
+def _add_diagram(document, block, on_diagram_error):
+    """図にできれば画像を、できなければ Mermaid のテキストを入れる。
+
+    図にできなかったときに何も入れないと、利用者は成果物を開いても「そこに何か
+    あったはず」だと分からない（docgen/mermaid.py の rendered と同じ判断）。
+    """
+    try:
+        image = mermaid.render(block.source)
+    except mermaid.MermaidError as error:
+        document.add_paragraph(block.source)
+        if on_diagram_error is not None:
+            # 雛形と違って名前の付いた欄が存在しないので「図」で呼ぶ。
+            on_diagram_error("図", str(error))
+        return
+    document.add_picture(io.BytesIO(image), width=DIAGRAM_WIDTH)
+
+
+def _build_docx(blocks, on_diagram_error=None) -> tuple[bytes, list[str]]:
+    document = docx.Document()
+    for block in blocks:
+        if isinstance(block, Heading):
+            document.add_heading(block.text, level=min(block.level, 9))
+        elif isinstance(block, Paragraph):
+            document.add_paragraph(block.text)
+        elif isinstance(block, Bullets):
+            for item in block.items:
+                document.add_paragraph(item, style="List Bullet")
+        elif isinstance(block, Table):
+            table = document.add_table(rows=1, cols=len(block.header))
+            table.style = "Table Grid"
+            for cell, text in zip(table.rows[0].cells, block.header):
+                cell.text = text
+            for row in block.rows:
+                cells = table.add_row().cells
+                for cell, text in zip(cells, row):
+                    cell.text = text
+        elif isinstance(block, Code):
+            paragraph = document.add_paragraph(block.text)
+            paragraph.runs[0].font.name = "Consolas"
+            paragraph.runs[0].font.size = Pt(9)
+        elif isinstance(block, Diagram):
+            _add_diagram(document, block, on_diagram_error)
+        elif isinstance(block, References):
+            document.add_heading(REFERENCES_HEADING, level=2)
+            for name in block.paths + block.citations:
+                document.add_paragraph(name, style="List Bullet")
+        else:
+            _unhandled(block)
+    buffer = io.BytesIO()
+    document.save(buffer)
+    return buffer.getvalue(), []
+
+
 def _build_md(blocks, on_diagram_error=None) -> tuple[bytes, list[str]]:
     parts: list[str] = []
     for block in blocks:
@@ -202,7 +266,7 @@ def _build_md(blocks, on_diagram_error=None) -> tuple[bytes, list[str]]:
     return ("\n\n".join(parts) + "\n").encode("utf-8"), []
 
 
-_BUILDERS = {".md": _build_md}
+_BUILDERS = {".md": _build_md, ".docx": _build_docx}
 
 OUTPUT_SUFFIXES = (".md", ".docx", ".xlsx", ".pptx")
 

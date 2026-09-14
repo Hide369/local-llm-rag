@@ -3,7 +3,16 @@
 Markdown を一度だけ解析して共通の構造にするのは、形式ごとに読み直すと記法の
 解釈が4箇所に分かれるためである。
 """
+import io
+
+import docx
+
 from docgen import markdown_document as md
+from docgen import mermaid
+
+
+def _docx_texts(data: bytes) -> list[str]:
+    return [p.text for p in docx.Document(io.BytesIO(data)).paragraphs]
 
 
 def test_headings_keep_their_level():
@@ -161,3 +170,64 @@ def test_build_raises_on_unhandled_block_type():
 
     with pytest.raises(md.UnsupportedOutputError):
         md.build([UnknownBlock("本文")], ".md")
+
+
+def test_build_docx_writes_headings_and_paragraphs():
+    blocks = [md.Heading(1, "設計書"), md.Paragraph("本文")]
+
+    data, warnings = md.build(blocks, ".docx")
+
+    assert warnings == []
+    assert "設計書" in _docx_texts(data)
+    assert "本文" in _docx_texts(data)
+
+
+def test_build_docx_writes_a_table():
+    blocks = [md.Table(["区分", "日数"], [["6か月", "10日"]])]
+
+    document = docx.Document(io.BytesIO(md.build(blocks, ".docx")[0]))
+
+    assert len(document.tables) == 1
+    assert document.tables[0].cell(0, 0).text == "区分"
+    assert document.tables[0].cell(1, 1).text == "10日"
+
+
+def test_build_docx_writes_the_references_section():
+    blocks = [md.References(["main.go"], ["議事録.docx p.1"])]
+
+    texts = _docx_texts(md.build(blocks, ".docx")[0])
+
+    assert md.REFERENCES_HEADING in texts
+    assert "main.go" in texts
+    assert "議事録.docx p.1" in texts
+
+
+def test_build_docx_keeps_the_mermaid_text_when_it_cannot_be_drawn(monkeypatch):
+    """図にできなかったことを黙って捨てると、利用者は成果物を開くまで
+    気づけない。テキストは残し、呼び出し元へ知らせる。"""
+    def _fail(source):
+        raise mermaid.MermaidError("mmdc を起動できませんでした")
+
+    monkeypatch.setattr(mermaid, "render", _fail)
+    seen = []
+
+    data, warnings = md.build(
+        [md.Diagram("graph TD\nA-->B")], ".docx",
+        lambda name, reason: seen.append((name, reason)),
+    )
+
+    assert "graph TD" in "\n".join(_docx_texts(data))
+    assert seen and "mmdc" in seen[0][1]
+
+
+def test_build_docx_raises_on_unhandled_block_type():
+    """黙って飛ばすと利用者が受け取る文書から本文が消え、例外も警告も出ないため気づけない。"""
+    import pytest
+    from dataclasses import dataclass
+
+    @dataclass
+    class UnknownBlock:
+        content: str
+
+    with pytest.raises(md.UnsupportedOutputError):
+        md.build([UnknownBlock("本文")], ".docx")
