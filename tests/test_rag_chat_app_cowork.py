@@ -124,7 +124,11 @@ def test_cowork_without_a_template_does_not_silently_answer_as_chat(app, tmp_pat
     いたため、雛形0件で送信すると通常のチャット回答が返っていた。利用者は
     Cowork のつもりで読むため、どこから来た答えなのかを取り違える。雛形なしが
     正規の選択肢になった今も、この経路がチャットの else 節へ落ちないことに
-    変わりはない（雛形なしの生成として処理される）。
+    変わりはない。
+
+    messages が空であることだけでは、リクエストが黙って握りつぶされた場合
+    （何も生成されない）とも区別が付かない。雛形なしの生成が実際に結果を
+    残したこと（ダウンロードボタンが出て、エラーが無いこと）まで確かめる。
     """
     with (
         patch.object(store_module, "open_store", _stub_store()),
@@ -138,6 +142,8 @@ def test_cowork_without_a_template_does_not_silently_answer_as_chat(app, tmp_pat
 
     assert not app.exception
     assert app.session_state["messages"] == []
+    assert app.download_button
+    assert not app.error
 
 
 def test_cowork_shows_the_error_when_generation_fails(app, tmp_path):
