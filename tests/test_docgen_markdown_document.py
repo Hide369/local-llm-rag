@@ -6,6 +6,7 @@ Markdown を一度だけ解析して共通の構造にするのは、形式ご�
 import io
 
 import docx
+from pptx import Presentation
 
 from docgen import markdown_document as md
 from docgen import mermaid
@@ -250,3 +251,63 @@ def test_build_docx_handles_empty_code_block():
 
     assert warnings == []
     assert data is not None  # 文書が正常に生成されることを確認
+
+
+def _slide_texts(data: bytes) -> list[list[str]]:
+    presentation = Presentation(io.BytesIO(data))
+    return [
+        [shape.text_frame.text for shape in slide.shapes if shape.has_text_frame]
+        for slide in presentation.slides
+    ]
+
+
+def test_build_pptx_makes_one_slide_per_second_level_heading():
+    blocks = [
+        md.Heading(1, "提案"),
+        md.Heading(2, "現状"),
+        md.Bullets(["遅い"]),
+        md.Heading(2, "対策"),
+        md.Bullets(["速くする"]),
+    ]
+
+    slides = _slide_texts(md.build(blocks, ".pptx")[0])
+
+    assert len(slides) == 3  # タイトル + 2枚
+    assert "提案" in slides[0][0]
+    assert "現状" in slides[1][0]
+    assert "遅い" in slides[1][1]
+
+
+def test_build_pptx_does_not_split_on_third_level_headings():
+    """見出しの深さでスライドを分けると、章立ての書き方しだいで
+    数十枚に膨らむ。"""
+    blocks = [md.Heading(2, "現状"), md.Heading(3, "細目"), md.Paragraph("本文")]
+
+    assert len(_slide_texts(md.build(blocks, ".pptx")[0])) == 1
+
+
+def test_build_pptx_puts_the_references_on_the_last_slide():
+    blocks = [md.Heading(2, "現状"), md.References(["main.go"], [])]
+
+    slides = _slide_texts(md.build(blocks, ".pptx")[0])
+
+    assert md.REFERENCES_HEADING in slides[-1][0]
+    assert "main.go" in slides[-1][1]
+
+
+def test_build_pptx_without_any_heading_still_produces_a_slide():
+    """見出しを1つも書かない回がある。空のファイルを渡さない。"""
+    assert len(_slide_texts(md.build([md.Paragraph("本文")], ".pptx")[0])) == 1
+
+
+def test_build_pptx_raises_on_unhandled_block_type():
+    """黙って飛ばすと利用者が受け取る文書から本文が消え、例外も警告も出ないため気づけない。"""
+    import pytest
+    from dataclasses import dataclass
+
+    @dataclass
+    class UnknownBlock:
+        content: str
+
+    with pytest.raises(md.UnsupportedOutputError):
+        md.build([UnknownBlock("本文")], ".pptx")

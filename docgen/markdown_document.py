@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 
 import docx
 from docx.shared import Inches, Pt
+from pptx import Presentation
 
 from docgen import mermaid
 
@@ -245,6 +246,88 @@ def _build_docx(blocks, on_diagram_error=None) -> tuple[bytes, list[str]]:
     return buffer.getvalue(), []
 
 
+# python-pptx の既定のレイアウト。0 はタイトル、1 はタイトルと内容。
+_TITLE_LAYOUT = 0
+_CONTENT_LAYOUT = 1
+
+
+def _pptx_lines(block) -> list[str]:
+    """1つのブロックをスライド本文の行の並びにする。"""
+    if isinstance(block, Heading):
+        return [block.text]
+    if isinstance(block, Paragraph):
+        return [block.text]
+    if isinstance(block, Bullets):
+        return list(block.items)
+    if isinstance(block, Table):
+        return [" | ".join(block.header)] + [" | ".join(row) for row in block.rows]
+    if isinstance(block, Code):
+        return block.text.split("\n")
+    if isinstance(block, Diagram):
+        return block.source.split("\n")
+    _unhandled(block)
+
+
+def _add_slide(presentation, title: str, lines: list[str]) -> None:
+    slide = presentation.slides.add_slide(presentation.slide_layouts[_CONTENT_LAYOUT])
+    slide.shapes.title.text = title
+    body = slide.placeholders[1].text_frame
+    body.text = lines[0] if lines else ""
+    for line in lines[1:]:
+        body.add_paragraph().text = line
+
+
+def _build_pptx(blocks, on_diagram_error=None) -> tuple[bytes, list[str]]:
+    """`##` ごとに1スライドにする。
+
+    `###` 以下でスライドを分けないのは、見出しの深さで分けると章立ての書き方
+    しだいでスライドが数十枚に膨らむためである。深い見出しは本文の1行にする。
+
+    図は当面 PNG にせず Mermaid のテキストを本文へ入れる。スライドは本文の
+    プレースホルダに文字を流し込む作りで、画像を置くと位置と大きさを決める
+    判断が要る。on_diagram_error を受け取るのは他の形式と署名を揃えるためである
+    （ingest/parsers/__init__.py と同じ方針）。
+    """
+    presentation = Presentation()
+    title = ""
+    current: str | None = None
+    lines: list[str] = []
+    made = False
+
+    def flush():
+        nonlocal current, lines, made
+        if current is not None or lines:
+            _add_slide(presentation, current or title or "", lines)
+            made = True
+        current, lines = None, []
+
+    for block in blocks:
+        if isinstance(block, Heading) and block.level == 1 and not title:
+            title = block.text
+            slide = presentation.slides.add_slide(presentation.slide_layouts[_TITLE_LAYOUT])
+            slide.shapes.title.text = block.text
+            made = True
+            continue
+        if isinstance(block, Heading) and block.level == 2:
+            flush()
+            current = block.text
+            continue
+        if isinstance(block, References):
+            flush()
+            _add_slide(presentation, REFERENCES_HEADING, block.paths + block.citations)
+            made = True
+            continue
+        lines.extend(_pptx_lines(block))
+    flush()
+
+    if not made:
+        # 見出しも本文も無い回に空のファイルを渡さない。
+        _add_slide(presentation, title or "文書", [])
+    buffer = io.BytesIO()
+    presentation.save(buffer)
+    return buffer.getvalue(), []
+
+
 def _build_md(blocks, on_diagram_error=None) -> tuple[bytes, list[str]]:
     parts: list[str] = []
     for block in blocks:
@@ -268,7 +351,7 @@ def _build_md(blocks, on_diagram_error=None) -> tuple[bytes, list[str]]:
     return ("\n\n".join(parts) + "\n").encode("utf-8"), []
 
 
-_BUILDERS = {".md": _build_md, ".docx": _build_docx}
+_BUILDERS = {".md": _build_md, ".docx": _build_docx, ".pptx": _build_pptx}
 
 OUTPUT_SUFFIXES = (".md", ".docx", ".xlsx", ".pptx")
 
