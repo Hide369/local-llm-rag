@@ -139,3 +139,25 @@ def test_read_skips_a_missing_path(tmp_path):
 
     assert files == []
     assert skipped == ["存在しない.md"]
+
+
+def test_read_rejects_a_symlink_pointing_outside_the_root(tmp_path):
+    """文字列で `..` を探す実装に戻されても、このテストだけが落ちる。
+
+    Path.resolve() はシンボリックリンクの再解析ポイントを辿って、その先の
+    絶対パスが root の下にあるか確認する。これが是非で最も価値の高い不変式である。
+    """
+    # シンボリックリンク作成を試みる。Windows で開発者モードがない環境では
+    # OSError が出る。その場合、このテストは skip する。
+    try:
+        outside = tmp_path.parent / "外のファイル.md"
+        outside.write_text("外のファイル\n", encoding="utf-8")
+        symlink = tmp_path / "symlink.md"
+        symlink.symlink_to(outside)
+    except OSError as e:
+        pytest.skip(f"シンボリックリンク作成不可: {e}")
+
+    files, skipped = project.read(tmp_path, ["symlink.md"])
+
+    assert files == []
+    assert skipped == ["symlink.md"]
