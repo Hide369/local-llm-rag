@@ -68,3 +68,74 @@ def test_tree_rejects_a_path_that_is_not_a_directory(tmp_path):
 def test_tree_of_an_empty_folder_is_empty(tmp_path):
     """0件は異常ではない。呼び出し元が「対象がありません」と伝えられればよい。"""
     assert project.tree(tmp_path) == []
+
+
+def test_read_returns_the_body_of_each_selected_file(tmp_path):
+    _write(tmp_path, "main.go", "package main\n")
+    _write(tmp_path, "docs/設計.md", "# 設計\n\n本文\n")
+
+    files, skipped = project.read(tmp_path, ["main.go", "docs/設計.md"])
+
+    assert skipped == []
+    assert files[0][0] == "main.go"
+    assert "package main" in files[0][1]
+    assert "本文" in files[1][1]
+
+
+def test_read_stops_at_the_budget_and_names_what_it_dropped(tmp_path):
+    """黙って捨てると、利用者は根拠が足りないまま書かれた文書を
+    根拠があるものとして読む。"""
+    _write(tmp_path, "大.md", "あ" * 200)
+    _write(tmp_path, "小.md", "い" * 10)
+
+    files, skipped = project.read(tmp_path, ["大.md", "小.md"], budget=100)
+
+    assert [name for name, _ in files] == ["小.md"]
+    assert skipped == ["大.md"]
+
+
+def test_read_rejects_a_path_outside_the_root(tmp_path):
+    """この経路は LLM が返した文字列でファイルを読む。
+
+    docgen/templates.py の _checked と ingest/parsers/md_parser.py の _resolve が
+    同じ理由で .. を拒んでいる。規則を揃える。
+    """
+    _write(tmp_path, "project/main.go", "package main\n")
+    _write(tmp_path, "秘密.md", "外のファイル\n")
+
+    files, skipped = project.read(tmp_path / "project", ["../秘密.md"])
+
+    assert files == []
+    assert skipped == ["../秘密.md"]
+
+
+def test_read_rejects_an_absolute_path(tmp_path):
+    _write(tmp_path, "project/main.go", "package main\n")
+    outside = tmp_path / "秘密.md"
+    outside.write_text("外のファイル\n", encoding="utf-8")
+
+    files, skipped = project.read(tmp_path / "project", [str(outside)])
+
+    assert files == []
+    assert skipped == [str(outside)]
+
+
+def test_read_skips_a_file_it_cannot_open_and_keeps_going(tmp_path):
+    """1つ壊れているだけで生成ごと落とすと、残りの根拠まで失う。"""
+    _write(tmp_path, "main.go", "package main\n")
+    (tmp_path / "壊れた.xlsx").write_bytes(b"not a workbook")
+
+    files, skipped = project.read(tmp_path, ["壊れた.xlsx", "main.go"])
+
+    assert [name for name, _ in files] == ["main.go"]
+    assert skipped == ["壊れた.xlsx"]
+
+
+def test_read_skips_a_missing_path(tmp_path):
+    """LLM は一覧に無いパスを返すことがある。"""
+    _write(tmp_path, "main.go", "package main\n")
+
+    files, skipped = project.read(tmp_path, ["存在しない.md"])
+
+    assert files == []
+    assert skipped == ["存在しない.md"]

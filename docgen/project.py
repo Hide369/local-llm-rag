@@ -9,7 +9,7 @@
 """
 from pathlib import Path
 
-from ingest.parsers import SUPPORTED_SUFFIXES
+from ingest.parsers import SUPPORTED_SUFFIXES, parse
 
 # このシステム自身の出力先。走査から外す（モジュールdocstring参照）。
 OUTPUT_DIR_NAME = "generated_docs"
@@ -63,3 +63,57 @@ def tree(root: Path) -> list[tuple[str, int]]:
             continue
         found.append((relative.as_posix(), path.stat().st_size))
     return sorted(found)
+
+
+def _resolved(root: Path, relative: str) -> Path | None:
+    """root の下にある実在のファイルなら絶対パスを、そうでなければ None を返す。
+
+    判定は解決後の絶対パスが root の下にあることで行う。文字列に '..' が含まれるか
+    で見ると、シンボリックリンクで外へ出る経路を見逃す。
+    """
+    root = root.resolve()
+    try:
+        candidate = (root / relative).resolve()
+    except OSError:
+        return None
+    if not candidate.is_relative_to(root):
+        return None
+    return candidate if candidate.is_file() else None
+
+
+def read(
+    root: Path, paths: list[str], budget: int = PROJECT_BUDGET_CHARS
+) -> tuple[list[tuple[str, str]], list[str]]:
+    """選ばれたファイルの本文を、予算の範囲で読む。
+
+    返り値の1つ目は (相対パス, 本文) の並びで、filling.fill_values の attachments に
+    そのまま渡せる形である。プロジェクトフォルダは「添付の自動版」であり、専用の
+    受け口を作らない。
+
+    2つ目は読まなかったファイル名の並びである。予算で溢れたもの、root の外を
+    指していたもの、開けなかったものをすべて含む。呼び出し元が画面で伝える。
+
+    予算で溢れたファイルは飛ばして次へ進む（そこで打ち切らない）。大きいファイルが
+    1つ先頭にあるだけで、後ろの小さいファイルまで捨てる理由がない。
+    """
+    files: list[tuple[str, str]] = []
+    skipped: list[str] = []
+    used = 0
+    for relative in paths:
+        path = _resolved(root, relative)
+        if path is None:
+            skipped.append(relative)
+            continue
+        try:
+            units = parse(path)
+        except Exception:
+            # 壊れたファイル1つで生成ごと落とすと、残りの根拠まで失う。
+            skipped.append(relative)
+            continue
+        text = "\n".join(unit.text for unit in units).strip()
+        if not text or used + len(text) > budget:
+            skipped.append(relative)
+            continue
+        files.append((relative, text))
+        used += len(text)
+    return files, skipped
