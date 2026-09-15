@@ -154,47 +154,145 @@ def tree_text(
     return "\n".join(lines), omitted
 
 
-def build_selection_prompt(entries: list[tuple[str, int]], question: str) -> str:
+# モデルに渡す道具。プロジェクトの中へ触れる口はこれ1つだけで、書き込みも
+# コマンド実行も渡さない。読む側だけをループにするのがこの機能の範囲である。
+_TOOL_NAME = "read_files"
+
+READ_FILES_TOOL = {
+    "type": "function",
+    "function": {
+        "name": _TOOL_NAME,
+        "description": (
+            "プロジェクトフォルダの中のファイルを読む。"
+            "一覧に出ている相対パスで指定する。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "paths": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "読むファイルの相対パス",
+                }
+            },
+            "required": ["paths"],
+        },
+    },
+}
+
+# 何周まで回すか。MAX_PROMPT_CHARS(28,000) の内訳が、一覧 TREE_BUDGET_CHARS(6,000)
+# ＋本文 PROJECT_BUDGET_CHARS(16,000) ＋依頼と指示で約6,000である。1周ごとに
+# assistant と tool のメッセージが履歴へ積まれるので、収まるのはこの回数までである。
+MAX_ROUNDS = 3
+
+
+def _opening_message(entries: list[tuple[str, int]], question: str) -> str:
     listing, _omitted = tree_text(entries)
     return (
         "あなたは社内文書を作成する担当者です。\n"
-        "次の依頼に答えるために、どのファイルの中身を読む必要があるかを選んで"
-        "ください。\n\n"
+        "次の依頼に答えるために、必要なファイルを read_files で読んでください。\n\n"
         f"## 依頼\n{question}\n\n"
         f"## ファイル一覧\n{listing}\n\n"
-        "読むべきファイルのパスだけを、JSONの配列で返してください。"
-        "説明や前置きは書かないでください。\n"
-        "一覧に無いパスは返さないでください。\n"
-        "依頼に関係のないファイルは選ばないでください。"
-        "多く選ぶほど1つあたりに割ける分量が減ります。\n"
+        "一覧に無いパスは指定しないでください。\n"
+        "読んだ結果を見て足りなければ、もう一度 read_files を呼べます。\n"
+        "十分に読めたら、道具を呼ばずにその旨だけ答えてください。\n"
     )
 
 
-def select(entries: list[tuple[str, int]], question: str, ask) -> list[str]:
-    """読むべきファイルの相対パスを返す。決まらなければ空を返す。
+def _requested_paths(call: dict) -> list[str]:
+    """道具の呼び出しから相対パスの並びを取り出す。
 
-    壊れた JSON が返っても例外は投げない。止めるとツリーすら渡せず、利用者は
-    何も受け取れない。ツリーだけでもファイル構成は伝わる（fill_values が壊れた
-    JSON で止めず、ingest/query_translation.py が翻訳の失敗で原文に落ちるのと
-    同じ考え方）。
-
-    ask が投げる ChatError は投げ直す。LLM そのものが落ちたことは利用者に伝える
-    べき失敗であり、黙って「選択なし」にしてはいけない。
-
-    ここで MAX_PROMPT_CHARS 超過を測る実装にはしない。build_selection_prompt が
-    載せる一覧は tree_text により TREE_BUDGET_CHARS で頭打ちになっており、依頼文
-    (question) を除けばこのプロンプトの長さは構造的に上限内へ収まる。ここで
-    もう一度測っても、到達しない分岐が増えるだけである。
+    arguments は辞書で返るモデルと JSON 文字列で返すモデルがある。どちらでも
+    同じ結果になるようにする。読めない形なら空を返す。その周が空振りするだけで、
+    ループ自体は次へ進める。
     """
-    raw = ask(build_selection_prompt(entries, question))
-    try:
-        loaded = json.loads(raw)
-    except (TypeError, ValueError):
+    arguments = (call.get("function") or {}).get("arguments")
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except (TypeError, ValueError):
+            return []
+    if not isinstance(arguments, dict):
         return []
-    if not isinstance(loaded, list):
+    paths = arguments.get("paths")
+    if isinstance(paths, str):
+        # 1つだけ渡すときに配列にし忘れるモデルがある。
+        paths = [paths]
+    if not isinstance(paths, list):
         return []
-    known = {name for name, _ in entries}
-    return [name for name in loaded if isinstance(name, str) and name in known]
+    return [path for path in paths if isinstance(path, str)]
+
+
+def _tool_reply(files: list[tuple[str, str]], skipped: list[str]) -> str:
+    """読んだ結果をモデルへ返す文面。読めなかったものも伝える。
+
+    伝えないと、モデルは同じパスを何度も要求して周回を使い切る。
+    """
+    parts = [f"【{name}】\n{text}" for name, text in files]
+    if skipped:
+        parts.append("読めませんでした: " + "、".join(skipped))
+    return "\n\n".join(parts) or "読めたファイルはありません。"
+
+
+def gather(
+    root: Path,
+    entries: list[tuple[str, int]],
+    question: str,
+    ask_tools_call,
+    budget: int = PROJECT_BUDGET_CHARS,
+) -> tuple[list[tuple[str, str]], list[str]]:
+    """モデルに読むファイルを選ばせ、読み、足りなければもう一周する。
+
+    1回で選ばせる形では、読んでみて初めて要ると分かったファイルを取れない。
+    そのためにここだけをループにしてある。**書き込みもコマンド実行も渡さない。**
+
+    予算は周をまたいで1つである。周ごとに配ると3周で上限の3倍をプロンプトへ
+    積むことになり、ループの履歴にはファイル本文がそのまま残るため
+    MAX_PROMPT_CHARS を超える。
+
+    読み取りは read() をそのまま使う。道具の引数はモデルが書いた文字列なので
+    root の外を拒む検査は必須であり、その判定を2つに分けないためである。
+
+    モデルが1周目から道具を呼ばなければ、ファイルは0件で返る。呼び出し元は
+    ツリーだけをプロンプトへ載せることになり、ループを入れる前と同じ結果になる。
+    道具をうまく使えないモデルでも、現状より悪くはならない。
+
+    ask_tools_call が投げる ChatError は投げ直す。LLM そのものが落ちたことは
+    利用者に伝えるべき失敗である。
+    """
+    messages: list[dict] = [
+        {"role": "user", "content": _opening_message(entries, question)}
+    ]
+    files: list[tuple[str, str]] = []
+    skipped: list[str] = []
+    seen: set[str] = set()
+    remaining = budget
+
+    for _ in range(MAX_ROUNDS):
+        message = ask_tools_call(messages, [READ_FILES_TOOL])
+        calls = message.get("tool_calls") or []
+        if not calls:
+            break
+        messages.append(message)
+        for call in calls:
+            # 同じファイルを2度読むと、予算を二重に使ったうえで履歴も膨らむ。
+            wanted = [path for path in _requested_paths(call) if path not in seen]
+            seen.update(wanted)
+            read_files, read_skipped = read(root, wanted, remaining)
+            files.extend(read_files)
+            skipped.extend(read_skipped)
+            remaining -= sum(len(text) for _, text in read_files)
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_name": _TOOL_NAME,
+                    "content": _tool_reply(read_files, read_skipped),
+                }
+            )
+        if remaining <= 0:
+            break
+
+    return files, skipped
 
 
 def write_output(root: Path, file_name: str, data: bytes) -> Path:

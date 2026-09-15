@@ -4,6 +4,7 @@
 外を拒む必要がある）と、自分の出力先を走査から外すこと（外さないと2回目から
 自分が書いた設計書を根拠に設計書を書く）。
 """
+import json
 from pathlib import Path
 
 import pytest
@@ -178,70 +179,6 @@ def test_read_rejects_a_symlink_pointing_outside_the_root(tmp_path):
     assert skipped == ["symlink.md"]
 
 
-def test_select_returns_the_paths_the_model_chose():
-    entries = [("main.go", 120), ("README.md", 800)]
-
-    chosen = project.select(entries, "設計書を書いて", lambda prompt: '["main.go"]')
-
-    assert chosen == ["main.go"]
-
-
-def test_select_drops_paths_that_are_not_in_the_tree():
-    """一覧に無いパスを返させない。read 側でも弾くが、ここで落とせば
-    存在しないファイル名が「読まなかった」一覧に並ぶのを防げる。"""
-    entries = [("main.go", 120)]
-
-    chosen = project.select(entries, "依頼", lambda prompt: '["main.go", "/etc/passwd"]')
-
-    assert chosen == ["main.go"]
-
-
-def test_select_returns_nothing_when_the_json_is_broken():
-    """止めない。ツリーだけでもファイル構成は伝わる。
-
-    fill_values が壊れた JSON で止めず、query_translation が翻訳の失敗で原文に
-    落ちるのと同じ考え方である。
-    """
-    entries = [("main.go", 120)]
-
-    assert project.select(entries, "依頼", lambda prompt: "すみません、") == []
-
-
-def test_select_returns_nothing_when_the_json_is_not_a_list():
-    entries = [("main.go", 120)]
-
-    assert project.select(entries, "依頼", lambda prompt: '{"file": "main.go"}') == []
-
-
-def test_select_reraises_when_the_model_itself_fails():
-    """LLM が落ちたことは利用者に伝えるべき失敗である。黙って空を返さない。"""
-    def ask(prompt):
-        raise chat.ChatError("Ollama に繋がりません")
-
-    with pytest.raises(chat.ChatError):
-        project.select([("main.go", 120)], "依頼", ask)
-
-
-def test_select_puts_the_tree_and_the_request_in_the_prompt():
-    seen = {}
-
-    def ask(prompt):
-        seen["prompt"] = prompt
-        return "[]"
-
-    project.select([("main.go", 120)], "設計書を書いて", ask)
-
-    assert "main.go" in seen["prompt"]
-    assert "設計書を書いて" in seen["prompt"]
-
-
-def test_tree_text_shows_the_size_of_each_file():
-    text, omitted = project.tree_text([("main.go", 120)])
-
-    assert text == "- main.go (120 bytes)"
-    assert omitted == 0
-
-
 def test_tree_text_stays_unchanged_when_everything_fits_the_budget():
     """予算に収まる一覧は、末尾に何も足さない。"""
     entries = [(f"file{i}.go", 10) for i in range(5)]
@@ -292,3 +229,154 @@ def test_write_output_rejects_a_name_with_a_path_separator(tmp_path):
     （docgen/templates.py の _checked と同じ理由）。"""
     with pytest.raises(ValueError):
         project.write_output(tmp_path, "../逃げる.md", b"x")
+
+
+class _Model:
+    """あらかじめ決めた返答を順に返す。道具の呼び出しは (名前, 引数) で書く。"""
+
+    def __init__(self, replies):
+        self._replies = list(replies)
+        self.conversations = []
+
+    def __call__(self, messages, tools):
+        self.conversations.append(list(messages))
+        if not self._replies:
+            return {"role": "assistant", "content": "もう十分です"}
+        reply = self._replies.pop(0)
+        if isinstance(reply, Exception):
+            raise reply
+        if isinstance(reply, str):
+            return {"role": "assistant", "content": reply}
+        return {
+            "role": "assistant",
+            "tool_calls": [
+                {"function": {"name": "read_files", "arguments": arguments}}
+                for arguments in reply
+            ],
+        }
+
+
+def test_gather_reads_what_the_model_asked_for(tmp_path):
+    _write(tmp_path, "main.go", "package main")
+    entries = project.tree(tmp_path)
+    model = _Model([[{"paths": ["main.go"]}], "書けます"])
+
+    files, skipped = project.gather(tmp_path, entries, "設計書を書いて", model)
+
+    assert [name for name, _ in files] == ["main.go"]
+    assert skipped == []
+
+
+def test_gather_lets_the_model_ask_for_more_after_reading(tmp_path):
+    """1回で選ばせる形では、読んでみて初めて要ると分かったファイルを取れない。
+
+    これがこの機能の理由そのものである。
+    """
+    _write(tmp_path, "main.go", "package main")
+    _write(tmp_path, "store.go", "package main")
+    entries = project.tree(tmp_path)
+    model = _Model([[{"paths": ["main.go"]}], [{"paths": ["store.go"]}], "書けます"])
+
+    files, _ = project.gather(tmp_path, entries, "設計書を書いて", model)
+
+    assert [name for name, _ in files] == ["main.go", "store.go"]
+
+
+def test_gather_returns_nothing_when_the_model_never_asks(tmp_path):
+    """道具を呼ばないモデルでも止まらない。ツリーだけが渡る今の挙動に落ちる。"""
+    _write(tmp_path, "main.go", "package main")
+    entries = project.tree(tmp_path)
+
+    files, skipped = project.gather(tmp_path, entries, "依頼", _Model(["読みません"]))
+
+    assert files == []
+    assert skipped == []
+
+
+def test_gather_shares_one_budget_across_every_round(tmp_path):
+    """周ごとに予算を配ると、3周で上限の3倍をプロンプトへ積むことになる。
+
+    ループの履歴にはファイル本文がそのまま残るため、合計で抑えないと
+    プロンプト上限（28,000字）を超える。
+    """
+    _write(tmp_path, "大.md", "あ" * 80)
+    _write(tmp_path, "小.md", "い" * 80)
+    entries = project.tree(tmp_path)
+    model = _Model([[{"paths": ["大.md"]}], [{"paths": ["小.md"]}], "書けます"])
+
+    files, skipped = project.gather(tmp_path, entries, "依頼", model, budget=100)
+
+    assert [name for name, _ in files] == ["大.md"]
+    assert skipped == ["小.md"]
+
+
+def test_gather_stops_after_the_round_limit(tmp_path):
+    """道具を呼び続けるモデルで無限に回らない。"""
+    _write(tmp_path, "main.go", "package main")
+    _write(tmp_path, "a.go", "package main")
+    _write(tmp_path, "b.go", "package main")
+    _write(tmp_path, "c.go", "package main")
+    entries = project.tree(tmp_path)
+    model = _Model([[{"paths": [name]}] for name in ("main.go", "a.go", "b.go", "c.go")])
+
+    project.gather(tmp_path, entries, "依頼", model)
+
+    assert len(model.conversations) == project.MAX_ROUNDS
+
+
+def test_gather_refuses_a_path_outside_the_root(tmp_path):
+    """道具の引数はモデルが書いた文字列である。read の検査をそのまま通す。"""
+    _write(tmp_path, "project/main.go", "package main")
+    _write(tmp_path, "秘密.md", "外のファイル")
+    root = tmp_path / "project"
+    entries = project.tree(root)
+    model = _Model([[{"paths": ["../秘密.md"]}], "書けます"])
+
+    files, skipped = project.gather(root, entries, "依頼", model)
+
+    assert files == []
+    assert skipped == ["../秘密.md"]
+
+
+def test_gather_does_not_read_the_same_file_twice(tmp_path):
+    """同じファイルを2度読むと、予算を二重に使ったうえで履歴も膨らむ。"""
+    _write(tmp_path, "main.go", "package main")
+    entries = project.tree(tmp_path)
+    model = _Model([[{"paths": ["main.go"]}], [{"paths": ["main.go"]}], "書けます"])
+
+    files, _ = project.gather(tmp_path, entries, "依頼", model)
+
+    assert [name for name, _ in files] == ["main.go"]
+
+
+def test_gather_accepts_arguments_that_arrive_as_a_json_string(tmp_path):
+    """引数を辞書で返すモデルと文字列で返すモデルがある。"""
+    _write(tmp_path, "main.go", "package main")
+    entries = project.tree(tmp_path)
+    model = _Model([['{"paths": ["main.go"]}'], "書けます"])
+    model._replies[0] = [json.dumps({"paths": ["main.go"]})]
+
+    files, _ = project.gather(tmp_path, entries, "依頼", model)
+
+    assert [name for name, _ in files] == ["main.go"]
+
+
+def test_gather_reraises_when_the_model_itself_fails(tmp_path):
+    """LLM が落ちたことは利用者に伝えるべき失敗である。"""
+    _write(tmp_path, "main.go", "package main")
+    entries = project.tree(tmp_path)
+
+    with pytest.raises(chat.ChatError):
+        project.gather(tmp_path, entries, "依頼", _Model([chat.ChatError("落ちた")]))
+
+
+def test_the_opening_message_shows_the_listing_and_the_request(tmp_path):
+    _write(tmp_path, "main.go", "package main")
+    entries = project.tree(tmp_path)
+    model = _Model(["読みません"])
+
+    project.gather(tmp_path, entries, "設計書を書いて", model)
+
+    opening = model.conversations[0][0]["content"]
+    assert "main.go" in opening
+    assert "設計書を書いて" in opening
