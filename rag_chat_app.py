@@ -209,8 +209,8 @@ def upload_dialog(collection):
     ここでは利用者がダイアログを閉じる操作が必ず入る）。
     """
     st.caption(
-        "アップロードした資料は source/ には残りません。DBには残り、"
-        "全利用者の検索対象になります。不要になったら下の一覧から削除してください。"
+        "アップロードした資料はDBに残り、全利用者の検索対象になります。"
+        "不要になったら下の一覧から削除してください。"
     )
     uploaded = st.file_uploader(
         "取り込む資料",
@@ -833,7 +833,7 @@ def render_evidence(message):
     render_hits(message.get("hits"))
 
 
-st.set_page_config(page_title="社内文書RAGチャット")
+st.set_page_config(page_title="社内文書RAG")
 st.sidebar.title("設定")
 
 # ollama pull済みのモデルだけを並べる。自由入力にしていた頃は打ち間違いや
@@ -994,7 +994,7 @@ if st.sidebar.button("会話履歴をリセット"):
     st.session_state.messages = []
     st.rerun()
 
-st.title("社内文書RAGチャット")
+st.title("社内文書RAG")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
