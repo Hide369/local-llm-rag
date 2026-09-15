@@ -18,12 +18,16 @@ _TABLE_INSTRUCTION = (
 )
 
 
-def build_prompt(question, sources, attachments, tree_text: str, suffix: str) -> str:
-    """依頼・検索結果・添付・プロジェクトの一覧を1つのプロンプトにまとめる。
+def evidence_sections(sources, attachments, tree_text: str) -> str:
+    """検索結果・添付・プロジェクトの一覧を、プロンプトへ載せる節にまとめる。
 
     sources は (資料の種類の名前, ヒットの並び) の並びである。種類ごとに節を
     分けるのは、混ぜて並べるとどれが社内の決定事項でどれが外部ライブラリの
     説明なのかをモデルが区別できないためである（filling.build_prompt と同じ）。
+
+    文書（build_prompt）とソースコード（docgen/source_code.py）の両方がこれを
+    使う。材料の並べ方は同じであり、2つに分かれていると片方にだけ資料の種類が
+    足された状態が例外を出さずに成立する。
     """
     found = "\n\n".join(
         f"## {kind}の検索結果\n"
@@ -36,14 +40,21 @@ def build_prompt(question, sources, attachments, tree_text: str, suffix: str) ->
     ) or "（添付ファイルはありません）"
     listing = tree_text or "（プロジェクトフォルダは指定されていません）"
     return (
+        f"{found}\n\n"
+        f"## 資料の本文\n{attached}\n\n"
+        f"## プロジェクトのファイル一覧\n{listing}"
+    )
+
+
+def build_prompt(question, sources, attachments, tree_text: str, suffix: str) -> str:
+    """依頼・検索結果・添付・プロジェクトの一覧を1つのプロンプトにまとめる。"""
+    return (
         "あなたは社内文書を作成する担当者です。\n"
         "次の資料をもとに、依頼された文書を Markdown で書いてください。\n\n"
         "資料に書かれていないことは書かないでください。"
         "根拠が見つからない項目は、推測で埋めずに省いてください。\n\n"
         f"## 依頼\n{question}\n\n"
-        f"{found}\n\n"
-        f"## 資料の本文\n{attached}\n\n"
-        f"## プロジェクトのファイル一覧\n{listing}\n\n"
+        f"{evidence_sections(sources, attachments, tree_text)}\n\n"
         "## 書き方\n"
         "Markdown だけを返してください。説明や前置きは書かないでください。\n"
         "見出しは `#` `##` `###` を使ってください。\n"
