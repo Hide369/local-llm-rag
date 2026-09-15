@@ -16,6 +16,7 @@ import ingest.retrieval as retrieval
 from docgen import filling
 from docgen import markdown_document
 from docgen import mermaid
+from docgen import source_code
 from docgen import templates as templates_module
 from ingest import chat
 from ingest import reranker as reranker_module
@@ -451,6 +452,90 @@ def test_cowork_offers_generating_without_a_template(app, tmp_path):
 
     assert not app.exception
     assert NO_TEMPLATE in app.selectbox(key="template").options
+
+
+def test_cowork_offers_source_code_as_an_output_format(app, tmp_path):
+    """コードを書かせたい回に、文書の形式しか選べないと出口が無い。"""
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+        app.selectbox(key="template").set_value(NO_TEMPLATE).run()
+
+    assert not app.exception
+    options = app.selectbox(key="output_suffix").options
+    assert ".go" in options
+    assert ".cs" in options
+    assert ".md" in options
+
+
+def test_cowork_generates_go_source_without_the_markdown_path(app, tmp_path):
+    """.go はコードであって文書ではない。
+
+    Markdown の解析器へ通すと `//` コメントや `|` を含む行が見出しや表として
+    解釈される。ここでは経路が分かれていること（source_code 側が呼ばれ、
+    フェンスが剥がれ、参照コメントが先頭に付くこと）を確かめる。
+    """
+    built = {}
+    real_build = source_code.build
+
+    def spy_build(code, paths, citations, suffix):
+        data, warnings = real_build(code, paths, citations, suffix)
+        built["data"] = data
+        return data, warnings
+
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+        patch.object(chat, "ask_text", lambda *a, **k: "```go\npackage main\n```"),
+        patch.object(chat, "ask_json", lambda *a, **k: "{}"),
+        patch.object(source_code, "build", spy_build),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+        app.selectbox(key="template").set_value(NO_TEMPLATE).run()
+        app.selectbox(key="output_suffix").set_value(".go").run()
+        app.chat_input[0].set_value("Go で取り込み処理を書いて").run()
+
+    assert not app.exception
+    text = built["data"].decode("utf-8")
+    assert "```" not in text
+    assert text.rstrip().endswith("package main")
+    assert app.download_button
+
+
+def test_writing_source_into_the_project_warns_about_the_build(app, tmp_path):
+    """generated_docs/ は走査からは外してあるが、言語のツールチェーンは別の規則で動く。
+
+    文書と違い、ソースコードは置いた場所がビルドの対象になる。`go build ./...`
+    は generated_docs/ の .go も拾うため、package 宣言が食い違えばその時点で
+    ビルドが壊れる。黙って置くと、原因がこの機能だと気づくのが難しい。
+    """
+    folder = tmp_path / "myproject"
+    folder.mkdir()
+    (folder / "main.go").write_text("package main\n", encoding="utf-8")
+
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+        patch.object(chat, "ask_text", lambda *a, **k: "package main\n"),
+        patch.object(chat, "ask_json", lambda *a, **k: '["main.go"]'),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+        app.selectbox(key="template").set_value(NO_TEMPLATE).run()
+        app.selectbox(key="output_suffix").set_value(".go").run()
+        app.text_input(key="project_folder").set_value(str(folder)).run()
+        app.chat_input[0].set_value("Go で書いて").run()
+
+    assert not app.exception
+    written = list((folder / "generated_docs").glob("*.go"))
+    assert len(written) == 1
+    assert any("ビルド" in warning.value for warning in app.warning)
 
 
 def test_cowork_without_a_template_generates_markdown(app, tmp_path):

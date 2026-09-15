@@ -24,6 +24,7 @@ from docgen import filling as docgen_filling
 from docgen import freeform as docgen_freeform
 from docgen import markdown_document
 from docgen import project as docgen_project
+from docgen import source_code as docgen_source_code
 from docgen import templates as docgen_templates
 from ingest import (
     answer_text,
@@ -633,25 +634,40 @@ def _generate_freeform(suffix, question, attachments, use_internal, use_docs, pr
         return
     sources, texts, tree_text = collected
 
+    paths = [name for name, _ in texts]
+    citations = [hit.citation for _, hits in sources for hit in hits]
+    # ソースコードは Markdown の経路に乗せない。あちらは見出し・表・箇条書きへ
+    # 解析してから組む作りで、コードを通すと `//` コメントが見出しに、`|` を
+    # 含む行が表になる。コードに文書の構造は無いので中間表現を挟まない。
+    is_source = suffix.lower() in docgen_source_code.OUTPUT_SUFFIXES
+
     try:
-        markdown = docgen_freeform.write_markdown(
-            question, sources, texts, tree_text, suffix, ask_text
+        written_text = (
+            docgen_source_code.write_source(
+                question, sources, texts, tree_text, suffix, ask_text
+            )
+            if is_source
+            else docgen_freeform.write_markdown(
+                question, sources, texts, tree_text, suffix, ask_text
+            )
         )
     except (docgen_filling.PromptTooLongError, chat.ChatError) as error:
         st.session_state.cowork_result = _cowork_error(str(error))
         return
 
-    blocks = markdown_document.parse(markdown)
-    blocks.append(
-        markdown_document.References(
-            paths=[name for name, _ in texts],
-            citations=[hit.citation for _, hits in sources for hit in hits],
-        )
-    )
     undrawn = []
-    data, warnings = markdown_document.build(
-        blocks, suffix, lambda name, reason: undrawn.append((name, reason))
-    )
+    if is_source:
+        data, warnings = docgen_source_code.build(
+            written_text, paths, citations, suffix
+        )
+    else:
+        blocks = markdown_document.parse(written_text)
+        blocks.append(
+            markdown_document.References(paths=paths, citations=citations)
+        )
+        data, warnings = markdown_document.build(
+            blocks, suffix, lambda name, reason: undrawn.append((name, reason))
+        )
     result["warnings"].extend(warnings)
     if undrawn:
         result["warnings"].append(
@@ -680,6 +696,15 @@ def _generate_freeform(suffix, question, attachments, use_internal, use_docs, pr
             result["warnings"].append(f"フォルダへ書き出せませんでした: {error}")
         else:
             result["infos"].append(f"{written} に書き出しました。")
+            if is_source:
+                # 走査からは外してあるが、言語のツールチェーンは別の規則で動く。
+                # 文書と違い、ソースコードは置いた場所がビルドの対象になりうる。
+                result["warnings"].append(
+                    "ソースコードをプロジェクトの中に書き出しました。"
+                    "`go build ./...` や `dotnet build` のような全体ビルドは"
+                    "この位置のファイルを拾います。残さない場合は移動するか"
+                    "消してください。"
+                )
     result["sources"] = sources
     st.session_state.cowork_result = result
 
@@ -972,7 +997,10 @@ if mode == MODE_COWORK:
     if template_path is None:
         output_suffix = st.selectbox(
             "出力形式",
-            markdown_document.OUTPUT_SUFFIXES,
+            # 文書とソースコードで生成の経路が違うので、選択肢も2つの
+            # モジュールから合わせて作る。片方だけに足すと、選べるのに
+            # 生成できない拡張子が画面に出る。
+            markdown_document.OUTPUT_SUFFIXES + docgen_source_code.OUTPUT_SUFFIXES,
             key="output_suffix",
             disabled=st.session_state.generating,
         )
