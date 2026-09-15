@@ -44,6 +44,16 @@ def _no_network():
         yield
 
 
+def _notes(app):
+    """補足のメッセージ。
+
+    以前は st.warning の黄色枠で並べていたが、生成のたびに画面の大半が警告で
+    埋まるため、畳んだ expander の中へ移した。中身は st.write なので markdown
+    として出る。
+    """
+    return list(app.markdown)
+
+
 def _reads(*paths):
     """read_files を1周だけ呼び、2周目では呼ばないモデル。
 
@@ -123,7 +133,7 @@ def test_cowork_without_any_template_does_not_tell_the_user_to_register_one(app,
         app.segmented_control[0].set_value("Cowork").run()
 
     assert not app.exception
-    assert not any("雛形が登録されていません" in warning.value for warning in app.warning)
+    assert not any("雛形が登録されていません" in note.value for note in _notes(app))
 
 
 def test_cowork_offers_the_register_button_before_any_template_exists(app, tmp_path):
@@ -253,7 +263,7 @@ def test_cowork_lists_the_marks_it_could_not_fill(app, tmp_path):
         app.chat_input[0].set_value("第5回会議の議事録を作って").run()
 
     assert not app.exception
-    assert any("決定事項" in warning.value for warning in app.warning)
+    assert any("決定事項" in note.value for note in _notes(app))
 
 
 def test_cowork_uses_a_larger_context_size(app, tmp_path):
@@ -345,7 +355,7 @@ def test_cowork_tells_the_user_when_a_diagram_could_not_be_drawn(app, tmp_path):
         app.chat_input[0].set_value("設計書を作って").run()
 
     assert not app.exception
-    assert any("図にできなかった" in warning.value for warning in app.warning)
+    assert any("図にできなかった" in note.value for note in _notes(app))
 
 
 def test_cowork_reports_a_broken_template_instead_of_crashing(app, tmp_path):
@@ -566,7 +576,7 @@ def test_writing_source_into_the_project_warns_about_the_build(app, tmp_path):
     assert not app.exception
     written = list((folder / "generated_docs").glob("*.go"))
     assert len(written) == 1
-    assert any("ビルド" in warning.value for warning in app.warning)
+    assert any("ビルド" in note.value for note in _notes(app))
 
 
 def test_cowork_without_a_template_generates_markdown(app, tmp_path):
@@ -656,7 +666,7 @@ def test_cowork_warns_when_an_attachment_yields_no_text(app, tmp_path):
         app.chat_input[0].set_value("議事録を作って").run()
 
     assert not app.exception
-    assert any("本文を取り出せませんでした" in warning.value for warning in app.warning)
+    assert any("本文を取り出せませんでした" in note.value for note in _notes(app))
 
 
 def test_cowork_reads_the_project_folder_and_writes_the_result_into_it(app, tmp_path):
@@ -768,7 +778,7 @@ def test_a_folder_with_no_supported_file_names_the_formats_it_accepts(app, tmp_p
         app.chat_input[0].set_value("設計書を書いて").run()
 
     assert not app.exception
-    message = "\n".join(warning.value for warning in app.warning)
+    message = "\n".join(note.value for note in _notes(app))
     assert ".py" in message
     assert ".md" in message
 
@@ -851,7 +861,7 @@ def test_a_project_folder_too_big_for_the_listing_warns_with_the_exact_count(app
         app.chat_input[0].set_value("設計書を書いて").run()
 
     assert not app.exception
-    assert any(str(expected_omitted) in warning.value for warning in app.warning)
+    assert any(str(expected_omitted) in note.value for note in _notes(app))
 
 
 def test_a_project_folder_alone_is_enough_evidence(app, tmp_path):
@@ -901,7 +911,7 @@ def test_an_empty_project_folder_warns_but_still_generates(app, tmp_path):
 
     assert not app.exception
     assert not app.error
-    assert any("取り込める形式のファイル" in w.value for w in app.warning)
+    assert any("取り込める形式のファイル" in w.value for w in _notes(app))
     # 出力先としては使える。成果物はこのフォルダに残る。
     assert list((folder / "generated_docs").glob("*.md"))
 
@@ -954,6 +964,35 @@ def test_when_the_model_chooses_nothing_the_files_are_read_anyway(app, tmp_path)
     written = next((folder / "generated_docs").glob("*.md"))
     # 読んだ以上、参照したファイルに名前が出る。
     assert "main.go" in written.read_text(encoding="utf-8")
-    # 「選べませんでした」で終わる警告は出さない。何を読んだかまで言う。
-    for warning in app.warning:
-        assert "ファイル一覧だけを渡します" not in warning.value
+    # 「選べませんでした」で終わる補足は出さない。何を読んだかまで言う。
+    for note in _notes(app):
+        assert "ファイル一覧だけを渡します" not in note.value
+
+
+def test_the_supplementary_messages_are_not_yellow_boxes(app, tmp_path):
+    """生成のたびに黄色い枠が積み上がると、成果物が画面の下へ押し流される。
+
+    実測 2026-09-15: ingest/ を指定した回は「読まなかったファイル」だけで
+    28件・452字の枠になっていた。捨てはせず、畳んだ場所へ移す。
+    """
+    folder = tmp_path / "myproject"
+    folder.mkdir()
+    (folder / "index.ts").write_text("export const x = 1;\n", encoding="utf-8")
+
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+        patch.object(chat, "ask_text", lambda *a, **k: "# 設計書\n\n本文\n"),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+        app.selectbox(key="template").set_value(NO_TEMPLATE).run()
+        app.text_input(key="project_folder").set_value(str(folder)).run()
+        app.chat_input[0].set_value("設計書を書いて").run()
+
+    assert not app.exception
+    # 黄色い枠は1つも出さない。
+    assert not app.warning
+    # 中身は畳んだ場所に残る。捨てているわけではない。
+    assert any("取り込める形式のファイル" in note.value for note in _notes(app))

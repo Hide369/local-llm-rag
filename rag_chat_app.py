@@ -326,8 +326,16 @@ def render_cowork_result(result):
     """
     for message in result["errors"]:
         st.error(message)
-    for message in result["warnings"]:
-        st.warning(message)
+    if result["warnings"]:
+        # 黄色の枠で並べると、生成のたびに画面の大半が警告で埋まる。実測
+        # 2026-09-15: ingest/ を指定した回は「読まなかったファイル」だけで
+        # 28件・452字になり、成果物のダウンロードボタンが下へ押し流されていた。
+        #
+        # 捨てはしない。根拠が足りないまま書かれた文書を、根拠があるものとして
+        # 読ませないための情報である。畳んだ場所へ移し、件数だけを見出しに出す。
+        with st.expander(f"補足（{len(result['warnings'])}件）"):
+            for message in result["warnings"]:
+                st.write(message)
     for message in result["infos"]:
         st.info(message)
     download = result["download"]
