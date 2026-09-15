@@ -1098,47 +1098,23 @@ def _run_with_docs(app, tmp_path, *, docs_count, rerank_score, topic_reply,
     return "\n".join(note.value for note in _notes(app))
 
 
-def test_an_empty_docs_search_reports_the_query_it_used(app, tmp_path):
-    """「0件でした」だけでは、クエリが悪いのか床が切ったのか分からない。"""
-    notes = _run_with_docs(
-        app, tmp_path, docs_count=3, rerank_score=-5.0,
-        topic_reply='{"query": "Go io package"}',
-    )
+def test_an_empty_docs_search_adds_no_note(app, tmp_path):
+    """技術ドキュメントが0件でも補足には何も出さない。
 
-    assert "Go io package" in notes
+    以前はここに「〇〇の検索は0件でした」と、0件になった理由を切り分ける3行
+    （使ったクエリ・床を外したときの件数・最も近かった出典）を出していた。
+    3行は本番で原因を特定するために入れたもので、原因（クエリの語数。
+    ingest/query_translation.py の _topic_prompt）が分かった時点で役目を終えて
+    いる。残すと0件のたびにリランカーがもう1回走り、補足が3行伸びる。
 
-
-def test_an_empty_docs_search_reports_that_the_floor_cut_it(app, tmp_path):
-    """床を外すと残るなら、直すべきは床であってクエリではない。"""
-    notes = _run_with_docs(
-        app, tmp_path, docs_count=3, rerank_score=-5.0,
-        topic_reply='{"query": "Go io package"}',
-    )
-
-    assert "下限" in notes
-    assert "-5.00" in notes
-
-
-def test_an_empty_docs_search_says_when_nothing_matched_at_all(app, tmp_path):
-    """床を外しても0件なら、そのクエリでは資料に当たっていない。
-
-    資料はあるが検索が当たらない状況を作る。埋め込みを離し、語の重なりも
-    無いクエリにして、ベクトルもBM25も候補を出さない形にする。
+    何を根拠にしたかは成果物末尾の「参照したファイル」に出るため、0件だった
+    ことはそこから読める。必要になったら git から戻すこと（PR #63）。
     """
     notes = _run_with_docs(
-        app, tmp_path, docs_count=3, rerank_score=9.0,
-        topic_reply='{"query": "zzzz qqqq"}',
-        query_vector=(0.9, -0.9),
-    )
-
-    assert "外しても0件" in notes
-
-
-def test_an_empty_docs_search_names_a_failed_query_generation(app, tmp_path):
-    """依頼文がそのまま検索に使われていたら、原因はクエリ生成である。"""
-    notes = _run_with_docs(
         app, tmp_path, docs_count=3, rerank_score=-5.0,
-        topic_reply="壊れた返答",
+        topic_reply='{"query": "Go io package"}',
     )
 
-    assert "依頼文がそのまま" in notes
+    assert "の検索は0件でした" not in notes
+    assert "下限" not in notes
+    assert "Go io package" not in notes
