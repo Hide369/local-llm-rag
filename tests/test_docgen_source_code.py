@@ -121,8 +121,16 @@ def test_write_source_stops_before_calling_the_model_when_too_long():
 
     with pytest.raises(filling.PromptTooLongError):
         source_code.write_source("依頼", [], huge, "", ".go", lambda prompt: "package main")
-def test_python_and_powershell_are_offered_too():
-    assert set(source_code.OUTPUT_SUFFIXES) == {".go", ".cs", ".py", ".ps1"}
+def test_every_source_format_is_offered():
+    """画面のプルダウンはここから作る。足し忘れると選べない。"""
+    assert set(source_code.OUTPUT_SUFFIXES) == {
+        ".go",
+        ".cs",
+        ".py",
+        ".ps1",
+        ".ts",
+        ".tsx",
+    }
 
 
 def test_the_prompt_names_python_and_powershell():
@@ -144,3 +152,22 @@ def test_the_reference_comment_uses_the_marker_of_each_language():
     assert ps1.startswith("# 参照したファイル")
     assert "# - main.go" in py
     assert "// - main.go" in go
+
+
+def test_typescript_is_offered_for_output():
+    assert ".ts" in source_code.OUTPUT_SUFFIXES
+    assert ".tsx" in source_code.OUTPUT_SUFFIXES
+
+
+def test_the_prompt_names_typescript():
+    assert "TypeScript" in source_code.build_prompt("依頼", [], [], "", ".ts")
+    assert "TypeScript" in source_code.build_prompt("依頼", [], [], "", ".tsx")
+
+
+def test_typescript_uses_the_slash_comment():
+    """TypeScript の行コメントは // である。.tsx も同じ。"""
+    ts = source_code.build("export const a = 1;", ["api.ts"], [], ".ts")[0]
+    tsx = source_code.build("export const C = () => null;", ["api.ts"], [], ".tsx")[0]
+
+    assert ts.decode("utf-8").startswith("// 参照したファイル")
+    assert tsx.decode("utf-8").startswith("// 参照したファイル")

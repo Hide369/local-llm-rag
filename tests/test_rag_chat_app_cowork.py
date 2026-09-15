@@ -763,7 +763,7 @@ def test_a_folder_with_no_supported_file_names_the_formats_it_accepts(app, tmp_p
     """
     folder = tmp_path / "myproject"
     folder.mkdir()
-    (folder / "index.ts").write_text("export const x = 1;\n", encoding="utf-8")
+    (folder / "main.rb").write_text("puts 1", encoding="utf-8")
 
     with (
         patch.object(store_module, "open_store", _stub_store()),
@@ -977,7 +977,7 @@ def test_the_supplementary_messages_are_not_yellow_boxes(app, tmp_path):
     """
     folder = tmp_path / "myproject"
     folder.mkdir()
-    (folder / "index.ts").write_text("export const x = 1;\n", encoding="utf-8")
+    (folder / "main.rb").write_text("puts 1", encoding="utf-8")
 
     with (
         patch.object(store_module, "open_store", _stub_store()),

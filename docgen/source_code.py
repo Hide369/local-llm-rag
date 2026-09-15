@@ -26,6 +26,11 @@ _LANGUAGES = {
     ".cs": ("C#", "//"),
     ".py": ("Python", "#"),
     ".ps1": ("PowerShell", "#"),
+    # .tsx は JSX を含む TypeScript である。言語としては同じで、行コメントも
+    # 同じ // なので、名乗る言語名だけ分ける（モデルに JSX を書いてよいことを
+    # 伝えるため）。
+    ".ts": ("TypeScript", "//"),
+    ".tsx": ("TypeScript (JSX)", "//"),
 }
 
 OUTPUT_SUFFIXES = tuple(_LANGUAGES)

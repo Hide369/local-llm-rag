@@ -43,6 +43,8 @@ _CODE_SUFFIXES = (
     ".sh",
     ".py",
     ".ps1",
+    ".ts",
+    ".tsx",
     ".json",
     ".bat",
     ".yaml",
