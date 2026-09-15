@@ -28,6 +28,20 @@ def test_tree_lists_supported_files_with_their_size(tmp_path):
     ]
 
 
+def test_a_python_project_folder_is_not_empty(tmp_path):
+    """.py が対象から漏れていると、Python のプロジェクトを指定した回が
+    「取り込める形式のファイルがありません」で止まる。
+
+    実測 2026-09-15: このリポジトリの ingest/ docgen/ scripts/ はいずれも走査
+    結果が0件だった。中身はすべて .py である。Cowork でプロジェクトフォルダを
+    指定した利用者は、この画面のエラーだけを見て理由が分からなかった。
+    """
+    _write(tmp_path, "main.py", "def main():\n    pass\n")
+    _write(tmp_path, "run.ps1", "Write-Host 'start'\n")
+
+    assert [name for name, _ in project.tree(tmp_path)] == ["main.py", "run.ps1"]
+
+
 def test_tree_skips_unsupported_suffixes(tmp_path):
     """取り込めない形式を並べても、LLM が選べるものが増えるわけではない。"""
     _write(tmp_path, "main.go", "package main\n")

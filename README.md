@@ -48,7 +48,8 @@ Windowsサーバーへ配置し、別PCのブラウザーから利用する場�
 
 取り込みたい資料を `source/` に置く（`.pdf` / `.pptx` / `.docx` / `.xlsx` / `.md` / `.txt` /
 `.html` / `.htm` / `.png` / `.jpg` / `.jpeg` / `.drawio`、およびソースコードと設定
-ファイル `.go` / `.cs` / `.sh` / `.json` / `.bat` / `.yaml` / `.yml` / `.mod` / `.sum`）。
+ファイル `.go` / `.cs` / `.sh` / `.py` / `.ps1` / `.json` / `.bat` / `.yaml` / `.yml` /
+`.mod` / `.sum`）。
 サブフォルダに入れてもよい。`source/` 配下は再帰的に走査される。
 **サブフォルダに分類して置いてもよい**（例: `source/家電製品/*.md`）。再帰的に走査する。
 

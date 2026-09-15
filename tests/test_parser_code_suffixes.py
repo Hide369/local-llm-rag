@@ -11,7 +11,19 @@ from ingest.models import DOCUMENT
 from ingest.parsers import SUPPORTED_SUFFIXES, parse
 
 # go.mod / go.sum のように、拡張子だけでは形式が決まらないものも含む。
-CODE_SUFFIXES = (".go", ".cs", ".sh", ".json", ".bat", ".yaml", ".yml", ".mod", ".sum")
+CODE_SUFFIXES = (
+    ".go",
+    ".cs",
+    ".sh",
+    ".py",
+    ".ps1",
+    ".json",
+    ".bat",
+    ".yaml",
+    ".yml",
+    ".mod",
+    ".sum",
+)
 
 
 @pytest.mark.parametrize("suffix", CODE_SUFFIXES)
@@ -26,6 +38,8 @@ def test_each_code_suffix_is_registered(suffix):
         ("main.go", 'func main() {\n\tfmt.Println("起動")\n}\n'),
         ("Program.cs", "public class Program { }\n"),
         ("deploy.sh", '#!/bin/sh\nset -eu\necho "配備"\n'),
+        ("app.py", 'def main():\n    print("起動")\n'),
+        ("run.ps1", 'Write-Host "配備を開始します"\n'),
         ("config.json", '{\n  "timeout": 30\n}\n'),
         ("compose.yaml", "services:\n  app:\n    image: local\n"),
         ("compose.yml", "services:\n  db:\n    image: sqlite\n"),

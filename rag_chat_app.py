@@ -383,8 +383,13 @@ def _collect_project_files(folder, question, ask_json_call, result):
         st.session_state.cowork_result = _cowork_error(str(error))
         return None
     if not entries:
+        # 受け付ける形式を並べる。件数が0になる理由はほぼ拡張子の食い違いであり、
+        # 文言に出ていないと利用者には確かめる手段が画面上に無い（実測 2026-09-15:
+        # .py が対象から漏れていて Python のプロジェクトが全部0件になったとき、
+        # 原因が拡張子だと分かるまで時間がかかった）。
         st.session_state.cowork_result = _cowork_error(
             f"{root} に取り込める形式のファイルがありません。"
+            f"取り込めるのは {' '.join(sorted(SUPPORTED_SUFFIXES))} です。"
         )
         return None
     listing, omitted = docgen_project.tree_text(entries)
