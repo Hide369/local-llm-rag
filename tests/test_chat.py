@@ -162,3 +162,49 @@ def test_ask_text_leaves_temperature_to_the_model():
     payload = session.payloads[0]
     assert "temperature" not in payload["options"]
     assert payload["options"]["num_ctx"] == NUM_CTX
+
+
+def _message(payload):
+    return _FakeResponse({"message": payload})
+
+
+def test_ask_tools_sends_the_tools_and_returns_the_whole_message():
+    """tool_calls は message の中にあるので、content だけ取り出すと失われる。
+
+    ask_json / ask_text が文字列を返すのに対し、ここだけ辞書を返すのはこのため
+    である。呼び出し側は「道具を呼んだのか、答えたのか」を見分ける必要がある。
+    """
+    call = {"function": {"name": "read_files", "arguments": {"paths": ["main.go"]}}}
+    session = _FakeSession([_message({"role": "assistant", "tool_calls": [call]})])
+    tools = [{"type": "function", "function": {"name": "read_files"}}]
+
+    message = chat.ask_tools(
+        "gpt-oss:20b", [{"role": "user", "content": "読んで"}], tools, session=session
+    )
+
+    assert message["tool_calls"] == [call]
+    assert session.payloads[0]["tools"] == tools
+    assert session.payloads[0]["stream"] is False
+    assert "format" not in session.payloads[0]
+
+
+def test_ask_tools_passes_the_conversation_through_unchanged():
+    """道具の結果を積んだ履歴をそのまま投げ直せないと、2周目が成り立たない。"""
+    history = [
+        {"role": "user", "content": "読んで"},
+        {"role": "assistant", "tool_calls": [{"function": {"name": "read_files"}}]},
+        {"role": "tool", "tool_name": "read_files", "content": "package main"},
+    ]
+    session = _FakeSession([_message({"role": "assistant", "content": "要約です"})])
+
+    chat.ask_tools("gpt-oss:20b", history, [], session=session)
+
+    assert session.payloads[0]["messages"] == history
+
+
+def test_ask_tools_raises_chat_error_when_ollama_keeps_failing():
+    """道具が使えないモデルを指定した場合もここへ来る。黙って空を返さない。"""
+    session = _FakeSession([requests.RequestException("boom")] * 4)
+
+    with pytest.raises(chat.ChatError):
+        chat.ask_tools("gpt-oss:20b", [], [], session=session)

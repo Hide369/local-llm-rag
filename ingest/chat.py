@@ -113,6 +113,51 @@ def ask_text(model: str, prompt: str, session=None, num_ctx: int = NUM_CTX) -> s
             session.close()
 
 
+def ask_tools(model: str, messages, tools, session=None, num_ctx: int = NUM_CTX) -> dict:
+    """道具を渡して1ターン投げ、message を辞書のまま返す。
+
+    ask_json / ask_text が content の文字列を返すのに対し、ここは message 全体を
+    返す。モデルが道具を呼んだかどうかは `tool_calls` の有無で分かり、content
+    だけを取り出すとその情報が失われる。呼び出し側は両者を見分ける必要がある。
+
+    **ループはここに置かない。** このモジュールは道具の意味を知らない伝送路で
+    あり、道具を実行できるのはそれを定義した側だけである（プロジェクトフォルダ
+    を読む道具なら docgen/project.py）。ここが実行まで抱えると、道具が増える
+    たびにこのモジュールが太る。
+
+    messages は呼び出し側が組み立てたものをそのまま送る。道具の結果を積んだ
+    履歴を投げ直せないと2周目が成り立たないため、ここで作り替えない。
+    """
+    own_session = session is None
+    session = session or new_session()
+    try:
+        url = f"{OLLAMA_HOST}/api/chat"
+        payload = {
+            "model": model,
+            "messages": messages,
+            "tools": tools,
+            "stream": False,
+            "keep_alive": "30m",
+            "options": {"num_ctx": num_ctx},
+        }
+        last_error = None
+        for attempt in range(_MAX_ATTEMPTS):
+            try:
+                response = session.post(url, json=payload, timeout=_TIMEOUT)
+                response.raise_for_status()
+                return response.json()["message"]
+            except (requests.RequestException, KeyError, ValueError) as error:
+                last_error = error
+                if attempt < _MAX_ATTEMPTS - 1:
+                    time.sleep(2**attempt)
+        raise ChatError(
+            f"{OLLAMA_HOST} への生成リクエストが{_MAX_ATTEMPTS}回失敗しました: {last_error}"
+        )
+    finally:
+        if own_session:
+            session.close()
+
+
 def stream_chat(
     model: str, messages: list[dict], temperature: float, session=None
 ) -> Iterator[str]:
