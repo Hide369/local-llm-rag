@@ -377,50 +377,6 @@ def _has_no_evidence(use_internal, use_docs, attachments, project_folder):
     )
 
 
-def _why_the_docs_search_was_empty(documents, used_query, question, docs_index):
-    """技術ドキュメントが0件だった理由を切り分ける材料を返す。
-
-    「0件でした」だけでは、クエリが的外れだったのか、DOCS_RERANK_FLOOR が
-    切ったのか、そもそも資料が無いのかを画面から区別できない。実際その区別が
-    付かないまま、直したつもりの修正が本番で効いていないことが起きた
-    （2026-09-15）。
-
-    床を外してもう一度引くので、リランカーがもう1回（候補8件・1〜2秒）走る。
-    払うのは0件だった回だけである。
-
-    使ったクエリを出すのが要点の1つ。依頼文がそのまま出ていれば
-    query_translation.topic_query が失敗して原文へフォールバックしており、
-    直すべきはクエリ生成であって床ではない。
-    """
-    notes = [f"技術ドキュメントの検索に使ったクエリ: 「{used_query}」"]
-    if used_query.strip() == question.strip():
-        notes.append(
-            "依頼文がそのまま検索に使われています。"
-            "検索クエリの生成に失敗して原文へフォールバックした状態です。"
-        )
-    unfloored = search(
-        documents,
-        used_query,
-        index=docs_index,
-        rerank=rerank_callable,
-    )
-    if not unfloored:
-        notes.append(
-            f"採否の下限（{DOCS_RERANK_FLOOR}）を外しても0件でした。"
-            "このクエリでは資料に当たっていません。"
-        )
-        return notes
-    best = getattr(unfloored[0], "rerank_score", None)
-    notes.append(
-        f"採否の下限（{DOCS_RERANK_FLOOR}）を外すと{len(unfloored)}件あり、"
-        f"最高スコアは {best:.2f} でした。下限が切っています。"
-        if isinstance(best, (int, float))
-        else f"採否の下限（{DOCS_RERANK_FLOOR}）を外すと{len(unfloored)}件ありました。"
-    )
-    notes.append(f"最も近かったのは {unfloored[0].citation} です。")
-    return notes
-
-
 def _collect_project_files(folder, question, ask_tools_call, result):
     """フォルダを走査して本文を読む。読めなければ None を返す。
 
@@ -542,21 +498,18 @@ def _collect_evidence(question, attachments, use_internal, use_docs, project_fol
                 # 全件切られる（実測は query_translation.topic_query の docstring）。
                 # ここでは依頼から「調べるべき話題」を作らせる。
                 english = query_translation.topic_query(question, ask_json)
-                docs_index = get_index(documents, DOCS_DB_PATH, documents.revision())
-                hits = search(
-                    documents,
-                    english,
-                    index=docs_index,
-                    rerank=rerank_callable,
-                    rerank_floor=DOCS_RERANK_FLOOR,
-                )
-                if not hits:
-                    result["warnings"].extend(
-                        _why_the_docs_search_was_empty(
-                            documents, english, question, docs_index
-                        )
-                    )
-                sources.append((CORPUS_DOCS, hits))
+                sources.append((
+                    CORPUS_DOCS,
+                    search(
+                        documents,
+                        english,
+                        index=get_index(
+                            documents, DOCS_DB_PATH, documents.revision()
+                        ),
+                        rerank=rerank_callable,
+                        rerank_floor=DOCS_RERANK_FLOOR,
+                    ),
+                ))
     except embedder.EmbeddingError as error:
         st.session_state.cowork_result = _cowork_error(str(error))
         return None
@@ -667,9 +620,6 @@ def _generate_document(template_path, names, question, attachments, use_internal
             "図にできなかった欄: "
             + "、".join(f"{name}（{reason}）" for name, reason in undrawn)
         )
-    for name, hits in sources:
-        if not hits:
-            result["infos"].append(f"{name}の検索は0件でした。")
     stem = template_path.stem
     result["download"] = {
         "data": data,
@@ -749,9 +699,6 @@ def _generate_freeform(suffix, question, attachments, use_internal, use_docs, pr
             "図にできなかった箇所: "
             + "、".join(f"{name}（{reason}）" for name, reason in undrawn)
         )
-    for name, hits in sources:
-        if not hits:
-            result["infos"].append(f"{name}の検索は0件でした。")
     # 雛形が無いと拡張子だけでは名前を選べない。プロジェクトフォルダを
     # 指定した回はそのフォルダ名を使う（設計書8節）。
     stem = Path(project_folder.strip()).name if project_folder.strip() else "文書"
