@@ -44,6 +44,37 @@ def _no_network():
         yield
 
 
+def _reads(*paths):
+    """read_files を1周だけ呼び、2周目では呼ばないモデル。
+
+    project.gather のループを画面越しに動かすための最小の模擬である。
+    """
+    rounds = {"count": 0}
+
+    def ask_tools(model, messages, tools, session=None, num_ctx=None):
+        rounds["count"] += 1
+        if rounds["count"] == 1:
+            return {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "read_files",
+                            "arguments": {"paths": list(paths)},
+                        }
+                    }
+                ],
+            }
+        return {"role": "assistant", "content": "読めました"}
+
+    return ask_tools
+
+
+def _reads_nothing(model, messages, tools, session=None, num_ctx=None):
+    """道具を1度も呼ばないモデル。ツリーだけが渡る経路を通す。"""
+    return {"role": "assistant", "content": "読みません"}
+
+
 def _stub_store():
     def factory(*args, **kwargs):
         collection = open_real_store(":memory:")
@@ -523,7 +554,7 @@ def test_writing_source_into_the_project_warns_about_the_build(app, tmp_path):
         patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
         patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
         patch.object(chat, "ask_text", lambda *a, **k: "package main\n"),
-        patch.object(chat, "ask_json", lambda *a, **k: '["main.go"]'),
+        patch.object(chat, "ask_tools", _reads("main.go")),
     ):
         app.run()
         app.segmented_control[0].set_value("Cowork").run()
@@ -638,7 +669,7 @@ def test_cowork_reads_the_project_folder_and_writes_the_result_into_it(app, tmp_
         patch.object(store_module, "open_store", _stub_store()),
         patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
         patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
-        patch.object(chat, "ask_json", lambda *a, **k: '["main.go"]'),
+        patch.object(chat, "ask_tools", _reads("main.go")),
         patch.object(chat, "ask_text", lambda *a, **k: "# 設計書\n\n本文\n"),
     ):
         app.run()
@@ -663,7 +694,7 @@ def test_the_generated_document_lists_the_files_it_used(app, tmp_path):
         patch.object(store_module, "open_store", _stub_store()),
         patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
         patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
-        patch.object(chat, "ask_json", lambda *a, **k: '["main.go"]'),
+        patch.object(chat, "ask_tools", _reads("main.go")),
         patch.object(chat, "ask_text", lambda *a, **k: "# 設計書\n\n本文\n"),
     ):
         app.run()
@@ -760,14 +791,14 @@ def test_a_failed_selection_still_lets_the_template_path_see_the_listing(app, tm
         return real_fill_values(placeholders, question, sources, attachments, ask)
 
     def ask_json(model, prompt, session=None, num_ctx=None):
-        if "読むべきファイルのパスだけを" in prompt:
-            return "[]"
         return json.dumps({"会議名": "第5回"}, ensure_ascii=False)
 
     with (
         patch.object(store_module, "open_store", _stub_store()),
         patch.object(templates_module, "TEMPLATE_DIR", store),
         patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+        # 道具を1度も呼ばないモデル。読めたファイルは0件になり、ツリーだけが残る。
+        patch.object(chat, "ask_tools", _reads_nothing),
         patch.object(chat, "ask_json", ask_json),
         patch.object(filling, "fill_values", spy_fill_values),
     ):
@@ -805,7 +836,7 @@ def test_a_project_folder_too_big_for_the_listing_warns_with_the_exact_count(app
     with (
         patch.object(store_module, "open_store", _stub_store()),
         patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
-        patch.object(chat, "ask_json", lambda *a, **k: "[]"),
+        patch.object(chat, "ask_tools", _reads_nothing),
         patch.object(chat, "ask_text", lambda *a, **k: "# 設計書\n\n本文\n"),
     ):
         app.run()
@@ -828,7 +859,7 @@ def test_a_project_folder_alone_is_enough_evidence(app, tmp_path):
     with (
         patch.object(store_module, "open_store", _stub_store()),
         patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
-        patch.object(chat, "ask_json", lambda *a, **k: '["main.go"]'),
+        patch.object(chat, "ask_tools", _reads("main.go")),
         patch.object(chat, "ask_text", lambda *a, **k: "# 設計書\n\n本文\n"),
     ):
         app.run()

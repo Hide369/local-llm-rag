@@ -369,7 +369,7 @@ def _has_no_evidence(use_internal, use_docs, attachments, project_folder):
     )
 
 
-def _collect_project_files(folder, question, ask_json_call, result):
+def _collect_project_files(folder, question, ask_tools_call, result):
     """フォルダを走査して本文を読む。読めなければ None を返す。
 
     LLM を呼ぶ前にパスと対象件数を確かめるのは、呼んでから落ちると利用者が
@@ -402,15 +402,15 @@ def _collect_project_files(folder, question, ask_json_call, result):
             "モデルが選べるのは載った分だけです。"
         )
     try:
-        chosen = docgen_project.select(entries, question, ask_json_call)
+        files, skipped = docgen_project.gather(root, entries, question, ask_tools_call)
     except chat.ChatError as error:
         st.session_state.cowork_result = _cowork_error(str(error))
         return None
-    if not chosen:
+    if not files:
+        # 道具を1度も呼ばないモデルはここへ来る。止めずにツリーだけを渡す。
         result["warnings"].append(
             "読むファイルを選べませんでした。ファイル一覧だけを渡します。"
         )
-    files, skipped = docgen_project.read(root, chosen)
     if skipped:
         result["warnings"].append(
             "読まなかったファイル: " + "、".join(skipped)
@@ -441,8 +441,13 @@ def _collect_evidence(question, attachments, use_internal, use_docs, project_fol
     def ask_json_call(prompt):
         return chat.ask_json(model, prompt, num_ctx=docgen_filling.GENERATION_NUM_CTX)
 
+    def ask_tools_call(messages, tools):
+        return chat.ask_tools(
+            model, messages, tools, num_ctx=docgen_filling.GENERATION_NUM_CTX
+        )
+
     collected_project = _collect_project_files(
-        project_folder, question, ask_json_call, result
+        project_folder, question, ask_tools_call, result
     )
     if collected_project is None:
         return None
