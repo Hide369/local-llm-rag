@@ -309,8 +309,8 @@ BM25に床（フロア）を設けない判断（`ingest/retrieval.py`）が以�
 字下げ塊2,494個のうち671個（26.9%）が箇条書きの直後にある。
 社内資料の取り込みでは `--keep-code-blocks` を指定しない（結果が変わる）。
 
-`docs_store.sqlite3` は追跡しない（273MB、`docs_source/` からいつでも作り直せる）。
-**`docs_source/`（26MB）は 2026-09-13 に追跡対象にした。** 外部通信が要るのは
+`docs_store.sqlite3` は追跡しない（340MB、`docs_source/` からいつでも作り直せる）。
+**`docs_source/`（27MB）は 2026-09-13 に追跡対象にした。** 外部通信が要るのは
 `fetch_docs` だけなので、これを持ち込めば移植先は `ingest_source` だけで済み、
 オフラインでも取り込める（触る外部は `OLLAMA_HOST` のみ）。
 
