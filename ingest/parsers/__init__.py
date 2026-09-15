@@ -45,6 +45,8 @@ _CODE_SUFFIXES = (
     ".ps1",
     ".ts",
     ".tsx",
+    ".js",
+    ".vue",
     ".json",
     ".bat",
     ".yaml",

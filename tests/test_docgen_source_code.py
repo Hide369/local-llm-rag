@@ -130,6 +130,8 @@ def test_every_source_format_is_offered():
         ".ps1",
         ".ts",
         ".tsx",
+        ".js",
+        ".vue",
     }
 
 
@@ -171,3 +173,36 @@ def test_typescript_uses_the_slash_comment():
 
     assert ts.decode("utf-8").startswith("// 参照したファイル")
     assert tsx.decode("utf-8").startswith("// 参照したファイル")
+
+
+def test_javascript_and_vue_are_offered():
+    assert ".js" in source_code.OUTPUT_SUFFIXES
+    assert ".vue" in source_code.OUTPUT_SUFFIXES
+
+
+def test_the_prompt_names_javascript_and_vue():
+    assert "JavaScript" in source_code.build_prompt("依頼", [], [], "", ".js")
+    assert "Vue" in source_code.build_prompt("依頼", [], [], "", ".vue")
+
+
+def test_javascript_uses_the_slash_comment():
+    text = source_code.build("export const a = 1;", ["api.ts"], [], ".js")[0]
+
+    assert text.decode("utf-8").startswith("// 参照したファイル")
+
+
+def test_vue_wraps_the_references_in_an_html_comment():
+    """.vue の先頭に // を書くと、<template> にも <script> にも属さない
+    裸のテキストになる。単一ファイルコンポーネントのコメントは <!-- --> である。
+    """
+    body = "<template><div>カード</div></template>"
+    text = source_code.build(body, ["api.ts", "Card.tsx"], ["設計書.docx p.2"], ".vue")[0]
+    decoded = text.decode("utf-8")
+
+    assert decoded.startswith("<!--")
+    assert "参照したファイル" in decoded
+    assert "- api.ts" in decoded
+    assert "- 設計書.docx p.2" in decoded
+    assert "//" not in decoded.split("-->")[0]
+    # 閉じたあとに本文が続く。
+    assert decoded.split("-->")[1].strip() == body
