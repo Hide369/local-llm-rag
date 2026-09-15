@@ -680,6 +680,7 @@ def test_the_real_config_file_loads():
         "go-spec",
         "csharp-spec",
         "python-spec",
+        "typescript",
         "mermaid",
         "markdown",
     ]

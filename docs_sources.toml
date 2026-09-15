@@ -162,6 +162,30 @@ section_level = 4
 title = "The Python Language Reference"
 version = "3.14"
 
+# TypeScript の公式ドキュメント。typescriptlang.org の Docs と TSConfig Reference を
+# 1本にまとめた md を人が用意したものを写す。go-spec / csharp-spec / python-spec が
+# 「解説はあるが仕様の md が無い」ために local なのに対し、こちらは解説そのものが
+# local である点だけが違う。取り込み側から見れば同じ経路である。
+#
+# section_level = 3 は実測で決めた（2026-09-16、コードフェンスの中を除いて数えた
+# 見出し H1:1 / H2:136 / H3:1,099 / H4:546）。既定の2では境界が H2 の136個だけに
+# なり、137節・最大133,335バイト・中央値11,770バイトになる。H3 まで下ろすと
+# 1,236節・中央値988バイトで、質問の単位と揃う。H4 まで下ろしても最大は
+# 53,838バイトのまま変わらず中央値が833になるだけなので、3で止める。
+#
+# title は要らない。原本の H1 は資料の題名1個だけである。`# Run a compile based on`
+# のような行が8つあるが、すべてコードフェンスの中のシェルコメントで、normalise も
+# parse_md も scan_fences でフェンスの中を見ない。
+#
+# version は原本が言及する最も新しい版である。原本に版の記載は無く、
+# 「TypeScript 6.0」の記述が31か所あるのを根拠にした。
+[[source]]
+name = "typescript"
+kind = "local"
+path = "docs/pg_data/typescript-documentation-unified.md"
+section_level = 3
+version = "6.0"
+
 [[source]]
 name = "mermaid"
 kind = "github"
