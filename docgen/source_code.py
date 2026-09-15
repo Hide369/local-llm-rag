@@ -15,12 +15,19 @@ import re
 from docgen.filling import MAX_PROMPT_CHARS, PromptTooLongError
 from docgen.freeform import evidence_sections
 
-# 拡張子から（プロンプトで名乗る言語名, 行コメントの記号）へ。
+# 拡張子から（プロンプトで名乗る言語名, コメントの書き方）へ。
 #
 # 言語名が要るのは「コードを書け」だけでは何の言語か決まらないため。
-# コメント記号を言語ごとに持つのは、参照したファイルの一覧を先頭に置くためで
-# ある。Go と C# は `//`、Python と PowerShell は `#` で、取り違えると保存した
-# ファイルが構文エラーでそのままでは動かない。
+# コメントの書き方を言語ごとに持つのは、参照したファイルの一覧を先頭に置く
+# ためである。取り違えると保存したファイルが構文エラーでそのままでは動かない。
+#
+# 書き方は2種類ある。**文字列なら行コメントの記号**で、各行の頭に付ける
+# （Go と C# は `//`、Python と PowerShell は `#`）。**2要素の組ならブロック
+# コメントの開きと閉じ**で、一覧全体を囲む。
+#
+# .vue がブロックなのは、単一ファイルコンポーネントの先頭に `//` を書くと
+# `<template>` にも `<script>` にも属さない裸のテキストになるためである。
+# HTML のコメントで囲むのが唯一正しい書き方になる。
 _LANGUAGES = {
     ".go": ("Go", "//"),
     ".cs": ("C#", "//"),
@@ -31,6 +38,8 @@ _LANGUAGES = {
     # 伝えるため）。
     ".ts": ("TypeScript", "//"),
     ".tsx": ("TypeScript (JSX)", "//"),
+    ".js": ("JavaScript", "//"),
+    ".vue": ("Vue（単一ファイルコンポーネント）", ("<!--", "-->")),
 }
 
 OUTPUT_SUFFIXES = tuple(_LANGUAGES)
@@ -91,6 +100,25 @@ def strip_fence(text: str) -> str:
     return (match.group("source") if match else text).strip()
 
 
+def _reference_header(names, comment) -> str:
+    """参照したファイルの一覧を、その言語のコメントとして組む。
+
+    comment が文字列なら行コメント、2要素の組ならブロックコメントである
+    （_LANGUAGES のコメント参照）。ブロック側は一覧全体を1つで囲む。
+    """
+    if isinstance(comment, tuple):
+        opening, closing = comment
+        return "\n".join(
+            [opening, REFERENCES_HEADING]
+            + [f"- {name}" for name in names]
+            + [closing]
+        )
+    return "\n".join(
+        [f"{comment} {REFERENCES_HEADING}"]
+        + [f"{comment} - {name}" for name in names]
+    )
+
+
 def build(code: str, paths, citations, suffix: str) -> tuple[bytes, list[str]]:
     """コードの先頭に参照したファイルのコメントを付け、バイト列で返す。
 
@@ -106,11 +134,7 @@ def build(code: str, paths, citations, suffix: str) -> tuple[bytes, list[str]]:
     if not names:
         # 見出しだけが先頭に残っても読む人には何も伝わらない。
         return body.encode("utf-8"), []
-    header = "\n".join(
-        [f"{comment} {REFERENCES_HEADING}"]
-        + [f"{comment} - {name}" for name in names]
-    )
-    return f"{header}\n\n{body}".encode("utf-8"), []
+    return f"{_reference_header(names, comment)}\n\n{body}".encode("utf-8"), []
 
 
 def write_source(
