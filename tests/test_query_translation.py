@@ -1,5 +1,6 @@
 import json
 
+from ingest import query_translation
 from ingest.query_translation import translate_query
 
 
@@ -96,3 +97,52 @@ def test_an_empty_original_query_is_returned_without_calling_ask():
 
     assert translate_query("", ask) == ""
     assert calls == []
+
+
+def test_topic_query_asks_what_to_look_up_not_what_to_write():
+    """依頼文をそのまま訳すと、リランカーが「答えていない文章」として切り捨てる。
+
+    実測 2026-09-15（docs_store.sqlite3 54,054チャンク、bge-reranker-v2-m3）:
+      "How do goroutines work in Go?"      最高 2.87  → 床1.0を通る
+      "Write an ingestion routine in Go"   最高 -3.82 → 全件却下
+    話題は合っていた（日本語の依頼での1位は go-spec.md）。落としていたのは形である。
+    """
+    seen = {}
+
+    def ask(prompt):
+        seen["prompt"] = prompt
+        return '{"query": "Go io package reading files"}'
+
+    result = query_translation.topic_query("Go で取り込み処理を書いて", ask)
+
+    assert result == "Go io package reading files"
+    assert "Go で取り込み処理を書いて" in seen["prompt"]
+    # 「書く対象」ではなく「調べる話題」を求めていることが文面に出ていること。
+    assert "調べ" in seen["prompt"]
+
+
+def test_topic_query_falls_back_to_the_request_when_the_reply_is_broken():
+    """止めない。検索の的が外れるだけで、生成そのものは続ける
+    （translate_query と同じ考え方）。"""
+    request = "Go で取り込み処理を書いて"
+
+    assert query_translation.topic_query(request, lambda p: "すみません") == request
+    assert query_translation.topic_query(request, lambda p: '["a"]') == request
+    assert query_translation.topic_query(request, lambda p: '{"query": 1}') == request
+    assert query_translation.topic_query(request, lambda p: '{"query": "  "}') == request
+
+
+def test_topic_query_falls_back_when_the_model_writes_an_essay():
+    """短いクエリの指示を無視して説明文を書いた返答は使わない。"""
+    request = "Go で取り込み処理を書いて"
+    long_reply = '{"query": "' + "a" * 300 + '"}'
+
+    assert query_translation.topic_query(request, lambda p: long_reply) == request
+
+
+def test_topic_query_falls_back_when_the_model_itself_fails():
+    """LLM が落ちても検索まで巻き添えにしない。"""
+    def ask(prompt):
+        raise RuntimeError("落ちた")
+
+    assert query_translation.topic_query("依頼", ask) == "依頼"
