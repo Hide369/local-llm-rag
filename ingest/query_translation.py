@@ -69,6 +69,34 @@ def _prompt(query: str) -> str:
     )
 
 
+def _topic_prompt(request: str) -> str:
+    """依頼から「調べるべき話題」を引き出すプロンプト。
+
+    translate_query の文面を流用しない。あちらは「訳せ」と言っており、依頼を
+    渡せば依頼のまま訳される。ここで要るのは訳ではなく、何を調べるかである。
+
+    「write / create のような語を入れるな」と明示するのは、実測でその語が
+    残ったクエリがリランカーに切られていたためである（topic_query の docstring
+    に数字がある）。言語名・ライブラリ名・API名は残させる。translate_query の
+    コメントにあるとおり、API名を引き出せるかどうかが検索精度を左右する。
+    """
+    return (
+        "あなたは技術ドキュメント検索のためのクエリ作成者です。\n"
+        "次は、ソースコードや文書を書く依頼です。この依頼に答えるために"
+        "技術ドキュメントで何を調べるべきかを考え、英語の検索クエリを"
+        "1つ作ってください。\n"
+        "依頼文を翻訳しないでください。調べる話題を短いキーワードの並びで"
+        "表してください。\n"
+        "write, create, implement のような「書く」ことを指す語は"
+        "入れないでください。\n"
+        "言語名・ライブラリ名・関数名などのAPI名が推測できる場合は、"
+        "必ず含めてください。\n"
+        '次のJSON形式だけを返してください。説明や前置きは書かないでください。\n'
+        '{"query": "検索クエリ"}\n\n'
+        f"依頼: {request}"
+    )
+
+
 def translate_query(query: str, ask) -> str:
     """検索クエリを英語へ翻訳する。失敗時は原文の query をそのまま返す。
 
@@ -80,23 +108,75 @@ def translate_query(query: str, ask) -> str:
     同じ考え方だが、こちらは利用者に伝えるべき失敗ではないため
     Extraction のような通知用の型は持たない）。
     """
-    if not query or not query.strip():
-        return query
+    return _ask_for_query(_prompt(query), query, ask)
+
+
+def _ask_for_query(prompt: str, fallback: str, ask) -> str:
+    """LLM に検索クエリを1つ作らせる。使えない返答なら fallback を返す。
+
+    translate_query と topic_query が共有する。プロンプトだけが違い、返答の
+    検証は同じものでなければならない。2つに分けると、片方にだけ検証が足された
+    状態が例外を出さずに成立する。
+    """
+    if not fallback or not fallback.strip():
+        return fallback
     try:
-        raw = ask(_prompt(query))
+        raw = ask(prompt)
     except Exception:  # LLM側の事情で検索まで巻き添えにしない
-        return query
+        return fallback
     try:
         loaded = json.loads(raw)
     except (TypeError, ValueError):
-        return query
+        return fallback
     if not isinstance(loaded, dict):
-        return query
-    translated = loaded.get("query")
-    if not isinstance(translated, str):
-        return query
+        return fallback
+    made = loaded.get("query")
+    if not isinstance(made, str):
+        return fallback
     # 前後の引用符（モデルがJSON文字列の中でさらに引用符を書いた場合）を落とす。
-    translated = translated.strip().strip('"').strip("'").strip()
-    if not translated or len(translated) > _MAX_QUERY_LENGTH:
-        return query
-    return translated
+    made = made.strip().strip('"').strip("'").strip()
+    if not made or len(made) > _MAX_QUERY_LENGTH:
+        return fallback
+    return made
+
+
+def topic_query(request: str, ask) -> str:
+    """生成の依頼文から、技術ドキュメントで調べるべき話題の検索クエリを作る。
+
+    translate_query は「検索クエリを英語にする」ものであり、入力が質問なら
+    質問のまま訳す。Cowork の入力は「〜を書いて」という依頼であり、訳しても
+    依頼のまま届く。リランカーは「この文章はこの問いに答えているか」を測るので、
+    依頼に対しては話題が合っていても低いスコアしか付けない。
+
+    実測 2026-09-15（docs_store.sqlite3 54,054チャンク、bge-reranker-v2-m3、
+    DOCS_RERANK_FLOOR = 1.0）:
+        "How do goroutines work in Go?"      最高  2.87  → 床を通り3件残る
+        "Go で取り込み処理を書いて"             最高 -2.01  → 全件却下
+        "Write an ingestion routine in Go"   最高 -3.82  → 全件却下
+        "Go file reading and io package"     最高  2.76  → 通る
+    日本語の依頼での1位は go-spec.md であり、**話題は当たっていた**。落として
+    いたのは形である。
+
+    床を下げる案は採れない。同じ実測で、関連する依頼の最低(-3.82)が無関係な
+    依頼の最高(-0.79)を下回っており、どこに床を引いても分離できない。
+
+    この関数を通した後の実測（同じ日・同じ条件、クエリ生成は qwen2.5:7b-instruct。
+    **本番の gpt-oss:20b では測れていない**——手元の Ollama に無いため）:
+        依頼                              作られたクエリ                最高   床通過
+        Go で JSON を解析する…            Go parse JSON library        1.76    1件
+        Go で取り込み処理を…              Go import processing         1.26    1件
+        C# で CSV を読む…                 C# read CSV class           -1.61    0件
+        Python で asyncio を…             Python asyncio example       4.00    4件
+        経費精算の規程について…            expense reimbursement …     -1.27    0件
+        第5回 AI活用検討会の議事録…        5th AI … meeting minutes    -3.09    0件
+    関連4問中3問が床を通り（修正前は Go の取り込みが -3.82 で全滅）、無関係2問は
+    どちらも0件のままである。
+
+    C# の CSV だけ 0件 が残る。CSV の読み書きは言語仕様ではなくクラスライブラリの
+    話題であり、このコーパス（csharp は language-reference と spec）に無い可能性が
+    高い。その場合の0件は正しい結果である。コーパスを足したら測り直すこと。
+
+    失敗時に request をそのまま返すのは translate_query と同じ判断である。
+    検索の的が外れるだけに留め、生成そのものは止めない。
+    """
+    return _ask_for_query(_topic_prompt(request), request, ask)
