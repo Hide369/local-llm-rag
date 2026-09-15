@@ -416,7 +416,9 @@ def _collect_project_files(folder, question, ask_tools_call, result):
             "モデルが選べるのは載った分だけです。"
         )
     try:
-        files, skipped = docgen_project.gather(root, entries, question, ask_tools_call)
+        files, skipped, truncated = docgen_project.gather(
+            root, entries, question, ask_tools_call
+        )
     except chat.ChatError as error:
         st.session_state.cowork_result = _cowork_error(str(error))
         return None
@@ -424,6 +426,13 @@ def _collect_project_files(folder, question, ask_tools_call, result):
         # 道具を1度も呼ばないモデルはここへ来る。止めずにツリーだけを渡す。
         result["warnings"].append(
             "読むファイルを選べませんでした。ファイル一覧だけを渡します。"
+        )
+    if truncated:
+        # 成果物末尾の「参照したファイル」には名前しか出ない。そこに並んだ
+        # どれが全文でどれが先頭だけなのかは、ここで言うしかない。
+        result["warnings"].append(
+            "先頭だけ読んだファイル（大きすぎて全文は入りません）: "
+            + "、".join(truncated)
         )
     if skipped:
         result["warnings"].append(

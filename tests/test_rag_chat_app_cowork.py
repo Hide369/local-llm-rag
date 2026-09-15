@@ -1118,3 +1118,32 @@ def test_an_empty_docs_search_adds_no_note(app, tmp_path):
     assert "の検索は0件でした" not in notes
     assert "下限" not in notes
     assert "Go io package" not in notes
+
+
+def test_it_says_which_files_it_read_only_the_top_of(app, tmp_path):
+    """黙って切ると、根拠の半分しか無い文書を全部踏まえたものとして読む。
+
+    成果物末尾の「参照したファイル」には名前しか出ない。そこに並んでいる
+    ファイルのどれが全文でどれが先頭だけなのかは、ここで言うしかない。
+    """
+    folder = tmp_path / "myproject"
+    folder.mkdir()
+    (folder / "大きい.md").write_text("あ" * 40000, encoding="utf-8")
+
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+        patch.object(chat, "ask_text", lambda *a, **k: "# 設計書\n\n本文\n"),
+        patch.object(chat, "ask_tools", _reads("大きい.md")),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+        app.selectbox(key="template").set_value(NO_TEMPLATE).run()
+        app.text_input(key="project_folder").set_value(str(folder)).run()
+        app.chat_input[0].set_value("設計書を書いて").run()
+
+    assert not app.exception
+    message = "\n".join(note.value for note in _notes(app))
+    assert "先頭だけ読んだファイル" in message
+    assert "大きい.md" in message

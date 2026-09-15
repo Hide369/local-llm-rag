@@ -90,7 +90,7 @@ def test_read_returns_the_body_of_each_selected_file(tmp_path):
     _write(tmp_path, "main.go", "package main\n")
     _write(tmp_path, "docs/設計.md", "# 設計\n\n本文\n")
 
-    files, skipped = project.read(tmp_path, ["main.go", "docs/設計.md"])
+    files, skipped, _ = project.read(tmp_path, ["main.go", "docs/設計.md"])
 
     assert skipped == []
     assert files[0][0] == "main.go"
@@ -104,7 +104,7 @@ def test_read_stops_at_the_budget_and_names_what_it_dropped(tmp_path):
     _write(tmp_path, "大.md", "あ" * 200)
     _write(tmp_path, "小.md", "い" * 10)
 
-    files, skipped = project.read(tmp_path, ["大.md", "小.md"], budget=100)
+    files, skipped, _ = project.read(tmp_path, ["大.md", "小.md"], budget=100)
 
     assert [name for name, _ in files] == ["小.md"]
     assert skipped == ["大.md"]
@@ -119,7 +119,7 @@ def test_read_rejects_a_path_outside_the_root(tmp_path):
     _write(tmp_path, "project/main.go", "package main\n")
     _write(tmp_path, "秘密.md", "外のファイル\n")
 
-    files, skipped = project.read(tmp_path / "project", ["../秘密.md"])
+    files, skipped, _ = project.read(tmp_path / "project", ["../秘密.md"])
 
     assert files == []
     assert skipped == ["../秘密.md"]
@@ -130,7 +130,7 @@ def test_read_rejects_an_absolute_path(tmp_path):
     outside = tmp_path / "秘密.md"
     outside.write_text("外のファイル\n", encoding="utf-8")
 
-    files, skipped = project.read(tmp_path / "project", [str(outside)])
+    files, skipped, _ = project.read(tmp_path / "project", [str(outside)])
 
     assert files == []
     assert skipped == [str(outside)]
@@ -141,7 +141,7 @@ def test_read_skips_a_file_it_cannot_open_and_keeps_going(tmp_path):
     _write(tmp_path, "main.go", "package main\n")
     (tmp_path / "壊れた.xlsx").write_bytes(b"not a workbook")
 
-    files, skipped = project.read(tmp_path, ["壊れた.xlsx", "main.go"])
+    files, skipped, _ = project.read(tmp_path, ["壊れた.xlsx", "main.go"])
 
     assert [name for name, _ in files] == ["main.go"]
     assert skipped == ["壊れた.xlsx"]
@@ -151,7 +151,7 @@ def test_read_skips_a_missing_path(tmp_path):
     """LLM は一覧に無いパスを返すことがある。"""
     _write(tmp_path, "main.go", "package main\n")
 
-    files, skipped = project.read(tmp_path, ["存在しない.md"])
+    files, skipped, _ = project.read(tmp_path, ["存在しない.md"])
 
     assert files == []
     assert skipped == ["存在しない.md"]
@@ -173,7 +173,7 @@ def test_read_rejects_a_symlink_pointing_outside_the_root(tmp_path):
     except OSError as e:
         pytest.skip(f"シンボリックリンク作成不可: {e}")
 
-    files, skipped = project.read(tmp_path, ["symlink.md"])
+    files, skipped, _ = project.read(tmp_path, ["symlink.md"])
 
     assert files == []
     assert skipped == ["symlink.md"]
@@ -271,7 +271,7 @@ def test_gather_reads_what_the_model_asked_for(tmp_path):
     entries = project.tree(tmp_path)
     model = _Model([[{"paths": ["main.go"]}], "書けます"])
 
-    files, skipped = project.gather(tmp_path, entries, "設計書を書いて", model, budget=200)
+    files, skipped, _ = project.gather(tmp_path, entries, "設計書を書いて", model, budget=200)
 
     assert [name for name, _ in files] == ["main.go"]
     assert skipped == []
@@ -288,7 +288,7 @@ def test_gather_lets_the_model_ask_for_more_after_reading(tmp_path):
     entries = project.tree(tmp_path)
     model = _Model([[{"paths": ["main.go"]}], [{"paths": ["store.go"]}], "書けます"])
 
-    files, _ = project.gather(tmp_path, entries, "設計書を書いて", model, budget=200)
+    files, _, _ = project.gather(tmp_path, entries, "設計書を書いて", model, budget=200)
 
     assert [name for name, _ in files] == ["main.go", "store.go"]
 
@@ -303,7 +303,7 @@ def test_gather_does_not_stop_when_the_model_never_asks(tmp_path):
     _fill(tmp_path)
     entries = project.tree(tmp_path)
 
-    files, _ = project.gather(tmp_path, entries, "依頼", _Model(["読みません"]), budget=200)
+    files, _, _ = project.gather(tmp_path, entries, "依頼", _Model(["読みません"]), budget=200)
 
     assert "main.go" in [name for name, _ in files]
 
@@ -319,7 +319,7 @@ def test_gather_shares_one_budget_across_every_round(tmp_path):
     entries = project.tree(tmp_path)
     model = _Model([[{"paths": ["大.md"]}], [{"paths": ["小.md"]}], "書けます"])
 
-    files, skipped = project.gather(tmp_path, entries, "依頼", model, budget=100)
+    files, skipped, _ = project.gather(tmp_path, entries, "依頼", model, budget=100)
 
     assert [name for name, _ in files] == ["大.md"]
     assert skipped == ["小.md"]
@@ -354,7 +354,7 @@ def test_gather_refuses_a_path_outside_the_root(tmp_path):
     entries = project.tree(root)
     model = _Model([[{"paths": ["../秘密.md"]}], "書けます"])
 
-    files, skipped = project.gather(root, entries, "依頼", model, budget=200)
+    files, skipped, _ = project.gather(root, entries, "依頼", model, budget=200)
 
     assert "../秘密.md" in skipped
     assert "../秘密.md" not in [name for name, _ in files]
@@ -368,7 +368,7 @@ def test_gather_does_not_read_the_same_file_twice(tmp_path):
     entries = project.tree(tmp_path)
     model = _Model([[{"paths": ["main.go"]}], [{"paths": ["main.go"]}], "書けます"])
 
-    files, _ = project.gather(tmp_path, entries, "依頼", model, budget=200)
+    files, _, _ = project.gather(tmp_path, entries, "依頼", model, budget=200)
 
     assert [name for name, _ in files] == ["main.go"]
 
@@ -381,7 +381,7 @@ def test_gather_accepts_arguments_that_arrive_as_a_json_string(tmp_path):
     model = _Model([['{"paths": ["main.go"]}'], "書けます"])
     model._replies[0] = [json.dumps({"paths": ["main.go"]})]
 
-    files, _ = project.gather(tmp_path, entries, "依頼", model, budget=200)
+    files, _, _ = project.gather(tmp_path, entries, "依頼", model, budget=200)
 
     assert [name for name, _ in files] == ["main.go"]
 
@@ -423,7 +423,7 @@ def test_gather_reads_everything_without_asking_when_it_all_fits(tmp_path):
     def must_not_be_called(messages, tools):
         raise AssertionError("全部入るのにモデルへ選択を頼んだ")
 
-    files, skipped = project.gather(tmp_path, entries, "依頼", must_not_be_called)
+    files, skipped, _ = project.gather(tmp_path, entries, "依頼", must_not_be_called)
 
     assert [name for name, _ in files] == ["main.go", "store.go"]
     assert skipped == []
@@ -436,7 +436,7 @@ def test_gather_still_asks_when_the_folder_does_not_fit(tmp_path):
     entries = project.tree(tmp_path)
     model = _Model([[{"paths": ["小.md"]}], "書けます"])
 
-    files, _ = project.gather(tmp_path, entries, "依頼", model, budget=100)
+    files, _, _ = project.gather(tmp_path, entries, "依頼", model, budget=100)
 
     assert [name for name, _ in files] == ["小.md"]
     assert model.conversations, "入りきらないのにモデルへ聞いていない"
@@ -456,7 +456,7 @@ def test_gather_falls_back_to_reading_in_listing_order_when_nothing_was_chosen(t
     _write(tmp_path, "b.go", "package b")
     _fill(tmp_path)
 
-    files, _ = project.gather(
+    files, _, _ = project.gather(
         tmp_path, project.tree(tmp_path), "依頼", _Model(["読みません"]), budget=200
     )
 
@@ -469,7 +469,7 @@ def test_the_fallback_respects_the_budget(tmp_path):
     _write(tmp_path, "b.md", "い" * 80)
     _fill(tmp_path)
 
-    files, skipped = project.gather(
+    files, skipped, _ = project.gather(
         tmp_path, project.tree(tmp_path), "依頼", _Model(["読みません"]), budget=100
     )
 
@@ -484,6 +484,60 @@ def test_no_fallback_when_the_model_did_read_something(tmp_path):
     _fill(tmp_path)
     model = _Model([[{"paths": ["b.go"]}], "書けます"])
 
-    files, _ = project.gather(tmp_path, project.tree(tmp_path), "依頼", model, budget=200)
+    files, _, _ = project.gather(tmp_path, project.tree(tmp_path), "依頼", model, budget=200)
 
     assert [name for name, _ in files] == ["b.go"]
+
+
+def test_a_file_larger_than_the_budget_is_read_from_the_top(tmp_path):
+    """丸ごと捨てると、そのファイルは1文字も根拠に入らない。
+
+    実測 2026-09-15（このリポジトリ）: 予算16,000字を超えるファイルが
+    docs/ で58件中37件、ingest/ で32件中2件（retrieval.py と
+    vector_store.py）あった。説明が要るファイルほど大きく、丸ごと落ちていた。
+    先頭には概要（モジュールのdocstring・見出し・import）があり、何も無いより
+    はるかによい。
+    """
+    _write(tmp_path, "大.md", "あ" * 20000)
+
+    files, skipped, truncated = project.read(tmp_path, ["大.md"], budget=8000)
+
+    assert skipped == []
+    assert truncated == ["大.md"]
+    assert len(files[0][1]) == 4000  # 残り8,000の半分
+
+
+def test_a_truncated_file_still_leaves_room_for_the_next_one(tmp_path):
+    """大きいファイルが1つ先頭にあるだけで、後ろのファイルを捨てない。
+
+    予算いっぱいまで読ませるとこの性質が壊れる。1ファイルに渡すのは残りの
+    半分までとし、何件続いても必ず次の分が残るようにしてある。
+    """
+    _write(tmp_path, "1大.md", "あ" * 20000)
+    _write(tmp_path, "2小.md", "小さい本文")
+
+    files, skipped, truncated = project.read(
+        tmp_path, ["1大.md", "2小.md"], budget=8000
+    )
+
+    assert [name for name, _ in files] == ["1大.md", "2小.md"]
+    assert skipped == []
+
+
+def test_a_head_too_short_to_say_anything_is_not_read(tmp_path):
+    """切れ端は本文の役に立たず、「参照したファイル」に名前が並ぶ分だけ誤解を招く。"""
+    _write(tmp_path, "大.md", "あ" * 20000)
+
+    files, skipped, truncated = project.read(tmp_path, ["大.md"], budget=1500)
+
+    assert files == []
+    assert skipped == ["大.md"]
+    assert truncated == []
+
+
+def test_the_tool_reply_tells_the_model_a_file_was_cut():
+    """伝えないと、モデルは全文を読んだつもりで書く。"""
+    reply = project._tool_reply([("大.md", "先頭だけ")], [], ["大.md"])
+
+    assert "大.md" in reply
+    assert "先頭" in reply
