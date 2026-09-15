@@ -910,3 +910,39 @@ def test_run_continues_to_the_next_source_after_a_local_failure(tmp_path):
     )
     assert list(report.failed) == ["go-spec"]
     assert report.updated == ["streamlit"]
+
+
+# --- 書き出す改行コード ---
+
+
+def test_write_page_if_changed_writes_lf_on_every_platform(tmp_path):
+    """docs_source/ は .gitattributes で `-text` にしてあり git が改行を直さない。
+
+    CRLF で書くと、内容が1文字も変わっていないファイルまで生バイトが変わる。
+    scripts/ingest_source.py の file_hash() は生バイトの SHA-256 なので、DB を
+    一緒に持ち込んだ移植先で、差分取り込みのつもりが全量再取り込みになる。
+    """
+    fetch_docs.write_page_if_changed("a.md", "---\nx: 1\n---\n本文\n", tmp_path)
+    assert b"\r" not in (tmp_path / "a.md").read_bytes()
+
+
+def test_write_if_changed_writes_lf_on_every_platform(tmp_path):
+    """llms 経路も同じ。書き出し先が同じ docs_source/ である。"""
+    source = fetch_docs.LlmsSource(
+        name="x", url="https://example.com/llms-full.txt", version="1"
+    )
+    fetch_docs.write_if_changed(source, "本文\n", tmp_path, "2026-09-15")
+    assert b"\r" not in (tmp_path / "x.md").read_bytes()
+
+
+def test_write_page_if_changed_rewrites_a_file_that_was_left_with_crlf(tmp_path):
+    """既に CRLF で書かれてしまったファイルは、本文が変われば LF に直る。
+
+    読み戻す _body_of は universal newlines で読むため比較が改行に鈍感で、
+    本文が同じままなら CRLF のファイルは書き直されない。直るのは書くときだけで
+    ある。それを承知のうえで、書いたときには必ず直ることを確かめる。
+    """
+    path = tmp_path / "a.md"
+    path.write_bytes("---\r\nx: 1\r\n---\r\n古い本文\r\n".encode("utf-8"))
+    assert fetch_docs.write_page_if_changed("a.md", "---\nx: 1\n---\n新しい本文\n", tmp_path)
+    assert b"\r" not in path.read_bytes()

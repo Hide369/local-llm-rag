@@ -188,6 +188,24 @@ def _without_frontmatter(text: str) -> str:
     return rest
 
 
+def _write_lf(path: Path, text: str) -> None:
+    """LF で書く。
+
+    既定のテキストモードは Windows で CRLF を書く。docs_source/ は
+    .gitattributes で `-text` にしてあり git が改行を直さないため、CRLF で書くと
+    内容が1文字も変わっていないファイルまで生バイトが変わる。
+    scripts/ingest_source.py の file_hash() は生バイトの SHA-256 なので、DB を
+    一緒に持ち込んだ移植先で、差分取り込みのつもりが全量再取り込みになる。
+
+    読み戻す _body_of は universal newlines で読むため比較は改行に鈍感で、この
+    食い違いは「内容が変わったファイルだけが CRLF になる」という形でしか表に
+    出ない。実測 2026-09-15: docs_source/ を作り直したところ、本文が変わった
+    csharp-spec.md と python-spec.md の2件だけが CRLF になり、39,673行すべてが
+    差分になった。
+    """
+    path.write_text(text, encoding="utf-8", newline="\n")
+
+
 def _body_of(path: Path) -> str:
     """書き出し済みファイルから本文だけを取り出す。無ければ空文字。"""
     if not path.is_file():
@@ -210,7 +228,7 @@ def write_page_if_changed(relative_path: str, text: str, out_dir: Path) -> bool:
     if path.is_file() and _digest(_body_of(path)) == _digest(_without_frontmatter(text)):
         return False
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    _write_lf(path, text)
     return True
 
 
@@ -223,7 +241,7 @@ def write_if_changed(
     path = out_dir / f"{source.name}.md"
     if _digest(_body_of(path)) == _digest(body):
         return False
-    path.write_text(_frontmatter(source, fetched_at) + body, encoding="utf-8")
+    _write_lf(path, _frontmatter(source, fetched_at) + body)
     return True
 
 
