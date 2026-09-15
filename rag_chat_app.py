@@ -384,15 +384,21 @@ def _collect_project_files(folder, question, ask_tools_call, result):
         st.session_state.cowork_result = _cowork_error(str(error))
         return None
     if not entries:
-        # 受け付ける形式を並べる。件数が0になる理由はほぼ拡張子の食い違いであり、
-        # 文言に出ていないと利用者には確かめる手段が画面上に無い（実測 2026-09-15:
-        # .py が対象から漏れていて Python のプロジェクトが全部0件になったとき、
-        # 原因が拡張子だと分かるまで時間がかかった）。
-        st.session_state.cowork_result = _cowork_error(
+        # 0件でも止めない。**プロジェクトフォルダは資料源であると同時に出力先
+        # でもある。** これから作るプロジェクトを指定して書かせたい回に、中身が
+        # 無いという理由で何も受け取れないのは筋が通らない。根拠が1つ減るだけ
+        # なので、伝えたうえで生成へ進む。
+        #
+        # 受け付ける形式を並べるのは、件数が0になる理由がほぼ拡張子の食い違いで
+        # あり、文言に出ていないと利用者には確かめる手段が画面上に無いためである
+        # （実測 2026-09-15: .py が対象から漏れていて Python のプロジェクトが
+        # 全部0件になったとき、原因が拡張子だと分かるまで時間がかかった）。
+        result["warnings"].append(
             f"{root} に取り込める形式のファイルがありません。"
             f"取り込めるのは {' '.join(sorted(SUPPORTED_SUFFIXES))} です。"
+            "このフォルダは出力先としてのみ使います。"
         )
-        return None
+        return [], ""
     listing, omitted = docgen_project.tree_text(entries)
     if omitted:
         # 選ばれなかった理由が「関係が無い」のか「一覧に載らなかった」のか、

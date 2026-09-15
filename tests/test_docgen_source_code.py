@@ -27,7 +27,7 @@ def test_the_prompt_forbids_fences_and_prose():
     """
     prompt = source_code.build_prompt("依頼", [], [], "", ".go")
 
-    assert "```" in prompt
+    assert "フェンス" in prompt
     assert "説明" in prompt
 
 
@@ -121,7 +121,26 @@ def test_write_source_stops_before_calling_the_model_when_too_long():
 
     with pytest.raises(filling.PromptTooLongError):
         source_code.write_source("依頼", [], huge, "", ".go", lambda prompt: "package main")
+def test_python_and_powershell_are_offered_too():
+    assert set(source_code.OUTPUT_SUFFIXES) == {".go", ".cs", ".py", ".ps1"}
 
 
-def test_both_suffixes_are_offered():
-    assert source_code.OUTPUT_SUFFIXES == (".go", ".cs")
+def test_the_prompt_names_python_and_powershell():
+    assert "Python" in source_code.build_prompt("依頼", [], [], "", ".py")
+    assert "PowerShell" in source_code.build_prompt("依頼", [], [], "", ".ps1")
+
+
+def test_the_reference_comment_uses_the_marker_of_each_language():
+    """Python と PowerShell の行コメントは # である。// を入れると構文エラーになり、
+    保存したファイルがそのままでは動かない。"""
+    go = source_code.build("package main", ["main.go"], [], ".go")[0].decode("utf-8")
+    cs = source_code.build("class P {}", ["main.go"], [], ".cs")[0].decode("utf-8")
+    py = source_code.build("def main(): pass", ["main.go"], [], ".py")[0].decode("utf-8")
+    ps1 = source_code.build("Write-Host 1", ["main.go"], [], ".ps1")[0].decode("utf-8")
+
+    assert go.startswith("// 参照したファイル")
+    assert cs.startswith("// 参照したファイル")
+    assert py.startswith("# 参照したファイル")
+    assert ps1.startswith("# 参照したファイル")
+    assert "# - main.go" in py
+    assert "// - main.go" in go

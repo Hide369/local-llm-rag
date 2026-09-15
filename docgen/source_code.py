@@ -15,14 +15,21 @@ import re
 from docgen.filling import MAX_PROMPT_CHARS, PromptTooLongError
 from docgen.freeform import evidence_sections
 
-# 拡張子から、プロンプトでモデルに名乗る言語名へ。「コードを書け」だけでは
-# 何の言語か決まらない。
-_LANGUAGES = {".go": "Go", ".cs": "C#"}
+# 拡張子から（プロンプトで名乗る言語名, 行コメントの記号）へ。
+#
+# 言語名が要るのは「コードを書け」だけでは何の言語か決まらないため。
+# コメント記号を言語ごとに持つのは、参照したファイルの一覧を先頭に置くためで
+# ある。Go と C# は `//`、Python と PowerShell は `#` で、取り違えると保存した
+# ファイルが構文エラーでそのままでは動かない。
+_LANGUAGES = {
+    ".go": ("Go", "//"),
+    ".cs": ("C#", "//"),
+    ".py": ("Python", "#"),
+    ".ps1": ("PowerShell", "#"),
+}
 
 OUTPUT_SUFFIXES = tuple(_LANGUAGES)
 
-# 参照したファイルの見出し。Go も C# も行コメントは // である。
-_COMMENT = "//"
 REFERENCES_HEADING = "参照したファイル"
 
 # 返答に混ざったコードフェンス。情報文字列（```go など）を伴ってよい。
@@ -35,7 +42,8 @@ class UnsupportedLanguageError(Exception):
     """ソースコードとして出力できない拡張子を渡された。"""
 
 
-def _language(suffix: str) -> str:
+def _language(suffix: str) -> tuple[str, str]:
+    """(言語名, 行コメントの記号) を返す。扱えない拡張子なら例外。"""
     found = _LANGUAGES.get(suffix.lower())
     if found is None:
         raise UnsupportedLanguageError(f"ソースコードにできない形式です: {suffix}")
@@ -49,7 +57,7 @@ def build_prompt(question, sources, attachments, tree_text: str, suffix: str) ->
     ためである。剥がす処理（strip_fence）も入れてあるが、剥がせる形で返って
     くる保証はない。書かせないほうが確実で、剥がす側は保険である。
     """
-    language = _language(suffix)
+    language, _comment = _language(suffix)
     return (
         f"あなたは {language} を書く開発者です。\n"
         f"次の資料をもとに、依頼された {language} のソースコードを書いてください。\n\n"
@@ -60,7 +68,7 @@ def build_prompt(question, sources, attachments, tree_text: str, suffix: str) ->
         "## 書き方\n"
         f"{language} のソースコードだけを返してください。\n"
         "説明や前置き、後書きは書かないでください。\n"
-        "```go のようなコードフェンスで囲まないでください。"
+        "コードフェンス（3つのバッククォートで始まる行）で囲まないでください。"
         "返答をそのままファイルに保存します。\n"
         f"「{REFERENCES_HEADING}」のコメントは書かないでください。こちらで付けます。\n"
     )
@@ -87,15 +95,15 @@ def build(code: str, paths, citations, suffix: str) -> tuple[bytes, list[str]]:
     参照の一覧はここが組み立て、モデルには書かせない。書かせると、渡していない
     ファイルを参照元として並べうる（文書側と同じ判断）。
     """
-    _language(suffix)
+    _name, comment = _language(suffix)
     body = strip_fence(code)
     names = list(paths) + list(citations)
     if not names:
         # 見出しだけが先頭に残っても読む人には何も伝わらない。
         return body.encode("utf-8"), []
     header = "\n".join(
-        [f"{_COMMENT} {REFERENCES_HEADING}"]
-        + [f"{_COMMENT} - {name}" for name in names]
+        [f"{comment} {REFERENCES_HEADING}"]
+        + [f"{comment} - {name}" for name in names]
     )
     return f"{header}\n\n{body}".encode("utf-8"), []
 

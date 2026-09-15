@@ -260,6 +260,18 @@ def gather(
     ask_tools_call が投げる ChatError は投げ直す。LLM そのものが落ちたことは
     利用者に伝えるべき失敗である。
     """
+    # 全部が予算に収まるなら、選ばせる意味がない。モデルに頼らず全部読む。
+    #
+    # 実測 2026-09-15: gpt-oss:20b は read_files を1度も呼ばず、「読むファイルを
+    # 選べませんでした」という警告だけが毎回出ていた。入るものを入れるのに
+    # モデルの協力を要求する理由はなく、LLM 呼び出しも1回減る。
+    #
+    # entries の大きさはバイト数、予算は文字数であり単位が違う。UTF-8 では
+    # バイト数が文字数以上になるので、この比較は安全側に倒れる。厳密な判定は
+    # read() が行い、入らなかった分は skipped に入る。
+    if sum(size for _, size in entries) <= budget:
+        return read(root, [name for name, _ in entries], budget)
+
     messages: list[dict] = [
         {"role": "user", "content": _opening_message(entries, question)}
     ]
