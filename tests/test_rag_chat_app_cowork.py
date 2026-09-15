@@ -747,6 +747,9 @@ def test_a_folder_with_no_supported_file_names_the_formats_it_accepts(app, tmp_p
     指定した回がこの文言で止まったが、利用者には「なぜ0件なのか」を知る手段が
     画面上に無く、拡張子の漏れだと分かるまで時間がかかった。受け付ける形式を
     文言に含めれば、同じことが次に起きたときはその場で分かる。
+
+    この文言は警告であって、エラーではない。0件でも生成は続く
+    （test_an_empty_project_folder_warns_but_still_generates を参照）。
     """
     folder = tmp_path / "myproject"
     folder.mkdir()
@@ -755,7 +758,8 @@ def test_a_folder_with_no_supported_file_names_the_formats_it_accepts(app, tmp_p
     with (
         patch.object(store_module, "open_store", _stub_store()),
         patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
-        patch.object(retrieval, "embed_query", _embed_query_must_not_be_called),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+        patch.object(chat, "ask_text", lambda *a, **k: "# 設計書\n\n本文\n"),
     ):
         app.run()
         app.segmented_control[0].set_value("Cowork").run()
@@ -764,7 +768,7 @@ def test_a_folder_with_no_supported_file_names_the_formats_it_accepts(app, tmp_p
         app.chat_input[0].set_value("設計書を書いて").run()
 
     assert not app.exception
-    message = "\n".join(error.value for error in app.error)
+    message = "\n".join(warning.value for warning in app.warning)
     assert ".py" in message
     assert ".md" in message
 
@@ -871,3 +875,49 @@ def test_a_project_folder_alone_is_enough_evidence(app, tmp_path):
 
     assert not app.exception
     assert not app.error
+
+
+def test_an_empty_project_folder_warns_but_still_generates(app, tmp_path):
+    """空のフォルダを指定しても止めない。
+
+    プロジェクトフォルダは資料源であると同時に**出力先**でもある。これから
+    作るプロジェクトを指定して書かせたい回に、中身が無いという理由で何も
+    受け取れないのは筋が通らない。以前はここで生成ごと止めていた。
+    """
+    folder = tmp_path / "empty_project"
+    folder.mkdir()
+
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+        patch.object(chat, "ask_text", lambda *a, **k: "# 設計書\n\n本文\n"),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+        app.selectbox(key="template").set_value(NO_TEMPLATE).run()
+        app.text_input(key="project_folder").set_value(str(folder)).run()
+        app.chat_input[0].set_value("設計書を書いて").run()
+
+    assert not app.exception
+    assert not app.error
+    assert any("取り込める形式のファイル" in w.value for w in app.warning)
+    # 出力先としては使える。成果物はこのフォルダに残る。
+    assert list((folder / "generated_docs").glob("*.md"))
+
+
+def test_a_folder_that_is_not_a_directory_still_stops(app, tmp_path):
+    """存在しないパスは打ち間違いである。書き出しもできないので進めない。"""
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
+        patch.object(retrieval, "embed_query", _embed_query_must_not_be_called),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+        app.selectbox(key="template").set_value(NO_TEMPLATE).run()
+        app.text_input(key="project_folder").set_value(str(tmp_path / "無い")).run()
+        app.chat_input[0].set_value("設計書を書いて").run()
+
+    assert not app.exception
+    assert any("フォルダ" in error.value for error in app.error)

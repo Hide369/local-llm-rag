@@ -231,6 +231,15 @@ def test_write_output_rejects_a_name_with_a_path_separator(tmp_path):
         project.write_output(tmp_path, "../逃げる.md", b"x")
 
 
+def _fill(root: Path) -> None:
+    """全部は予算に収まらない状況を作る。
+
+    gather は「全部入るなら選ばせない」ため、ループを試すテストはこれを置いて
+    入りきらない状態にする。読む対象そのものは小さいままにしておく。
+    """
+    _write(root, "かさ増し.md", "あ" * 500)
+
+
 class _Model:
     """あらかじめ決めた返答を順に返す。道具の呼び出しは (名前, 引数) で書く。"""
 
@@ -258,10 +267,11 @@ class _Model:
 
 def test_gather_reads_what_the_model_asked_for(tmp_path):
     _write(tmp_path, "main.go", "package main")
+    _fill(tmp_path)
     entries = project.tree(tmp_path)
     model = _Model([[{"paths": ["main.go"]}], "書けます"])
 
-    files, skipped = project.gather(tmp_path, entries, "設計書を書いて", model)
+    files, skipped = project.gather(tmp_path, entries, "設計書を書いて", model, budget=200)
 
     assert [name for name, _ in files] == ["main.go"]
     assert skipped == []
@@ -274,10 +284,11 @@ def test_gather_lets_the_model_ask_for_more_after_reading(tmp_path):
     """
     _write(tmp_path, "main.go", "package main")
     _write(tmp_path, "store.go", "package main")
+    _fill(tmp_path)
     entries = project.tree(tmp_path)
     model = _Model([[{"paths": ["main.go"]}], [{"paths": ["store.go"]}], "書けます"])
 
-    files, _ = project.gather(tmp_path, entries, "設計書を書いて", model)
+    files, _ = project.gather(tmp_path, entries, "設計書を書いて", model, budget=200)
 
     assert [name for name, _ in files] == ["main.go", "store.go"]
 
@@ -285,9 +296,10 @@ def test_gather_lets_the_model_ask_for_more_after_reading(tmp_path):
 def test_gather_returns_nothing_when_the_model_never_asks(tmp_path):
     """道具を呼ばないモデルでも止まらない。ツリーだけが渡る今の挙動に落ちる。"""
     _write(tmp_path, "main.go", "package main")
+    _fill(tmp_path)
     entries = project.tree(tmp_path)
 
-    files, skipped = project.gather(tmp_path, entries, "依頼", _Model(["読みません"]))
+    files, skipped = project.gather(tmp_path, entries, "依頼", _Model(["読みません"]), budget=200)
 
     assert files == []
     assert skipped == []
@@ -316,10 +328,11 @@ def test_gather_stops_after_the_round_limit(tmp_path):
     _write(tmp_path, "a.go", "package main")
     _write(tmp_path, "b.go", "package main")
     _write(tmp_path, "c.go", "package main")
+    _fill(tmp_path)
     entries = project.tree(tmp_path)
     model = _Model([[{"paths": [name]}] for name in ("main.go", "a.go", "b.go", "c.go")])
 
-    project.gather(tmp_path, entries, "依頼", model)
+    project.gather(tmp_path, entries, "依頼", model, budget=200)
 
     assert len(model.conversations) == project.MAX_ROUNDS
 
@@ -329,10 +342,11 @@ def test_gather_refuses_a_path_outside_the_root(tmp_path):
     _write(tmp_path, "project/main.go", "package main")
     _write(tmp_path, "秘密.md", "外のファイル")
     root = tmp_path / "project"
+    _fill(root)
     entries = project.tree(root)
     model = _Model([[{"paths": ["../秘密.md"]}], "書けます"])
 
-    files, skipped = project.gather(root, entries, "依頼", model)
+    files, skipped = project.gather(root, entries, "依頼", model, budget=200)
 
     assert files == []
     assert skipped == ["../秘密.md"]
@@ -341,10 +355,11 @@ def test_gather_refuses_a_path_outside_the_root(tmp_path):
 def test_gather_does_not_read_the_same_file_twice(tmp_path):
     """同じファイルを2度読むと、予算を二重に使ったうえで履歴も膨らむ。"""
     _write(tmp_path, "main.go", "package main")
+    _fill(tmp_path)
     entries = project.tree(tmp_path)
     model = _Model([[{"paths": ["main.go"]}], [{"paths": ["main.go"]}], "書けます"])
 
-    files, _ = project.gather(tmp_path, entries, "依頼", model)
+    files, _ = project.gather(tmp_path, entries, "依頼", model, budget=200)
 
     assert [name for name, _ in files] == ["main.go"]
 
@@ -352,11 +367,12 @@ def test_gather_does_not_read_the_same_file_twice(tmp_path):
 def test_gather_accepts_arguments_that_arrive_as_a_json_string(tmp_path):
     """引数を辞書で返すモデルと文字列で返すモデルがある。"""
     _write(tmp_path, "main.go", "package main")
+    _fill(tmp_path)
     entries = project.tree(tmp_path)
     model = _Model([['{"paths": ["main.go"]}'], "書けます"])
     model._replies[0] = [json.dumps({"paths": ["main.go"]})]
 
-    files, _ = project.gather(tmp_path, entries, "依頼", model)
+    files, _ = project.gather(tmp_path, entries, "依頼", model, budget=200)
 
     assert [name for name, _ in files] == ["main.go"]
 
@@ -364,19 +380,54 @@ def test_gather_accepts_arguments_that_arrive_as_a_json_string(tmp_path):
 def test_gather_reraises_when_the_model_itself_fails(tmp_path):
     """LLM が落ちたことは利用者に伝えるべき失敗である。"""
     _write(tmp_path, "main.go", "package main")
+    _fill(tmp_path)
     entries = project.tree(tmp_path)
 
     with pytest.raises(chat.ChatError):
-        project.gather(tmp_path, entries, "依頼", _Model([chat.ChatError("落ちた")]))
+        project.gather(tmp_path, entries, "依頼", _Model([chat.ChatError("落ちた")]), budget=200)
 
 
 def test_the_opening_message_shows_the_listing_and_the_request(tmp_path):
     _write(tmp_path, "main.go", "package main")
+    _fill(tmp_path)
     entries = project.tree(tmp_path)
     model = _Model(["読みません"])
 
-    project.gather(tmp_path, entries, "設計書を書いて", model)
+    project.gather(tmp_path, entries, "設計書を書いて", model, budget=200)
 
     opening = model.conversations[0][0]["content"]
     assert "main.go" in opening
     assert "設計書を書いて" in opening
+
+
+def test_gather_reads_everything_without_asking_when_it_all_fits(tmp_path):
+    """全部が予算に収まるなら、選ばせる意味がない。
+
+    実測 2026-09-15: gpt-oss:20b は read_files を1度も呼ばず、警告だけが毎回
+    出ていた。入るものを入れるのにモデルの協力を要求しない。LLM 呼び出しも
+    1回減る。
+    """
+    _write(tmp_path, "main.go", "package main")
+    _write(tmp_path, "store.go", "package main")
+    entries = project.tree(tmp_path)
+
+    def must_not_be_called(messages, tools):
+        raise AssertionError("全部入るのにモデルへ選択を頼んだ")
+
+    files, skipped = project.gather(tmp_path, entries, "依頼", must_not_be_called)
+
+    assert [name for name, _ in files] == ["main.go", "store.go"]
+    assert skipped == []
+
+
+def test_gather_still_asks_when_the_folder_does_not_fit(tmp_path):
+    """入りきらないときだけ選ばせる。ここが往復の存在理由である。"""
+    _write(tmp_path, "大.md", "あ" * 200)
+    _write(tmp_path, "小.md", "い" * 10)
+    entries = project.tree(tmp_path)
+    model = _Model([[{"paths": ["小.md"]}], "書けます"])
+
+    files, _ = project.gather(tmp_path, entries, "依頼", model, budget=100)
+
+    assert [name for name, _ in files] == ["小.md"]
+    assert model.conversations, "入りきらないのにモデルへ聞いていない"
