@@ -150,7 +150,7 @@ def test_cowork_offers_the_register_button_before_any_template_exists(app, tmp_p
     ):
         app.run()
         app.segmented_control[0].set_value("Cowork").run()
-        button = next(b for b in app.button if b.label == "雛形を登録・削除")
+        button = next(b for b in app.button if b.label == "フォーマットファイルを登録・削除")
         button.click().run()
 
     assert not app.exception
@@ -399,7 +399,7 @@ def test_template_dialog_shows_a_broken_template_but_still_offers_delete(app, tm
     ):
         app.run()
         app.segmented_control[0].set_value("Cowork").run()
-        button = next(b for b in app.button if b.label == "雛形を登録・削除")
+        button = next(b for b in app.button if b.label == "フォーマットファイルを登録・削除")
         button.click().run()
 
     assert not app.exception
@@ -479,7 +479,7 @@ def test_cowork_attachments_are_captioned_through_the_vlm(app, tmp_path):
     assert seen == [vlm_module.caption_image]
 
 
-NO_TEMPLATE = "（雛形なし）"
+NO_TEMPLATE = "（フォーマットファイルなし）"
 
 
 def test_cowork_offers_generating_without_a_template(app, tmp_path):
@@ -1147,3 +1147,90 @@ def test_it_says_which_files_it_read_only_the_top_of(app, tmp_path):
     message = "\n".join(note.value for note in _notes(app))
     assert "先頭だけ読んだファイル" in message
     assert "大きい.md" in message
+
+
+PASTED_NAME = "貼り付けたテキスト"
+
+
+def _run_with_pasted(app, tmp_path, pasted, *, capture=None, internal=False):
+    """貼り付け欄だけを使って1回生成する。"""
+    def ask_text(model, prompt, **kwargs):
+        if capture is not None:
+            capture.append(prompt)
+        return "# 設計書\n\n本文\n"
+
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+        patch.object(chat, "ask_text", ask_text),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+        app.selectbox(key="template").set_value(NO_TEMPLATE).run()
+        app.checkbox(key="cowork_internal").set_value(internal).run()
+        app.text_area(key="cowork_pasted").set_value(pasted).run()
+        app.chat_input[0].set_value("設計書を書いて").run()
+
+
+def test_pasted_text_alone_is_enough_to_run(app, tmp_path):
+    """メール本文やログの抜粋を、いちいちファイルに保存させない。"""
+    prompts = []
+
+    _run_with_pasted(app, tmp_path, "第5回の議事録です。次回は10月3日。", capture=prompts)
+
+    assert not app.exception
+    assert not app.error
+    assert app.download_button
+    # 貼った本文がそのままプロンプトへ載っていること。
+    assert "次回は10月3日" in prompts[0]
+
+
+def test_the_pasted_text_is_named_in_the_reference_list(app, tmp_path):
+    """何を根拠にしたかの記録である。貼った事実も残す。
+
+    成果物はダウンロードボタンの中にあり AppTest からは覗けないため、
+    markdown_document.build に素通しのスパイを挟んで横取りする
+    （test_cowork_without_a_template_builds_the_document と同じ手）。
+    """
+    built = {}
+    real_build = markdown_document.build
+
+    def spy_build(blocks, suffix, on_diagram_error=None):
+        data, warnings = real_build(blocks, suffix, on_diagram_error)
+        built["data"] = data
+        return data, warnings
+
+    with patch.object(markdown_document, "build", spy_build):
+        _run_with_pasted(app, tmp_path, "第5回の議事録です。")
+
+    assert not app.exception
+    assert PASTED_NAME in built["data"].decode("utf-8")
+
+
+def test_a_paste_of_only_whitespace_is_not_evidence(app, tmp_path):
+    """空白だけを根拠と数えると、中身の無い文書が黙って出る。"""
+    _run_with_pasted(app, tmp_path, "   \n  ")
+
+    assert not app.exception
+    assert any("根拠" in error.value for error in app.error)
+
+
+def test_the_screen_calls_it_a_format_file(app, tmp_path):
+    """画面では「雛形」と呼ばない。利用者が使う語に合わせる。
+
+    コードの中の template / 雛形 はそのままにしてある。画面の呼び方を変える
+    たびに識別子まで追いかけると、履歴が読みにくくなるだけで得るものがない。
+    """
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+
+    assert not app.exception
+    assert app.selectbox(key="template").label == "フォーマットファイル"
+    assert "（フォーマットファイルなし）" in app.selectbox(key="template").options
+    assert not any("雛形" in str(option)
+                   for option in app.selectbox(key="template").options)

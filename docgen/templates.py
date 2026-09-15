@@ -23,7 +23,7 @@ def _checked(name: str) -> str:
     （ingest/parsers/md_parser.py の _resolve が同じ理由で .. を拒んでいる）。
     """
     if name != Path(name).name or name in ("", ".", ".."):
-        raise ValueError(f"雛形の名前はファイル名でなければなりません: {name}")
+        raise ValueError(f"フォーマットファイルの名前はファイル名でなければなりません: {name}")
     return name
 
 
@@ -31,7 +31,7 @@ def register(source: Path, directory: Path | None = None) -> Path:
     """雛形を保存し、置いた場所を返す。"""
     if source.suffix.lower() not in docgen.SUPPORTED_SUFFIXES:
         raise docgen.UnsupportedTemplateError(
-            f"雛形として使えない形式です: {source.name}"
+            f"フォーマットファイルとして使えない形式です: {source.name}"
         )
     directory = directory or TEMPLATE_DIR
     directory.mkdir(parents=True, exist_ok=True)
