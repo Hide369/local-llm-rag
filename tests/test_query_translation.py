@@ -146,3 +146,40 @@ def test_topic_query_falls_back_when_the_model_itself_fails():
         raise RuntimeError("落ちた")
 
     assert query_translation.topic_query("依頼", ask) == "依頼"
+
+
+def test_topic_query_asks_for_a_short_query():
+    """語を並べるほどクロスエンコーダのスコアが落ちる。
+
+    クロスエンコーダは「この本文はこのクエリ全体に答えているか」を測る。語を
+    足すと、どの本文も一部しか答えていないことになり、全体が下がる。
+
+    実測 2026-09-15（gpt-oss:20b、docs_store.sqlite3 54,054チャンク、
+    bge-reranker-v2-m3、DOCS_RERANK_FLOOR = 1.0）。同じ意図・同じコーパスで
+    語を足しただけ:
+      "Go goroutine concurrency"                               4件 最高  3.08
+      "Go goroutine concurrency sync.WaitGroup channel select" 0件 最高 -0.49
+    """
+    seen = {}
+
+    def ask(prompt):
+        seen["prompt"] = prompt
+        return '{"query": "Go goroutine concurrency"}'
+
+    query_translation.topic_query("Goでgoroutineを使った並行処理を書いて", ask)
+
+    assert "2語" in seen["prompt"]
+
+
+def test_the_topic_prompt_does_not_demand_api_names():
+    """translate_query から流用してはいけない指示である。
+
+    あちらは質問文を訳すので、API名を1つ引き当てれば的が絞れる（実測で
+    st.cache_data を含むクエリが 7.02、丁寧な英文が 5.73）。こちらは依頼から
+    話題を作るため、同じ指示が「API名を並べる」に化ける。実測 2026-09-15、
+    gpt-oss:20b が作ったクエリ:
+      "Go goroutine concurrency example sync.WaitGroup channel"  0件
+      "Go file reading os.Open ioutil.ReadFile"                  0件
+    どちらも話題は当たっていて、落としていたのは語数である。
+    """
+    assert "API名" not in query_translation._topic_prompt("依頼")
