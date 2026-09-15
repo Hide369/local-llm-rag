@@ -293,16 +293,19 @@ def test_gather_lets_the_model_ask_for_more_after_reading(tmp_path):
     assert [name for name, _ in files] == ["main.go", "store.go"]
 
 
-def test_gather_returns_nothing_when_the_model_never_asks(tmp_path):
-    """道具を呼ばないモデルでも止まらない。ツリーだけが渡る今の挙動に落ちる。"""
+def test_gather_does_not_stop_when_the_model_never_asks(tmp_path):
+    """道具を呼ばないモデルでも止まらない。
+
+    以前はここで0件を返し、成果物はファイル一覧だけを根拠に書かれていた。
+    今は代わりに読む（test_gather_falls_back_to_reading_in_listing_order_when_nothing_was_chosen）。
+    """
     _write(tmp_path, "main.go", "package main")
     _fill(tmp_path)
     entries = project.tree(tmp_path)
 
-    files, skipped = project.gather(tmp_path, entries, "依頼", _Model(["読みません"]), budget=200)
+    files, _ = project.gather(tmp_path, entries, "依頼", _Model(["読みません"]), budget=200)
 
-    assert files == []
-    assert skipped == []
+    assert "main.go" in [name for name, _ in files]
 
 
 def test_gather_shares_one_budget_across_every_round(tmp_path):
@@ -338,7 +341,12 @@ def test_gather_stops_after_the_round_limit(tmp_path):
 
 
 def test_gather_refuses_a_path_outside_the_root(tmp_path):
-    """道具の引数はモデルが書いた文字列である。read の検査をそのまま通す。"""
+    """道具の引数はモデルが書いた文字列である。read の検査をそのまま通す。
+
+    root の外を要求した回は、そのパスが skipped に入り、中身はどの経路からも
+    渡らない。読めたものが0件になるため代わりに読む経路へ進むが、そちらが
+    読むのは走査済みの一覧（root の中）だけである。
+    """
     _write(tmp_path, "project/main.go", "package main")
     _write(tmp_path, "秘密.md", "外のファイル")
     root = tmp_path / "project"
@@ -348,8 +356,9 @@ def test_gather_refuses_a_path_outside_the_root(tmp_path):
 
     files, skipped = project.gather(root, entries, "依頼", model, budget=200)
 
-    assert files == []
-    assert skipped == ["../秘密.md"]
+    assert "../秘密.md" in skipped
+    assert "../秘密.md" not in [name for name, _ in files]
+    assert not any("外のファイル" in text for _, text in files)
 
 
 def test_gather_does_not_read_the_same_file_twice(tmp_path):
@@ -431,3 +440,50 @@ def test_gather_still_asks_when_the_folder_does_not_fit(tmp_path):
 
     assert [name for name, _ in files] == ["小.md"]
     assert model.conversations, "入りきらないのにモデルへ聞いていない"
+
+
+def test_gather_falls_back_to_reading_in_listing_order_when_nothing_was_chosen(tmp_path):
+    """モデルが1ファイルも読まなかった回に、こちらで読む。
+
+    実測 2026-09-15: gpt-oss:20b は read_files を1度も呼ばず、成果物は毎回
+    ファイル一覧だけを根拠に書かれていた。選び方の精度は落ちても、0件よりは
+    確実によい。何を読んだかは成果物の「参照したファイル」に出る。
+
+    順は一覧と同じ（パスの昇順）。小さい順だと些末なファイルで予算が埋まり、
+    大きい順だと1本で使い切る。
+    """
+    _write(tmp_path, "a.go", "package a")
+    _write(tmp_path, "b.go", "package b")
+    _fill(tmp_path)
+
+    files, _ = project.gather(
+        tmp_path, project.tree(tmp_path), "依頼", _Model(["読みません"]), budget=200
+    )
+
+    assert [name for name, _ in files] == ["a.go", "b.go"]
+
+
+def test_the_fallback_respects_the_budget(tmp_path):
+    """代わりに読むといっても、上限は同じである。"""
+    _write(tmp_path, "a.md", "あ" * 80)
+    _write(tmp_path, "b.md", "い" * 80)
+    _fill(tmp_path)
+
+    files, skipped = project.gather(
+        tmp_path, project.tree(tmp_path), "依頼", _Model(["読みません"]), budget=100
+    )
+
+    assert [name for name, _ in files] == ["a.md"]
+    assert "b.md" in skipped
+
+
+def test_no_fallback_when_the_model_did_read_something(tmp_path):
+    """1つでも読めていれば、モデルの選択を尊重する。勝手に足さない。"""
+    _write(tmp_path, "a.go", "package a")
+    _write(tmp_path, "b.go", "package b")
+    _fill(tmp_path)
+    model = _Model([[{"paths": ["b.go"]}], "書けます"])
+
+    files, _ = project.gather(tmp_path, project.tree(tmp_path), "依頼", model, budget=200)
+
+    assert [name for name, _ in files] == ["b.go"]
