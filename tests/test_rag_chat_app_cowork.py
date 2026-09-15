@@ -921,3 +921,39 @@ def test_a_folder_that_is_not_a_directory_still_stops(app, tmp_path):
 
     assert not app.exception
     assert any("フォルダ" in error.value for error in app.error)
+
+
+def test_when_the_model_chooses_nothing_the_files_are_read_anyway(app, tmp_path):
+    """モデルが道具を呼ばなくても、根拠を0件にしない。
+
+    実測 2026-09-15: gpt-oss:20b は read_files を1度も呼ばず、成果物は毎回
+    ファイル一覧だけを根拠に書かれていた。警告は正しかったが、正しいだけで
+    利用者は何もできなかった。
+    """
+    folder = tmp_path / "myproject"
+    folder.mkdir()
+    (folder / "main.go").write_text("package main\n", encoding="utf-8")
+    # 全部が予算に収まると、モデルへ聞かずに全部読む経路へ流れてしまう。
+    # 往復が起きる大きさにしたうえで、モデルが何も選ばない状況を作る。
+    (folder / "かさ増し.md").write_text("あ" * 20_000, encoding="utf-8")
+
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
+        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+        patch.object(chat, "ask_tools", _reads_nothing),
+        patch.object(chat, "ask_text", lambda *a, **k: "# 設計書\n\n本文\n"),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+        app.selectbox(key="template").set_value(NO_TEMPLATE).run()
+        app.text_input(key="project_folder").set_value(str(folder)).run()
+        app.chat_input[0].set_value("設計書を書いて").run()
+
+    assert not app.exception
+    written = next((folder / "generated_docs").glob("*.md"))
+    # 読んだ以上、参照したファイルに名前が出る。
+    assert "main.go" in written.read_text(encoding="utf-8")
+    # 「選べませんでした」で終わる警告は出さない。何を読んだかまで言う。
+    for warning in app.warning:
+        assert "ファイル一覧だけを渡します" not in warning.value

@@ -304,6 +304,26 @@ def gather(
         if remaining <= 0:
             break
 
+    if not files:
+        # モデルが1ファイルも読まなかった回は、こちらで読む。
+        #
+        # 実測 2026-09-15: gpt-oss:20b は read_files を1度も呼ばず、成果物は毎回
+        # ファイル一覧だけを根拠に書かれていた。道具を使えるかどうかはモデル
+        # しだいであり、使えないモデルのときに根拠を0件にする理由はない。
+        # 選び方の精度は落ちるが、0件よりは確実によい。何を読んだかは成果物の
+        # 「参照したファイル」に出るので、利用者は結果から判断できる。
+        #
+        # 順は一覧と同じ（パスの昇順）。小さい順だと些末なファイルで予算が
+        # 埋まり、大きい順だと1本で使い切る。read() は入らないものを飛ばして
+        # 次へ進むので、大きいファイルが先頭にあっても後ろが読めなくならない。
+        #
+        # ループ中に読めなかったものは skipped に残す。ここで捨てると、モデルが
+        # root の外を要求していた事実が画面から消える。
+        fallback_files, fallback_skipped = read(
+            root, [name for name, _ in entries], budget
+        )
+        return fallback_files, skipped + fallback_skipped
+
     return files, skipped
 
 
