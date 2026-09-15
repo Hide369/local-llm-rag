@@ -833,7 +833,7 @@ def render_evidence(message):
     render_hits(message.get("hits"))
 
 
-st.set_page_config(page_title="社内文書RAGチャット")
+st.set_page_config(page_title="社内文書RAG")
 st.sidebar.title("設定")
 
 # ollama pull済みのモデルだけを並べる。自由入力にしていた頃は打ち間違いや
@@ -994,7 +994,7 @@ if st.sidebar.button("会話履歴をリセット"):
     st.session_state.messages = []
     st.rerun()
 
-st.title("社内文書RAGチャット")
+st.title("社内文書RAG")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
