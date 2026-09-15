@@ -489,8 +489,15 @@ def _collect_evidence(question, attachments, use_internal, use_docs, project_fol
                 )
             else:
                 # 英語のコーパスなので日本語のままでは当たらず、採否も距離では
-                # 決まらない（PR #41）。チャット側の経路と同じ2つを渡す。
-                english = query_translation.translate_query(question, ask_json)
+                # 決まらない（PR #41）。
+                #
+                # チャット側と違い translate_query は使わない。Cowork の入力は
+                # 「〜を書いて」という依頼であり、訳しても依頼のまま届く。
+                # リランカーは「この文章はこの問いに答えているか」を測るので、
+                # 依頼に対しては話題が合っていても低く出て、DOCS_RERANK_FLOOR に
+                # 全件切られる（実測は query_translation.topic_query の docstring）。
+                # ここでは依頼から「調べるべき話題」を作らせる。
+                english = query_translation.topic_query(question, ask_json)
                 sources.append((
                     CORPUS_DOCS,
                     search(
@@ -1022,6 +1029,21 @@ if mode == MODE_COWORK:
             markdown_document.OUTPUT_SUFFIXES + docgen_source_code.OUTPUT_SUFFIXES,
             key="output_suffix",
             disabled=st.session_state.generating,
+        )
+
+    # 出力形式がソースコードなら、技術ドキュメントを既定で引く。コードを書かせる
+    # 回に言語仕様やライブラリの説明が要らないことはまずない。下のチェックは
+    # 既定でオフだが（英訳のLLM呼び出しが1回と検索が1本増え、生成が30〜60秒
+    # 遅くなる）、その代金を払う価値があるのはまさにこの回である。
+    #
+    # 形式が変わった回にだけ書き換える。毎回書き換えると、利用者が自分で外した
+    # チェックが次の実行で勝手に戻る。ウィジェットを作る前に session_state へ
+    # 入れるのは、キー付きのウィジェットが value= より session_state を優先する
+    # ためで、value= を変えるだけでは切り替わらない。
+    if st.session_state.get("last_output_suffix") != output_suffix:
+        st.session_state.last_output_suffix = output_suffix
+        st.session_state.cowork_docs = (
+            output_suffix.lower() in docgen_source_code.OUTPUT_SUFFIXES
         )
 
     # コーパスのチェックボックスと添付は、雛形の有無に関わらず出す。雛形
