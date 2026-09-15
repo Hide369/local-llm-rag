@@ -996,3 +996,58 @@ def test_the_supplementary_messages_are_not_yellow_boxes(app, tmp_path):
     assert not app.warning
     # 中身は畳んだ場所に残る。捨てているわけではない。
     assert any("取り込める形式のファイル" in note.value for note in _notes(app))
+
+
+def test_choosing_a_source_format_turns_on_the_technical_documents(app, tmp_path):
+    """コードを書かせる回に言語仕様やライブラリの説明が要らないことはまずない。
+
+    このチェックは既定でオフである。引くと英訳の LLM 呼び出しが1回と検索が
+    1本増えて生成が30〜60秒遅くなるためで、文書を書く回に毎回払う理由はない。
+    ソースコードの回だけは払う価値がある。
+    """
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+        app.selectbox(key="template").set_value(NO_TEMPLATE).run()
+
+        assert app.checkbox(key="cowork_docs").value is False
+
+        app.selectbox(key="output_suffix").set_value(".go").run()
+
+    assert not app.exception
+    assert app.checkbox(key="cowork_docs").value is True
+
+
+def test_switching_back_to_a_document_format_turns_it_off_again(app, tmp_path):
+    """文書へ戻したのに技術ドキュメントを引き続けると、毎回30〜60秒余計にかかる。"""
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+        app.selectbox(key="template").set_value(NO_TEMPLATE).run()
+        app.selectbox(key="output_suffix").set_value(".cs").run()
+        app.selectbox(key="output_suffix").set_value(".docx").run()
+
+    assert not app.exception
+    assert app.checkbox(key="cowork_docs").value is False
+
+
+def test_the_user_can_still_turn_it_off_for_a_source_format(app, tmp_path):
+    """既定を決めるだけで、利用者の操作を奪わない。"""
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+        app.selectbox(key="template").set_value(NO_TEMPLATE).run()
+        app.selectbox(key="output_suffix").set_value(".go").run()
+        app.checkbox(key="cowork_docs").set_value(False).run()
+
+    assert not app.exception
+    assert app.checkbox(key="cowork_docs").value is False

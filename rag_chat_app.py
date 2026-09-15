@@ -1024,6 +1024,21 @@ if mode == MODE_COWORK:
             disabled=st.session_state.generating,
         )
 
+    # 出力形式がソースコードなら、技術ドキュメントを既定で引く。コードを書かせる
+    # 回に言語仕様やライブラリの説明が要らないことはまずない。下のチェックは
+    # 既定でオフだが（英訳のLLM呼び出しが1回と検索が1本増え、生成が30〜60秒
+    # 遅くなる）、その代金を払う価値があるのはまさにこの回である。
+    #
+    # 形式が変わった回にだけ書き換える。毎回書き換えると、利用者が自分で外した
+    # チェックが次の実行で勝手に戻る。ウィジェットを作る前に session_state へ
+    # 入れるのは、キー付きのウィジェットが value= より session_state を優先する
+    # ためで、value= を変えるだけでは切り替わらない。
+    if st.session_state.get("last_output_suffix") != output_suffix:
+        st.session_state.last_output_suffix = output_suffix
+        st.session_state.cowork_docs = (
+            output_suffix.lower() in docgen_source_code.OUTPUT_SUFFIXES
+        )
+
     # コーパスのチェックボックスと添付は、雛形の有無に関わらず出す。雛形
     # なしの生成でも検索結果と添付を使うためである（if available: の中に
     # あった頃は雛形なしのとき画面から消え、根拠を渡す手段が無かった）。
