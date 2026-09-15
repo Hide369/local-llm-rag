@@ -76,6 +76,11 @@ MODE_COWORK = "Cowork"
 # ようにするため、選択肢そのものを常に存在させる。
 NO_TEMPLATE = "（雛形なし）"
 
+# 貼り付けたテキストが「参照したファイル」に並ぶときの名前。ファイル名を持たない
+# ため、こちらで付ける。定数にするのは、画面のラベルと成果物の一覧で別の呼び方を
+# しないようにするためである。
+PASTED_TEXT_NAME = "貼り付けたテキスト"
+
 # 技術ドキュメントの取り込み・更新に使う2コマンド。空のときの警告と、空でない
 # ときのキャプションの両方で使うため、ここ一箇所にまとめる（二重管理を避ける）。
 DOCS_INGEST_COMMAND = (
@@ -361,7 +366,7 @@ def _cowork_error(message):
     return result
 
 
-def _has_no_evidence(use_internal, use_docs, attachments, project_folder):
+def _has_no_evidence(use_internal, use_docs, attachments, pasted, project_folder):
     """根拠が1つも無いかを判定する。
 
     雛形あり・なしの両方の分岐が同じ条件で「呼んでも中身の無い文書が出る
@@ -373,6 +378,7 @@ def _has_no_evidence(use_internal, use_docs, attachments, project_folder):
         not use_internal
         and not use_docs
         and not attachments
+        and not pasted.strip()
         and not project_folder.strip()
     )
 
@@ -441,7 +447,9 @@ def _collect_project_files(folder, question, ask_tools_call, result):
     return files, listing
 
 
-def _collect_evidence(question, attachments, use_internal, use_docs, project_folder, result):
+def _collect_evidence(
+    question, attachments, pasted, use_internal, use_docs, project_folder, result
+):
     """検索結果・添付・プロジェクトフォルダの本文を集める。
 
     失敗したら結果に積んで None を返す。雛形あり・なしの両方がこれを呼ぶ。
@@ -558,6 +566,12 @@ def _collect_evidence(question, attachments, use_internal, use_docs, project_fol
                         f"{file.name} から本文を取り出せませんでした。"
                     )
                 texts.append((file.name, text))
+    if pasted.strip():
+        # 貼り付けたテキストは添付と同じ扱いにする。parse を通さないのは、
+        # すでにテキストであり、一時ファイルへ書いて読み直す理由がないため。
+        # 名前を付けるのは「参照したファイル」に出すためで、何を根拠にしたか
+        # の記録に「貼り付けた分」が抜けていると、後から辿れない。
+        texts.append((PASTED_TEXT_NAME, pasted.strip()))
 
     # プロジェクトの本文は「添付の自動版」であり、専用の受け口を作らない
     # （docgen/project.py のモジュールdocstring参照）。先頭に置くのは、
@@ -567,7 +581,16 @@ def _collect_evidence(question, attachments, use_internal, use_docs, project_fol
     return sources, texts, tree_text
 
 
-def _generate_document(template_path, names, question, attachments, use_internal, use_docs, project_folder):
+def _generate_document(
+    template_path,
+    names,
+    question,
+    attachments,
+    pasted,
+    use_internal,
+    use_docs,
+    project_folder,
+):
     """雛形を埋め、結果を st.session_state.cowork_result に積む。
 
     ここで直接 st.error や st.download_button を呼ばないのは、generating を
@@ -585,7 +608,7 @@ def _generate_document(template_path, names, question, attachments, use_internal
         )
 
     collected = _collect_evidence(
-        question, attachments, use_internal, use_docs, project_folder, result
+        question, attachments, pasted, use_internal, use_docs, project_folder, result
     )
     if collected is None:
         return
@@ -650,7 +673,9 @@ def _generate_document(template_path, names, question, attachments, use_internal
     st.session_state.cowork_result = result
 
 
-def _generate_freeform(suffix, question, attachments, use_internal, use_docs, project_folder):
+def _generate_freeform(
+    suffix, question, attachments, pasted, use_internal, use_docs, project_folder
+):
     """雛形なしで文書を作り、結果を st.session_state.cowork_result に積む。
 
     _generate_document と同じく、ここで st.error や st.download_button を直接
@@ -662,7 +687,7 @@ def _generate_freeform(suffix, question, attachments, use_internal, use_docs, pr
         return chat.ask_text(model, prompt, num_ctx=docgen_filling.GENERATION_NUM_CTX)
 
     collected = _collect_evidence(
-        question, attachments, use_internal, use_docs, project_folder, result
+        question, attachments, pasted, use_internal, use_docs, project_folder, result
     )
     if collected is None:
         return
@@ -1079,6 +1104,14 @@ if mode == MODE_COWORK:
         disabled=st.session_state.generating,
     )
     attachments = attached or []
+    # メール本文やログの抜粋を根拠にしたいだけのときに、ファイルへ保存させない。
+    # 中身はファイル添付と同じ扱い（この回だけ使い、DBには入れない）で、parse は
+    # 通さない。すでにテキストであり、一時ファイルへ書いて読み直す理由がない。
+    pasted = st.text_area(
+        "テキストを貼り付け（この回だけ使い、DBには入れません）",
+        key="cowork_pasted",
+        disabled=st.session_state.generating,
+    )
     project_folder = st.text_input(
         "プロジェクトフォルダ（このマシン上のパス。空欄可）",
         key="project_folder",
@@ -1121,7 +1154,9 @@ if st.session_state.generating:
             # template_path is None は「雛形が無い」ではなく「雛形なしを選んだ」
             # という意味になった。根拠が1つも無ければ、呼んでも中身の無い文書が
             # 出るだけなので、その場合だけ止める。
-            if _has_no_evidence(use_internal, use_docs, attachments, project_folder):
+            if _has_no_evidence(
+                use_internal, use_docs, attachments, pasted, project_folder
+            ):
                 st.session_state.cowork_result = _cowork_error(
                     "参照する資料も添付ファイルもありません。根拠が無いため生成しません。"
                 )
@@ -1130,6 +1165,7 @@ if st.session_state.generating:
                     output_suffix,
                     question,
                     attachments,
+                    pasted,
                     use_internal,
                     use_docs,
                     project_folder,
@@ -1152,7 +1188,9 @@ if st.session_state.generating:
                         f"{template_path.name} に {{{{印}}}} がありません。"
                         "埋める欄が無いため生成しません。"
                     )
-                elif _has_no_evidence(use_internal, use_docs, attachments, project_folder):
+                elif _has_no_evidence(
+                use_internal, use_docs, attachments, pasted, project_folder
+            ):
                     # 根拠が1つも無ければ、呼んでも全欄が埋まらない。
                     # LLMを呼ぶ前に止める。
                     st.session_state.cowork_result = _cowork_error(
@@ -1164,6 +1202,7 @@ if st.session_state.generating:
                         names,
                         question,
                         attachments,
+                        pasted,
                         use_internal,
                         use_docs,
                         project_folder,
