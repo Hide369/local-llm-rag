@@ -37,6 +37,12 @@ PROJECT_BUDGET_CHARS = 16000
 # 本文0件・検索結果0件のまま PromptTooLongError で止まる。
 TREE_BUDGET_CHARS = 6000
 
+# 予算に入りきらないファイルを先頭だけ読むときの、最小の量。これを下回る切れ端は
+# 読まない。数百字では何のファイルかも伝わらないうえ、成果物の「参照したファイル」
+# に名前だけが並び、読んだものとして扱われる。1,000字あればモジュールの docstring
+# と import、あるいは文書の見出しと冒頭が入る。
+MIN_HEAD_CHARS = 1000
+
 
 class ProjectFolderError(Exception):
     """指定されたパスをプロジェクトフォルダとして扱えない。"""
@@ -91,21 +97,26 @@ def _resolved(root: Path, relative: str) -> Path | None:
 
 def read(
     root: Path, paths: list[str], budget: int = PROJECT_BUDGET_CHARS
-) -> tuple[list[tuple[str, str]], list[str]]:
+) -> tuple[list[tuple[str, str]], list[str], list[str]]:
     """選ばれたファイルの本文を、予算の範囲で読む。
 
     返り値の1つ目は (相対パス, 本文) の並びで、filling.fill_values の attachments に
     そのまま渡せる形である。プロジェクトフォルダは「添付の自動版」であり、専用の
     受け口を作らない。
 
-    2つ目は読まなかったファイル名の並びである。予算で溢れたもの、root の外を
-    指していたもの、開けなかったものをすべて含む。呼び出し元が画面で伝える。
+    2つ目は読まなかったファイル名の並びである。root の外を指していたもの、
+    開けなかったもの、切っても足りない量しか入らなかったものを含む。
+
+    3つ目は先頭だけ読んだファイル名の並びである。呼び出し元は2つ目と合わせて
+    画面に出す。黙って切ると、利用者は根拠の半分しか無い文書を全部を踏まえた
+    ものとして読む。
 
     予算で溢れたファイルは飛ばして次へ進む（そこで打ち切らない）。大きいファイルが
     1つ先頭にあるだけで、後ろの小さいファイルまで捨てる理由がない。
     """
     files: list[tuple[str, str]] = []
     skipped: list[str] = []
+    truncated: list[str] = []
     used = 0
     for relative in paths:
         path = _resolved(root, relative)
@@ -119,12 +130,33 @@ def read(
             skipped.append(relative)
             continue
         text = "\n".join(unit.text for unit in units).strip()
-        if not text or used + len(text) > budget:
+        if not text:
             skipped.append(relative)
             continue
+        if used + len(text) > budget:
+            head = _head(text, budget - used)
+            if head is None:
+                skipped.append(relative)
+                continue
+            text = head
+            truncated.append(relative)
         files.append((relative, text))
         used += len(text)
-    return files, skipped
+    return files, skipped, truncated
+
+
+def _head(text: str, room: int) -> str | None:
+    """予算に入りきらない本文から、渡す先頭部分を切り出す。入らなければ None。
+
+    渡すのは残りの半分までである。予算いっぱいまで渡すと、大きいファイルが
+    1つ先頭にあるだけで後ろのファイルが読めなくなり、read が守っている性質が
+    壊れる。半分にしておけば、何件続いても必ず次の分が残る。
+
+    MIN_HEAD_CHARS を下回るならそもそも渡さない。数百字の切れ端は本文の役に
+    立たないうえ、「参照したファイル」に名前だけが並び、読んだものとして扱われる。
+    """
+    allowed = room // 2
+    return text[:allowed] if allowed >= MIN_HEAD_CHARS else None
 
 
 def tree_text(
@@ -223,12 +255,17 @@ def _requested_paths(call: dict) -> list[str]:
     return [path for path in paths if isinstance(path, str)]
 
 
-def _tool_reply(files: list[tuple[str, str]], skipped: list[str]) -> str:
-    """読んだ結果をモデルへ返す文面。読めなかったものも伝える。
+def _tool_reply(
+    files: list[tuple[str, str]], skipped: list[str], truncated: list[str]
+) -> str:
+    """読んだ結果をモデルへ返す文面。読めなかったものと切ったものも伝える。
 
-    伝えないと、モデルは同じパスを何度も要求して周回を使い切る。
+    読めなかったものを伝えないと、モデルは同じパスを何度も要求して周回を
+    使い切る。切ったことを伝えないと、全文を読んだつもりで書く。
     """
     parts = [f"【{name}】\n{text}" for name, text in files]
+    if truncated:
+        parts.append("先頭だけ読みました（続きはありません）: " + "、".join(truncated))
     if skipped:
         parts.append("読めませんでした: " + "、".join(skipped))
     return "\n\n".join(parts) or "読めたファイルはありません。"
@@ -240,7 +277,7 @@ def gather(
     question: str,
     ask_tools_call,
     budget: int = PROJECT_BUDGET_CHARS,
-) -> tuple[list[tuple[str, str]], list[str]]:
+) -> tuple[list[tuple[str, str]], list[str], list[str]]:
     """モデルに読むファイルを選ばせ、読み、足りなければもう一周する。
 
     1回で選ばせる形では、読んでみて初めて要ると分かったファイルを取れない。
@@ -261,10 +298,7 @@ def gather(
     利用者に伝えるべき失敗である。
     """
     # 全部が予算に収まるなら、選ばせる意味がない。モデルに頼らず全部読む。
-    #
-    # 実測 2026-09-15: gpt-oss:20b は read_files を1度も呼ばず、「読むファイルを
-    # 選べませんでした」という警告だけが毎回出ていた。入るものを入れるのに
-    # モデルの協力を要求する理由はなく、LLM 呼び出しも1回減る。
+    # 入るものを入れるのにモデルの協力を要求する理由はなく、LLM 呼び出しも1回減る。
     #
     # entries の大きさはバイト数、予算は文字数であり単位が違う。UTF-8 では
     # バイト数が文字数以上になるので、この比較は安全側に倒れる。厳密な判定は
@@ -277,6 +311,7 @@ def gather(
     ]
     files: list[tuple[str, str]] = []
     skipped: list[str] = []
+    truncated: list[str] = []
     seen: set[str] = set()
     remaining = budget
 
@@ -290,15 +325,20 @@ def gather(
             # 同じファイルを2度読むと、予算を二重に使ったうえで履歴も膨らむ。
             wanted = [path for path in _requested_paths(call) if path not in seen]
             seen.update(wanted)
-            read_files, read_skipped = read(root, wanted, remaining)
+            read_files, read_skipped, read_truncated = read(
+                root, wanted, remaining
+            )
             files.extend(read_files)
             skipped.extend(read_skipped)
+            truncated.extend(read_truncated)
             remaining -= sum(len(text) for _, text in read_files)
             messages.append(
                 {
                     "role": "tool",
                     "tool_name": _TOOL_NAME,
-                    "content": _tool_reply(read_files, read_skipped),
+                    "content": _tool_reply(
+                        read_files, read_skipped, read_truncated
+                    ),
                 }
             )
         if remaining <= 0:
@@ -307,11 +347,16 @@ def gather(
     if not files:
         # モデルが1ファイルも読まなかった回は、こちらで読む。
         #
-        # 実測 2026-09-15: gpt-oss:20b は read_files を1度も呼ばず、成果物は毎回
-        # ファイル一覧だけを根拠に書かれていた。道具を使えるかどうかはモデル
-        # しだいであり、使えないモデルのときに根拠を0件にする理由はない。
-        # 選び方の精度は落ちるが、0件よりは確実によい。何を読んだかは成果物の
-        # 「参照したファイル」に出るので、利用者は結果から判断できる。
+        # 道具を使えるかどうかはモデルしだいであり、使えないモデルのときに
+        # 根拠を0件にする理由はない。選び方の精度は落ちるが、0件よりは確実に
+        # よい。何を読んだかは成果物の「参照したファイル」に出るので、利用者は
+        # 結果から判断できる。
+        #
+        # かつてここに「gpt-oss:20b は read_files を1度も呼ばない」と書いていたが、
+        # 誤りだった。実測 2026-09-15（ColabのL4に立てた Ollama、gpt-oss:20b）:
+        # docgen/ を指定すると1周目で13ファイル全部を要求し、リポジトリ全体でも
+        # 3周とも道具を呼んだ。0件になっていたのは、選んだファイルが予算より
+        # 大きく read() が丸ごと捨てていたためである（MIN_HEAD_CHARS 参照）。
         #
         # 順は一覧と同じ（パスの昇順）。小さい順だと些末なファイルで予算が
         # 埋まり、大きい順だと1本で使い切る。read() は入らないものを飛ばして
@@ -319,12 +364,16 @@ def gather(
         #
         # ループ中に読めなかったものは skipped に残す。ここで捨てると、モデルが
         # root の外を要求していた事実が画面から消える。
-        fallback_files, fallback_skipped = read(
+        fallback_files, fallback_skipped, fallback_truncated = read(
             root, [name for name, _ in entries], budget
         )
-        return fallback_files, skipped + fallback_skipped
+        return (
+            fallback_files,
+            skipped + fallback_skipped,
+            truncated + fallback_truncated,
+        )
 
-    return files, skipped
+    return files, skipped, truncated
 
 
 def write_output(root: Path, file_name: str, data: bytes) -> Path:
