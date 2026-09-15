@@ -150,7 +150,7 @@ def test_cowork_offers_the_register_button_before_any_template_exists(app, tmp_p
     ):
         app.run()
         app.segmented_control[0].set_value("Cowork").run()
-        button = next(b for b in app.button if b.label == "雛形を登録・削除")
+        button = next(b for b in app.button if b.label == "フォーマットファイルを登録・削除")
         button.click().run()
 
     assert not app.exception
@@ -399,7 +399,7 @@ def test_template_dialog_shows_a_broken_template_but_still_offers_delete(app, tm
     ):
         app.run()
         app.segmented_control[0].set_value("Cowork").run()
-        button = next(b for b in app.button if b.label == "雛形を登録・削除")
+        button = next(b for b in app.button if b.label == "フォーマットファイルを登録・削除")
         button.click().run()
 
     assert not app.exception
@@ -479,7 +479,7 @@ def test_cowork_attachments_are_captioned_through_the_vlm(app, tmp_path):
     assert seen == [vlm_module.caption_image]
 
 
-NO_TEMPLATE = "（雛形なし）"
+NO_TEMPLATE = "（フォーマットファイルなし）"
 
 
 def test_cowork_offers_generating_without_a_template(app, tmp_path):
@@ -1214,3 +1214,23 @@ def test_a_paste_of_only_whitespace_is_not_evidence(app, tmp_path):
 
     assert not app.exception
     assert any("根拠" in error.value for error in app.error)
+
+
+def test_the_screen_calls_it_a_format_file(app, tmp_path):
+    """画面では「雛形」と呼ばない。利用者が使う語に合わせる。
+
+    コードの中の template / 雛形 はそのままにしてある。画面の呼び方を変える
+    たびに識別子まで追いかけると、履歴が読みにくくなるだけで得るものがない。
+    """
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+
+    assert not app.exception
+    assert app.selectbox(key="template").label == "フォーマットファイル"
+    assert "（フォーマットファイルなし）" in app.selectbox(key="template").options
+    assert not any("雛形" in str(option)
+                   for option in app.selectbox(key="template").options)

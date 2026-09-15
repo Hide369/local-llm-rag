@@ -74,7 +74,7 @@ MODE_COWORK = "Cowork"
 
 # 雛形を選ばない選択肢。プルダウンの先頭に置く。雛形が0件でも画面が成立する
 # ようにするため、選択肢そのものを常に存在させる。
-NO_TEMPLATE = "（雛形なし）"
+NO_TEMPLATE = "（フォーマットファイルなし）"
 
 # 貼り付けたテキストが「参照したファイル」に並ぶときの名前。ファイル名を持たない
 # ため、こちらで付ける。定数にするのは、画面のラベルと成果物の一覧で別の呼び方を
@@ -275,14 +275,14 @@ def upload_dialog(collection):
                     st.rerun()
 
 
-@st.dialog("雛形を登録・削除する")
+@st.dialog("フォーマットファイルを登録・削除する")
 def template_dialog():
     st.caption(
-        "雛形の空欄は {{会議名}} のように書いてください。"
-        "登録した雛形はこのマシンの templates/ に残ります。"
+        "フォーマットファイルの空欄は {{会議名}} のように書いてください。"
+        "登録したフォーマットファイルはこのマシンの templates/ に残ります。"
     )
     uploaded = st.file_uploader(
-        "雛形のファイル",
+        "フォーマットファイル",
         type=sorted(suffix.lstrip(".") for suffix in docgen.SUPPORTED_SUFFIXES),
         accept_multiple_files=True,
         key="template_files",
@@ -643,7 +643,7 @@ def _generate_document(
     missing = [name for name in names if name not in values]
     if missing:
         result["warnings"].append(
-            f"埋まらなかった欄: {'、'.join(missing)}（雛形の {{{{印}}}} が残ります）"
+            f"埋まらなかった欄: {'、'.join(missing)}（フォーマットファイルの {{{{印}}}} が残ります）"
         )
     if undrawn:
         # 図にできなかったことは開く前に伝える。黙って Mermaid のテキストが
@@ -1036,7 +1036,7 @@ if mode == MODE_COWORK:
     # 正規の選択肢になった今、その警告は行き止まりを指すだけになる。
     choices = [NO_TEMPLATE] + docgen_templates.templates()
     template_choice = left.selectbox(
-        "雛形",
+        "フォーマットファイル",
         choices,
         format_func=lambda item: item if item == NO_TEMPLATE else item.name,
         key="template",
@@ -1046,7 +1046,7 @@ if mode == MODE_COWORK:
     # 登録ボタンは雛形が0件でも出す。ここを「1件以上あるとき」の側に置くと、
     # 初めて Cowork を開いた人の画面に雛形を登録する手段が1つも無くなり、
     # 警告文だけが存在しないボタンを指す行き止まりになる。
-    if right.button("雛形を登録・削除", disabled=st.session_state.generating):
+    if right.button("フォーマットファイルを登録・削除", disabled=st.session_state.generating):
         st.session_state.template_dialog_open = True
 
     output_suffix = markdown_document.OUTPUT_SUFFIXES[0]
