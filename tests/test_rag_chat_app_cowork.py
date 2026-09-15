@@ -1051,3 +1051,94 @@ def test_the_user_can_still_turn_it_off_for_a_source_format(app, tmp_path):
 
     assert not app.exception
     assert app.checkbox(key="cowork_docs").value is False
+
+
+def _docs_store(count):
+    """技術ドキュメント側のスタブ。社内資料と別のDBを返し分ける。"""
+    def factory(db_path, *args, **kwargs):
+        collection = open_real_store(":memory:")
+        if "docs_store" in str(db_path):
+            for index in range(count):
+                collection.add(
+                    ids=[f"docs-{index}"],
+                    documents=["Goroutines run concurrently."],
+                    embeddings=[[0.1, 0.2]],
+                    metadatas=[{"source": "go-spec.md", "location_type": "section",
+                                "location": index}],
+                )
+        else:
+            collection.add(
+                ids=["chunk-1"],
+                documents=["第5回 AI活用検討会を開催した。"],
+                embeddings=[[0.1, 0.2]],
+                metadatas=[{"source": "議事録.docx", "location_type": "section",
+                            "location": 1}],
+            )
+        return collection
+
+    return factory
+
+
+def _run_with_docs(app, tmp_path, *, docs_count, rerank_score, topic_reply,
+                   query_vector=(0.1, 0.2)):
+    with (
+        patch.object(store_module, "open_store", _docs_store(docs_count)),
+        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
+        patch.object(retrieval, "embed_query", lambda *a, **k: list(query_vector)),
+        patch.object(reranker_module, "rerank",
+                     lambda query, texts: [rerank_score] * len(texts)),
+        patch.object(chat, "ask_json", lambda *a, **k: topic_reply),
+        patch.object(chat, "ask_text", lambda *a, **k: "# 設計書\n\n本文\n"),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+        app.selectbox(key="template").set_value(NO_TEMPLATE).run()
+        app.selectbox(key="output_suffix").set_value(".go").run()
+        app.chat_input[0].set_value("Go で取り込み処理を書いて").run()
+    return "\n".join(note.value for note in _notes(app))
+
+
+def test_an_empty_docs_search_reports_the_query_it_used(app, tmp_path):
+    """「0件でした」だけでは、クエリが悪いのか床が切ったのか分からない。"""
+    notes = _run_with_docs(
+        app, tmp_path, docs_count=3, rerank_score=-5.0,
+        topic_reply='{"query": "Go io package"}',
+    )
+
+    assert "Go io package" in notes
+
+
+def test_an_empty_docs_search_reports_that_the_floor_cut_it(app, tmp_path):
+    """床を外すと残るなら、直すべきは床であってクエリではない。"""
+    notes = _run_with_docs(
+        app, tmp_path, docs_count=3, rerank_score=-5.0,
+        topic_reply='{"query": "Go io package"}',
+    )
+
+    assert "下限" in notes
+    assert "-5.00" in notes
+
+
+def test_an_empty_docs_search_says_when_nothing_matched_at_all(app, tmp_path):
+    """床を外しても0件なら、そのクエリでは資料に当たっていない。
+
+    資料はあるが検索が当たらない状況を作る。埋め込みを離し、語の重なりも
+    無いクエリにして、ベクトルもBM25も候補を出さない形にする。
+    """
+    notes = _run_with_docs(
+        app, tmp_path, docs_count=3, rerank_score=9.0,
+        topic_reply='{"query": "zzzz qqqq"}',
+        query_vector=(0.9, -0.9),
+    )
+
+    assert "外しても0件" in notes
+
+
+def test_an_empty_docs_search_names_a_failed_query_generation(app, tmp_path):
+    """依頼文がそのまま検索に使われていたら、原因はクエリ生成である。"""
+    notes = _run_with_docs(
+        app, tmp_path, docs_count=3, rerank_score=-5.0,
+        topic_reply="壊れた返答",
+    )
+
+    assert "依頼文がそのまま" in notes
