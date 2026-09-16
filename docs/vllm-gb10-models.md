@@ -42,12 +42,11 @@
 
 **最初に読むべき注意が2つある。**
 
-1. **埋め込みを替えると、ベクトルDBの作り直しとコード変更が必ず要る。**
-   `ingest/embedder.py:19` に `EMBED_DIM = 1024` がハードコードされている。
-   Nemotron-3-Embedは2048次元なので、この定数の変更と `--force` での全件再取り込みが
-   要る。さらにこのモデルは `query:` / `passage:` の接頭辞を前提にしており、
-   検索側と取り込み側で付け分ける実装が要る（[後述](#本リポジトリに入れるときに必要な変更)）。
-   **埋め込みは最後に移すこと。**
+1. **埋め込みを替えると、ベクトルDBの作り直しが必ず要る。** 次元（`EMBED_DIM`）も
+   接頭辞（`EMBED_QUERY_PREFIX` / `EMBED_PASSAGE_PREFIX`）も `.env` で変えられるが、
+   Nemotron-3-Embedは2048次元なので、**1024次元で作った既存のDBは使えない**。
+   `--force` での全件再取り込みと、`RELEVANCE_THRESHOLD` の測り直しが要る
+   （[後述](#本リポジトリに入れるときに必要な変更)）。**埋め込みは最後に移すこと。**
 2. **Nemotron 3は推論（reasoning）モデルである。** 思考を出す。`--reasoning-parser` を
    付けないと思考が本文に混ざり、`ingest/chat.py` の `ask_json`（JSONだけを期待する
    経路）が壊れる。起動フラグでの指定は必須である。
@@ -351,30 +350,43 @@ vllm_run vllm-rerank 8004 -- \
 
 ## 本リポジトリに入れるときに必要な変更
 
-**設定だけでは繋がらない。** 理由は [docs/vllm-gb10.md の8節](vllm-gb10.md#8-本リポジトリのragとつなぐ)の
-とおりで、このアプリはOllamaのネイティブAPIを直接叩いている。モデルを替えると、
-それに加えて以下が要る。
+**経路の切り替えはコードに入っている。** `ingest/backend.py` が接続先を決め、
+`LLM_BACKEND=vllm` で生成・埋め込み・VLMのすべてが OpenAI 互換API へ回る
+（[docs/vllm-gb10.md の8節](vllm-gb10.md#8-本リポジトリのragとつなぐ)）。
+`.env` に書くのは次の値である。
 
-|変更箇所|いま|vLLM＋Nemotronでは|
-|---|---|---|
-|`ingest/embedder.py:19`|`EMBED_DIM = 1024`|`2048`（Nemotron-3-Embed-1B）。bge-m3のままなら変更不要|
-|`ingest/embedder.py`（`embed_texts` / `embed_query`）|`/api/embed` に生のテキスト|`/v1/embeddings`。**取り込み側に `passage: `、検索側に `query: ` を付け分ける**|
-|`ingest/chat.py`（`ask_json`）|`"format": "json"`|vLLMでは `response_format: {"type":"json_object"}`（構造化出力）。**このキーは効かないので必ず置き換える**|
-|`ingest/chat.py`（`NUM_CTX = 8192`）|`options.num_ctx` で指定|vLLMは起動時の `--max-model-len` で決まり、リクエストごとには指定しない。**推論モデルは思考でトークンを食うため、8192相当のままだと回答が出ないまま打ち切られる**（この定数のコメントにある `gpt-oss:20b` での実測と同じ現象が、より強く出る）|
-|`ingest/chat.py`（応答の取り出し）|`message.content`|`choices[0].message.content`。思考は `reasoning_content` に分かれる（`--reasoning-parser` 前提）|
-|`ingest/vlm.py`|`messages[].images: [base64]`|`content` を配列にして `{"type":"image_url","image_url":{"url":"data:image/png;base64,..."}}`|
-|ベクトルDB|1024次元で構築済み|**次元を変えたら `--force` で全件取り込み直し**。差分取り込みでは直らない|
-|`ingest/retrieval.py:40`|`RELEVANCE_THRESHOLD = 0.50`|**測り直しが要る。** 埋め込みモデルが変われば距離の分布そのものが変わる。圏内・圏外を分ける唯一の関門なので、この値が合わないと圏外の質問にも答えてしまう|
+```dotenv
+LLM_BACKEND=vllm
+VLLM_HOST=http://<GB10のアドレス>:8000
+VLLM_EMBED_HOST=http://<GB10のアドレス>:8002
+VLLM_VLM_HOST=http://<GB10のアドレス>:8003
+VLLM_API_KEY=<--api-key に渡した値>
+
+EMBED_MODEL=nvidia/Nemotron-3-Embed-1B-NVFP4
+EMBED_DIM=2048
+EMBED_QUERY_PREFIX="query: "
+EMBED_PASSAGE_PREFIX="passage: "
+OLLAMA_VLM_MODEL=nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-NVFP4
+```
+
+**設定では埋まらないものが4つ残る。** ここは手を動かす必要がある。
+
+|残る作業|なぜ設定で済まないか|
+|---|---|
+|`rag_chat_app.py` の `MODELS`|`["gpt-oss:20b"]` が直に書いてある。vLLMではサーバーが出しているHFのハンドルがモデル名になる（`curl http://<host>:8000/v1/models` で確認できる）|
+|ベクトルDBの作り直し|次元が変われば既存の `vector_store.sqlite3` は使えない。差分取り込みでは直らない|
+|`ingest/retrieval.py:40` の `RELEVANCE_THRESHOLD = 0.50`|埋め込みモデルが変われば距離の分布そのものが変わる。圏内・圏外を分ける唯一の関門なので、合わないと圏外の質問にも答えてしまう。`scripts/check_retrieval.py` で測り直す|
+|vLLM側の `--max-model-len`|`ingest/chat.py` の `NUM_CTX = 8192` は Ollama 専用である。vLLMの文脈長はサーバー起動時に決まり、リクエストごとには変えられない。**推論モデルは思考でトークンを食うため、ここを絞ると回答が出ないまま打ち切られる**|
 
 ```powershell
 # 埋め込みのモデルまたは経路を変えたら、必ずこれを実行する
 .\myvenv313\Scripts\python.exe -m scripts.ingest_source --force
 ```
 
-`EMBED_DIM` はテストが7ファイルから参照している（`tests/test_store.py` ほか）。
-定数を変えればテスト側は追随するが、**実在のDBは追随しない**。ここを取り違えると、
-検索が黙って的外れになる（次元が合わなければエラーになるが、接頭辞の付け忘れは
-エラーにならない）。
+取り込み直す前に `vector_store.sqlite3` を退避しておくこと。次元が合わなければ
+エラーで止まるが、**接頭辞の付け忘れはエラーにならない**。静かに精度だけが
+落ちるので、`.env` に `EMBED_QUERY_PREFIX` / `EMBED_PASSAGE_PREFIX` を書いたか、
+取り込み前に必ず確かめる。
 
 ## 移行の順序
 

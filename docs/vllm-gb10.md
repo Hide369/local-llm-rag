@@ -505,42 +505,49 @@ curl http://localhost:8002/v1/embeddings \
 
 ## 8. 本リポジトリのRAGとつなぐ
 
-**ここが一番の落とし穴である。`OLLAMA_HOST` にvLLMのURLを入れても動かない。**
+**`.env` の `LLM_BACKEND` で切り替える。** 生成・埋め込み・VLMのすべてが、
+`ingest/backend.py` の判定に従って接続先を変える。
 
-本リポジトリはOllamaの**ネイティブAPI**を直接叩いている。
+```dotenv
+LLM_BACKEND=vllm
+VLLM_HOST=http://<GB10のアドレス>:8000        # 生成
+VLLM_EMBED_HOST=http://<GB10のアドレス>:8002  # 埋め込み（1本にまとめているなら不要）
+VLLM_VLM_HOST=http://<GB10のアドレス>:8003    # VLM（同上）
+VLLM_API_KEY=<--api-key に渡した値>
+```
 
-|呼び出し元|叩いているURL|
-|---|---|
-|`ingest/chat.py`（`ask_json` / `ask_text` / `stream_chat`）|`{OLLAMA_HOST}/api/chat`|
-|`ingest/embedder.py`（`embed_texts` / `embed_query`）|`{OLLAMA_HOST}/api/embed`|
+**`OLLAMA_HOST` にvLLMのURLを入れるのは間違いである。** こちらはOllamaの
+ネイティブAPI（`/api/chat`・`/api/embed`）の宛先で、vLLMが出すのは
+`/v1/...` のOpenAI互換APIだけなので404が返る。切り替えるのは `LLM_BACKEND` である。
 
-vLLMが出すのは `/v1/...` のOpenAI互換APIだけで、`/api/chat` も `/api/embed` も無い。
-`.env` の `OLLAMA_HOST` をvLLMに向ければ、404が返るだけである。
-（`coding_agent/` だけは `base_url` に `/v1` を付けており、これはOllamaの
-OpenAI互換エンドポイントを使っている。RAG本体とは別経路である。）
+経路の違いは `ingest/backend.py` に集めてあり、呼び出し側は `is_vllm()` しか
+見ない。何がどう変わるかは次のとおり。
 
-取りうる道は3つある。
+|呼び出し元|Ollama|vLLM|
+|---|---|---|
+|`ingest/chat.py`（`ask_json` / `ask_text` / `ask_tools` / `stream_chat`）|`/api/chat`。`format: "json"`、`options.num_ctx`、NDJSONのストリーム|`/v1/chat/completions`。`response_format`、SSEのストリーム。**`num_ctx` は送らない**|
+|`ingest/embedder.py`（`embed_texts` / `embed_query`）|`/api/embed`|`/v1/embeddings`。`index` に従って並べ直す|
+|`ingest/vlm.py`（`caption_image`）|`messages[].images` にbase64|`content` を配列にして `image_url` に data URL|
+|疎通確認（`check_ollama` / `check_vlm`）|`/api/tags`|`/v1/models`|
 
-**(a) GB10にOllamaも入れ、RAGはOllama・エージェントはvLLM（改修ゼロ・推奨の第一歩）**
+**`num_ctx` が効かなくなる点だけは設定では埋められない。** vLLMの文脈長は
+サーバー起動時の `--max-model-len` で決まる。`ingest/chat.py` の冒頭に書いてある
+「思考だけで文脈を使い切って回答が1文字も出ない」現象は、思考を出すモデル
+（Nemotron 3 など）でより強く出る。起動時に十分な `--max-model-len` を取ること。
+
+サイドバーのモデル名（`rag_chat_app.py` の `MODELS`）も差し替えが要る。vLLMでは
+`gpt-oss:20b` ではなく、サーバーが出しているHFのハンドルがモデル名になる
+（`curl http://<host>:8000/v1/models` で確認できる）。
+
+### まずOllamaのまま繋ぐ道もある
 
 DGX Spark playbookには `ollama` の項目もあり、GB10でOllamaは動く。RAG側は
-`.env` の `OLLAMA_HOST` をGB10のOllamaに向けるだけで済む（[README「ColabのL4 GPUに
-接続する」](../README.md#colabのl4-gpuに接続する)と同じ仕組みで、向き先が
-ngrokからLANのアドレスに変わるだけである）。vLLMはコーディングエージェント専用に
-使う。**まずこれで動かし、RAGの生成をvLLMへ寄せるかは実測してから決める**のが安全である。
-Ollamaとの併存では、両者が同じ128GBを食い合う点にだけ注意する。
-
-**(b) OpenAI互換の経路をコードに足す（本命）**
-
-変更が要るのは実質4か所（`ask_json` / `ask_text` / `stream_chat` / `embed_texts`）で、
-`OLLAMA_HOST` とは別に `OPENAI_BASE_URL` のような設定を読み、`/v1/chat/completions` と
-`/v1/embeddings` を叩く実装を選べるようにする。Ollama経路を消さずに足すこと
-（ノートPC単体での利用と、Colab接続が生きているため）。
-
-**(c) 変換プロキシを挟む**
-
-Ollamaネイティブ形式をOpenAI形式へ翻訳する層を自前で立てる。依存と障害点が増える
-だけで、(b) より優れる点が無い。採らない。
+`.env` の `OLLAMA_HOST` をGB10のOllamaに向けるだけで、`LLM_BACKEND` も触らずに
+済む（[README「ColabのL4 GPUに接続する」](../README.md#colabのl4-gpuに接続する)と
+同じ仕組みで、向き先がngrokからLANのアドレスに変わるだけである）。vLLMは
+コーディングエージェント専用に使う。**サーバーが変わった影響だけを先に確認したい
+なら、この順が安全である。** Ollamaとの併存では、両者が同じ128GBを食い合う点に
+だけ注意する。
 
 ### 埋め込みを移すときの必須手順
 
@@ -553,8 +560,12 @@ DBに入っているベクトルと問い合わせのベクトルは同じ経路
 .\myvenv313\Scripts\python.exe -m scripts.ingest_source --force
 ```
 
-生成（`/api/chat`）だけを差し替える場合は、DBの作り直しは要らない。
-**移行は「生成だけ先に」「埋め込みは後で、再取り込みとセットで」の順が安全である。**
+生成だけを差し替える場合は、DBの作り直しは要らない。生成と埋め込みで接続先を
+分けたいなら、`LLM_BACKEND=vllm` にしたうえで `VLLM_EMBED_HOST` を
+Ollama側へ向ける、という組み合わせはできない（経路ごと切り替わるため）。
+**移行は「生成だけ先に」「埋め込みは後で、再取り込みとセットで」の順が安全で、
+その「先に」の段階では上の『まずOllamaのまま繋ぐ道』か、vLLM側に
+`EMBED_MODEL=bge-m3` を立てて次元を1024のまま保つ。**
 
 ### 外部通信の観点
 

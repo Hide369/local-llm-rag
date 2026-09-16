@@ -579,6 +579,7 @@ Colabの `gpt-oss:20b` をVS Codeのコーディングエージェントとし�
 | パス | 役割 |
 |---|---|
 | `ingest/` | 取り込みパイプライン（UIに依存しない） |
+| `ingest/backend.py` | 生成・埋め込み・VLMの接続先を Ollama と vLLM（OpenAI互換）で切り替える。既定は Ollama |
 | `ingest/conditions.py` | 質問から絞り込み条件を抽出する（LLMに依存） |
 | `ingest/catalog.py` | 条件で資料を絞り込み仕様表に整形する（LLMに依存しない） |
 | `ingest/vector_store.py` | ベクトルストアの本体。SQLite・L2正規化・トランザクション・総当たりcosine検索 |
@@ -596,9 +597,11 @@ Colabの `gpt-oss:20b` をVS Codeのコーディングエージェントとし�
 | `infra/gitlab/` | ローカルGitLab CEのDocker定義（アプリ本体には非依存） |
 | `run_gitlab.ps1` | ローカルGitLabの起動・停止・同期 |
 
-ベクトルは `vector_store.sqlite3`（bge-m3 / 1024次元 / cosine）に保存する。1つの
-埋め込みモデルしか入らない設計で、モデルを差し替えるときはファイルごと消して
-入れ直す（`ingest/vector_store.py` 参照）。現在のファイル数とチャンク数は
+ベクトルは `vector_store.sqlite3`（既定では bge-m3 / 1024次元 / cosine）に保存する。
+1つの埋め込みモデルしか入らない設計で、モデルを差し替えるときはファイルごと消して
+入れ直す（`ingest/vector_store.py` 参照）。次元は `EMBED_DIM` で変えられるが、
+**変えたら既存のDBは作り直しになる**。同じ理由で `ingest/retrieval.py` の
+`RELEVANCE_THRESHOLD` も測り直しが要る（`scripts.check_retrieval`）。現在のファイル数とチャンク数は
 `scripts.ingest_source` が実行のたびに表示するので、そちらを正とすること。
 
 **テーブルは2つに分かれている。** `chunks` が本文とベクトルを、`occurrences` が

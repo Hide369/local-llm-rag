@@ -11,6 +11,13 @@ openaiパッケージ経由（/v1/chat/completions）では、options.num_ctxを
 
 ネイティブAPI（このモジュール）ならoptions.num_ctxが確実に反映される
 （`/api/chat`に直接投げて`/api/ps`のcontext_lengthが変わることを確認済み）。
+
+`LLM_BACKEND=vllm` のときは OpenAI 互換の `/v1/chat/completions` を叩く
+（接続先の判定は ingest/backend.py）。この経路では **num_ctx は送らない**。
+vLLM の文脈長はサーバー起動時の `--max-model-len` で決まり、リクエストごとには
+変えられないためである。上に書いた「思考で使い切って回答が出ない」問題は、
+思考を出すモデル（Nemotron 3 など）でより強く出る。vLLM 側の `--max-model-len` を
+十分に取ること。詳しくは docs/vllm-gb10-models.md にある。
 """
 import json
 import time
@@ -18,6 +25,7 @@ from collections.abc import Iterator
 
 import requests
 
+from ingest import backend
 from ingest.embedder import OLLAMA_HOST, new_session
 
 # qwen3:32b（VRAM残り約4GB、L4=24GB中20GBをモデル本体が占有）でも安全に収まる値。
@@ -34,6 +42,87 @@ class ChatError(Exception):
     """チャット生成に失敗した。"""
 
 
+def _openai_messages(messages: list[dict]) -> list[dict]:
+    """Ollama 形の履歴を OpenAI 互換の形へ直す。
+
+    道具の結果を返すメッセージの形が違う。Ollama は
+    `{"role": "tool", "tool_name": 名前}`、OpenAI 互換は
+    `{"role": "tool", "tool_call_id": 呼び出しのid}` である。履歴を積むのは
+    docgen/project.py で、そちらに接続先の事情を持ち込みたくないので、
+    送る直前のここで直す。idは直前のアシスタントの tool_calls から名前で引く。
+    """
+    ids_by_name: dict[str, str] = {}
+    converted: list[dict] = []
+    for message in messages:
+        if message.get("role") == "assistant":
+            for call in message.get("tool_calls") or []:
+                name = (call.get("function") or {}).get("name")
+                if name and call.get("id"):
+                    ids_by_name[name] = call["id"]
+        if message.get("role") == "tool" and "tool_call_id" not in message:
+            call_id = ids_by_name.get(message.get("tool_name"))
+            message = {
+                key: value for key, value in message.items() if key != "tool_name"
+            }
+            if call_id:
+                message["tool_call_id"] = call_id
+        converted.append(message)
+    return converted
+
+
+def _request(
+    model: str,
+    messages: list[dict],
+    *,
+    num_ctx: int,
+    stream: bool = False,
+    temperature: float | None = None,
+    json_format: bool = False,
+    tools=None,
+) -> tuple[str, dict]:
+    """接続先に合わせてURLと本文を組み立てる。
+
+    違いはここだけに閉じる。再試行の回数と待ち、タイムアウト、セッションの
+    扱いは呼び出し側で共通のままにしておきたいためである。
+    """
+    if backend.is_vllm():
+        payload: dict = {
+            "model": model,
+            "messages": _openai_messages(messages),
+            "stream": stream,
+        }
+        if temperature is not None:
+            payload["temperature"] = temperature
+        if json_format:
+            # Ollama の "format": "json" に当たる。キー名が違うので黙って無視される。
+            payload["response_format"] = {"type": "json_object"}
+        if tools is not None:
+            payload["tools"] = tools
+        return backend.chat_url(), payload
+
+    payload = {
+        "model": model,
+        "messages": messages,
+        "stream": stream,
+        "keep_alive": "30m",
+        "options": {"num_ctx": num_ctx},
+    }
+    if temperature is not None:
+        payload["options"]["temperature"] = temperature
+    if json_format:
+        payload["format"] = "json"
+    if tools is not None:
+        payload["tools"] = tools
+    return f"{OLLAMA_HOST}/api/chat", payload
+
+
+def _content(body: dict) -> str:
+    """応答から本文を取り出す。"""
+    if backend.is_vllm():
+        return backend.message_content(body)
+    return body["message"]["content"]
+
+
 def ask_json(model: str, prompt: str, session=None, num_ctx: int = NUM_CTX) -> str:
     """JSONオブジェクト1個だけを返させる。条件抽出用。temperature=0固定。
 
@@ -48,27 +137,25 @@ def ask_json(model: str, prompt: str, session=None, num_ctx: int = NUM_CTX) -> s
     own_session = session is None
     session = session or new_session()
     try:
-        url = f"{OLLAMA_HOST}/api/chat"
-        payload = {
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "stream": False,
-            "format": "json",
-            "keep_alive": "30m",
-            "options": {"temperature": 0, "num_ctx": num_ctx},
-        }
+        url, payload = _request(
+            model,
+            [{"role": "user", "content": prompt}],
+            num_ctx=num_ctx,
+            temperature=0,
+            json_format=True,
+        )
         last_error = None
         for attempt in range(_MAX_ATTEMPTS):
             try:
                 response = session.post(url, json=payload, timeout=_TIMEOUT)
                 response.raise_for_status()
-                return response.json()["message"]["content"]
+                return _content(response.json())
             except (requests.RequestException, KeyError, ValueError) as error:
                 last_error = error
                 if attempt < _MAX_ATTEMPTS - 1:
                     time.sleep(2**attempt)
         raise ChatError(
-            f"{OLLAMA_HOST} への生成リクエストが{_MAX_ATTEMPTS}回失敗しました: {last_error}"
+            f"{url} への生成リクエストが{_MAX_ATTEMPTS}回失敗しました: {last_error}"
         )
     finally:
         if own_session:
@@ -87,26 +174,21 @@ def ask_text(model: str, prompt: str, session=None, num_ctx: int = NUM_CTX) -> s
     own_session = session is None
     session = session or new_session()
     try:
-        url = f"{OLLAMA_HOST}/api/chat"
-        payload = {
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "stream": False,
-            "keep_alive": "30m",
-            "options": {"num_ctx": num_ctx},
-        }
+        url, payload = _request(
+            model, [{"role": "user", "content": prompt}], num_ctx=num_ctx
+        )
         last_error = None
         for attempt in range(_MAX_ATTEMPTS):
             try:
                 response = session.post(url, json=payload, timeout=_TIMEOUT)
                 response.raise_for_status()
-                return response.json()["message"]["content"]
+                return _content(response.json())
             except (requests.RequestException, KeyError, ValueError) as error:
                 last_error = error
                 if attempt < _MAX_ATTEMPTS - 1:
                     time.sleep(2**attempt)
         raise ChatError(
-            f"{OLLAMA_HOST} への生成リクエストが{_MAX_ATTEMPTS}回失敗しました: {last_error}"
+            f"{url} への生成リクエストが{_MAX_ATTEMPTS}回失敗しました: {last_error}"
         )
     finally:
         if own_session:
@@ -131,27 +213,29 @@ def ask_tools(model: str, messages, tools, session=None, num_ctx: int = NUM_CTX)
     own_session = session is None
     session = session or new_session()
     try:
-        url = f"{OLLAMA_HOST}/api/chat"
-        payload = {
-            "model": model,
-            "messages": messages,
-            "tools": tools,
-            "stream": False,
-            "keep_alive": "30m",
-            "options": {"num_ctx": num_ctx},
-        }
+        url, payload = _request(model, messages, num_ctx=num_ctx, tools=tools)
         last_error = None
         for attempt in range(_MAX_ATTEMPTS):
             try:
                 response = session.post(url, json=payload, timeout=_TIMEOUT)
                 response.raise_for_status()
-                return response.json()["message"]
+                body = response.json()
+                if not backend.is_vllm():
+                    return body["message"]
+                message = body["choices"][0]["message"]
+                # 呼び出し側はこれを履歴へ積み直す。思考まで送り返すと文脈を
+                # 食うだけなので、次の周に要る3つだけを残す。
+                return {
+                    "role": message.get("role", "assistant"),
+                    "content": message.get("content") or "",
+                    "tool_calls": message.get("tool_calls") or [],
+                }
             except (requests.RequestException, KeyError, ValueError) as error:
                 last_error = error
                 if attempt < _MAX_ATTEMPTS - 1:
                     time.sleep(2**attempt)
         raise ChatError(
-            f"{OLLAMA_HOST} への生成リクエストが{_MAX_ATTEMPTS}回失敗しました: {last_error}"
+            f"{url} への生成リクエストが{_MAX_ATTEMPTS}回失敗しました: {last_error}"
         )
     finally:
         if own_session:
@@ -169,19 +253,18 @@ def stream_chat(
     own_session = session is None
     session = session or new_session()
     try:
-        url = f"{OLLAMA_HOST}/api/chat"
-        payload = {
-            "model": model,
-            "messages": messages,
-            "stream": True,
-            "keep_alive": "30m",
-            "options": {"temperature": temperature, "num_ctx": NUM_CTX},
-        }
+        url, payload = _request(
+            model, messages, num_ctx=NUM_CTX, stream=True, temperature=temperature
+        )
         try:
             response = session.post(url, json=payload, stream=True, timeout=_TIMEOUT)
             response.raise_for_status()
         except requests.RequestException as error:
-            raise ChatError(f"{OLLAMA_HOST} への生成リクエストに失敗しました: {error}") from error
+            raise ChatError(f"{url} への生成リクエストに失敗しました: {error}") from error
+
+        if backend.is_vllm():
+            yield from _stream_sse(response)
+            return
 
         for line in response.iter_lines():
             if not line:
@@ -200,3 +283,30 @@ def stream_chat(
     finally:
         if own_session:
             session.close()
+
+
+def _stream_sse(response) -> Iterator[str]:
+    """OpenAI互換のストリームを読む。
+
+    ネイティブAPIのNDJSONと違い、こちらはSSEで `data: ` が前に付き、最後に
+    `data: [DONE]` が来る。本文は message ではなく delta に入る。
+    """
+    for raw in response.iter_lines():
+        if not raw:
+            continue
+        line = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+        if not line.startswith("data:"):
+            continue
+        chunk = line[len("data:") :].strip()
+        if chunk == "[DONE]":
+            break
+        try:
+            data = json.loads(chunk)
+        except ValueError as error:
+            raise ChatError(f"生成結果を解釈できませんでした: {error}") from error
+        if data.get("error"):
+            raise ChatError(data["error"])
+        choices = data.get("choices") or [{}]
+        content = (choices[0].get("delta") or {}).get("content")
+        if content:
+            yield content
