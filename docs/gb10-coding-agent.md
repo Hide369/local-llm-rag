@@ -357,3 +357,4 @@ ColabのL4へ戻すなら、`.env` を `https://` のngrok URLと `OLLAMA_API_KE
 - [VS CodeでColabのgpt-oss:20bを使う](vscode-colab-agent.md) — 元の手順。コンテキスト長の選び方はこちらにある
 - [docs/mcp-tool-not-called.md](mcp-tool-not-called.md) — 道具が呼ばれないときの切り分け
 - [Playwright MCPの設定](playwright-mcp.md) — END行より後ろへ足す設定の実例
+- [VS CodeのClaude CodeをGB10へ向ける](claude-code-gb10.md) — Codexではなく Claude Code を使う場合。変換プロキシが1つ要る

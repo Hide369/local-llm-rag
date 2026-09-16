@@ -585,6 +585,9 @@ Colabの `gpt-oss:20b` をVS Codeのコーディングエージェントとし�
 [VS CodeでColabのgpt-oss:20bを使う](docs/vscode-colab-agent.md) を参照する。
 社内LANのGB10（DGX Spark）へ繋いで `gpt-oss:120b` を使う場合は
 [GB10のOllamaでコーディングエージェントを動かす](docs/gb10-coding-agent.md) を参照する。
+Codexではなく Claude Code を同じGB10へ向ける手順は
+[VS CodeのClaude CodeをGB10へ向ける](docs/claude-code-gb10.md) にある（Claude Code は
+Anthropic形式のAPIしか話さないため、変換プロキシが1つ要る）。
 
 | パス | 役割 |
 |---|---|
