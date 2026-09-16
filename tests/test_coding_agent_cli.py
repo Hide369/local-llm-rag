@@ -176,3 +176,38 @@ def test_saved_model_is_used_on_next_launch(tmp_path, monkeypatch):
         ("gpt-oss:120b", 65536),
         ("gpt-oss:20b", 131072),
     ]
+
+
+def test_saved_wire_api_is_used_on_next_launch(tmp_path, monkeypatch):
+    """--setup のたびに管理ブロックは作り直される。保存済みの値を拾わないと、
+    手で chat に直しても次回 responses へ戻ってしまう。
+    """
+    (tmp_path / ".env").write_text("OLLAMA_HOST=http://192.168.1.50:8000\n")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    runtime = cli.runtime_directory(tmp_path)
+    (runtime / "codex").mkdir(parents=True)
+    (runtime / "codex/config.toml").write_text(
+        'model = "openai/gpt-oss-120b"\n'
+        'model_provider = "colab-oss"\n'
+        "\n"
+        '[model_providers.colab-oss]\n'
+        'wire_api = "chat"\n'
+    )
+    received = []
+
+    class Client:
+        def __init__(self, settings):
+            received.append((settings.model, settings.wire_api))
+
+        def inspect(self):
+            return {"tools": True}
+
+    monkeypatch.setattr(cli, "OllamaClient", Client)
+    assert cli.main(["--check", "--project", str(tmp_path)]) == 0
+    assert cli.main(
+        ["--check", "--project", str(tmp_path), "--wire-api", "responses"]
+    ) == 0
+    assert received == [
+        ("openai/gpt-oss-120b", "chat"),
+        ("openai/gpt-oss-120b", "responses"),
+    ]

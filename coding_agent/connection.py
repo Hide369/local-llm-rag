@@ -25,6 +25,17 @@ from dotenv import dotenv_values
 # gpt-oss:120b のような大きいモデルを選ぶ理由がある。名前が正しいかどうかは
 # ここでは判断できないので、--check が接続先のOllamaに在庫を問い合わせる。
 DEFAULT_MODEL = "gpt-oss:20b"
+
+# Codex がどのエンドポイントを叩くか。"responses" は /v1/responses、"chat" は
+# /v1/chat/completions である。既定を responses にしてあるのは、Ollama 相手に
+# 実際に使ってきた経路がこちらだからで、変えると既存の運用が動かなくなる。
+#
+# vLLM へ向けるときは chat を選ぶ理由がある。vLLM の Responses API は
+# 「ストリーミングが最小限で、道具の呼び出しと結果がまとめて返る」と公式の
+# recipe が明記しており、エージェントの用途では効いてくる。
+DEFAULT_WIRE_API = "responses"
+SUPPORTED_WIRE_APIS = ("responses", "chat")
+
 _BACKUP_SUFFIX = "-before-coding-agent"
 # 選べる値を並べて固定している。自由入力にしないのは、打ち間違いを --probe の
 # 失敗まで持ち越さないためである。大きすぎる値を入れてもOllamaは例外を出さず、
@@ -133,6 +144,13 @@ def _validate_api_key(value: object, host: str = "") -> str:
     return value
 
 
+def _validate_wire_api(value: object) -> str:
+    if value not in SUPPORTED_WIRE_APIS:
+        allowed = "・".join(SUPPORTED_WIRE_APIS)
+        raise AgentError(f"wire_api は{allowed}のいずれかを指定してください")
+    return str(value)
+
+
 def _validate_model(value: object) -> str:
     """モデル名を検査する。在庫の有無はここでは分からない。
 
@@ -177,6 +195,7 @@ class AgentSettings:
     api_key: str = field(repr=False)
     model: str = DEFAULT_MODEL
     context_size: int = 65536
+    wire_api: str = DEFAULT_WIRE_API
 
     def __post_init__(self) -> None:
         # host を先に正規化する。APIキーを必須にするかどうかが宛先で決まるため、
@@ -185,10 +204,14 @@ class AgentSettings:
         object.__setattr__(self, "api_key", _validate_api_key(self.api_key, self.host))
         object.__setattr__(self, "model", _validate_model(self.model))
         object.__setattr__(self, "context_size", _validate_context_size(self.context_size))
+        object.__setattr__(self, "wire_api", _validate_wire_api(self.wire_api))
 
 
 def load_settings(
-    project: Path, context_size: int = 65536, model: str | None = None
+    project: Path,
+    context_size: int = 65536,
+    model: str | None = None,
+    wire_api: str | None = None,
 ) -> AgentSettings:
     """プロジェクト直下の.envだけから接続設定を読む。
 
@@ -211,6 +234,9 @@ def load_settings(
         api_key=_validate_api_key(values.get("OLLAMA_API_KEY"), host),
         model=_validate_model(model if model is not None else DEFAULT_MODEL),
         context_size=_validate_context_size(context_size),
+        wire_api=_validate_wire_api(
+            wire_api if wire_api is not None else DEFAULT_WIRE_API
+        ),
     )
 
 

@@ -13,7 +13,9 @@ import tomllib
 
 from coding_agent.connection import (
     DEFAULT_MODEL,
+    DEFAULT_WIRE_API,
     SUPPORTED_CONTEXT_SIZES,
+    SUPPORTED_WIRE_APIS,
     AgentError,
     OllamaClient,
     load_settings,
@@ -58,6 +60,11 @@ def main(argv=None):
         metavar="NAME",
         help=f"Ollamaのモデル名。省略時は保存済み設定、初回は{DEFAULT_MODEL}",
     )
+    parser.add_argument(
+        "--wire-api",
+        choices=SUPPORTED_WIRE_APIS,
+        help=f"Codexが叩くエンドポイント。省略時は保存済み設定、初回は{DEFAULT_WIRE_API}",
+    )
     args = parser.parse_args(argv)
     try:
         project = project_directory(args.project)
@@ -72,7 +79,14 @@ def main(argv=None):
         model = args.model
         if model is None:
             model = config.get("model", DEFAULT_MODEL)
-        settings = load_settings(project, context_size, model)
+        wire_api = args.wire_api
+        if wire_api is None:
+            # プロバイダ名は設定側が決めるので、model_provider から引く。
+            provider = config.get("model_providers", {}).get(
+                config.get("model_provider", ""), {}
+            )
+            wire_api = provider.get("wire_api", DEFAULT_WIRE_API)
+        settings = load_settings(project, context_size, model, wire_api)
         client = OllamaClient(settings)
         if args.check:
             result = client.inspect()
