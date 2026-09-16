@@ -131,14 +131,16 @@ GPUが同じ128GBを共有するので、**合計の管理は自分の仕事**�
 
 ```bash
 export VLLM_IMAGE=nvcr.io/nvidia/vllm:26.06-py3   # 最新タグはNGCで確認する
-export HF_TOKEN="<HuggingFaceのトークン>"
+export HF_TOKEN="<HuggingFaceのトークン>"   # ゲート付きモデルを扱う場合だけ
 mkdir -p ~/.cache/huggingface
 ```
 
-以下のモデルはすべてHuggingFaceから落ちてくる。**閉域で運用する場合は、外に
-出られるマシンで `hf download` してから `~/.cache/huggingface` を搬入し、
-`HF_HUB_OFFLINE=1` を立てる**（[docs/vllm-gb10.md の入手経路](vllm-gb10.md#入手経路とオフライン運用)）。
-NVIDIA製のモデルはNGCにも置かれているので、社内でNGCを使っているならそちらでもよい。
+以下のモデルはすべてHuggingFaceから落ちてくるが、**ゲート付きでなければログイン
+もトークンも要らない**。ゲート有無の判定、匿名で落とす手順、HFを使わない経路
+（`ollama pull` / NGC / ModelScope / 別マシンで取って搬入）は
+[docs/vllm-gb10.md の入手経路とオフライン運用](vllm-gb10.md#入手経路とオフライン運用)に
+まとめてある。閉域で運用するなら、外に出られるマシンで先に取って
+`~/.cache/huggingface` を搬入し、`HF_HUB_OFFLINE=1` を立てる。
 
 以降のコマンドは共通部分をまとめて `vllm_run()` として書く。
 
