@@ -417,7 +417,10 @@ Ollamaに肩代わりさせられる。現在Colab側に置いているのは `g
 - ローカルのOllamaに戻すには、`.env` の `OLLAMA_HOST` / `OLLAMA_API_KEY` を削除するか
   コメントアウトすればよい（既定値の `http://127.0.0.1:11434` に戻る）。
 
-## GB10サーバーにvLLMを立てる
+## GB10サーバーにvLLMを立てる（見送り）
+
+**2026-09-16に導入を見送った。このリポジトリはOllamaのまま運用する。**
+以下は調査の記録である。実機で動かしてはいない。
 
 Nvidia GB10（DGX Spark）を社内の推論サーバーにして、生成とコーディングエージェントを
 そこへ寄せる場合の手順は [docs/vllm-gb10.md](docs/vllm-gb10.md) にある。
@@ -427,12 +430,14 @@ GB10のデスクトップに直接キーボードを繋いで使うとき、テ�
 IMEが未導入だからである。その手当ては
 [docs/gb10-japanese-input.md](docs/gb10-japanese-input.md) にある。
 
-ひとつ注意がある。**`.env` の `OLLAMA_HOST` にvLLMのURLを入れても動かない。**
-このアプリは `ingest/chat.py` が `/api/chat`、`ingest/embedder.py` が `/api/embed` と、
-Ollamaのネイティブapiを直接叩いている。vLLMが出すのはOpenAI互換の `/v1/...` だけで、
-これらのパスは存在しない。GB10へ移す最初の一歩としては、GB10側にOllamaも入れて
-RAGはそのまま繋ぎ、vLLMはコーディングエージェント用に使う形が無改修で済む。
-詳しくは上の手順書の「本リポジトリのRAGとつなぐ」を参照。
+再開するときに最初に当たるのはここである。**`.env` の `OLLAMA_HOST` にvLLMのURLを
+入れても動かない。** このアプリは `ingest/chat.py` が `/api/chat`、
+`ingest/embedder.py` が `/api/embed` と、Ollamaのネイティブapiを直接叩いている。
+vLLMが出すのはOpenAI互換の `/v1/...` だけで、これらのパスは存在しない。
+接続先を切り替える実装は、取り込まずに閉じた
+[PR #75](https://github.com/Hide369/local-llm-rag/pull/75) に残っている。
+改修せずに済ませるなら、GB10側にOllamaも入れてRAGはそのまま繋ぎ、vLLMは
+コーディングエージェント用に使う形になる。
 
 ## フォーマットファイルから文書を作る（Cowork）
 
