@@ -423,6 +423,9 @@ Nvidia GB10（DGX Spark）を社内の推論サーバーにして、生成とコ
 そこへ寄せる場合の手順は [docs/vllm-gb10.md](docs/vllm-gb10.md) にある。
 載せるモデルの選定（生成・VLM・埋め込みの3本）と、その導入手順は
 [docs/vllm-gb10-models.md](docs/vllm-gb10-models.md) に分けてある。
+GB10のデスクトップに直接キーボードを繋いで使うとき、テキスト欄で日本語が打てないのは
+IMEが未導入だからである。その手当ては
+[docs/gb10-japanese-input.md](docs/gb10-japanese-input.md) にある。
 
 ひとつ注意がある。**`.env` の `OLLAMA_HOST` にvLLMのURLを入れても動かない。**
 このアプリは `ingest/chat.py` が `/api/chat`、`ingest/embedder.py` が `/api/embed` と、

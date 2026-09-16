@@ -465,6 +465,7 @@ DBに入っているベクトルと問い合わせのベクトルは同じ経路
 |コンテナを作り直すたびに巨大なDL|HFキャッシュを未マウント|`-v ~/.cache/huggingface:/root/.cache/huggingface` を必ず付ける|
 |初回起動が異様に遅い|モデルDLとカーネルのコンパイル|2回目以降は速くなる。`--load-format fastsafetensors` でロード自体も短縮できる|
 |`.env` の `OLLAMA_HOST` を向けたのにRAGが404|vLLMに `/api/chat` は無い|[8節](#8-本リポジトリのragとつなぐ)。設定では解決しない。経路の追加が要る|
+|GB10のデスクトップで日本語が打てない|IMEが未導入（vLLMとは無関係）|[docs/gb10-japanese-input.md](gb10-japanese-input.md)|
 
 2台以上のGB10をQSFPで繋いで `--tensor-parallel-size 2` 以上で動かす手順
 （Rayクラスタ）もplaybookにある。1台に載らないモデルを動かす必要が出てから読めばよい。
@@ -478,6 +479,7 @@ DBに入っているベクトルと問い合わせのベクトルは同じ経路
 - [vLLM issue #36821 — sm_121 / aarch64 でのビルド問題](https://github.com/vllm-project/vllm/issues/36821)
 - [vLLM issue #31128 — Blackwell SM121(DGX Spark) 対応](https://github.com/vllm-project/vllm/issues/31128)
 - [timothystewart6/vllm-gb10 — GB10（sm_121a）向けにビルドされた非公式イメージ](https://github.com/timothystewart6/vllm-gb10)
-- 本リポジトリ内: [docs/server-deployment.md](server-deployment.md)（公開構成の考え方）、
+- 本リポジトリ内: [docs/gb10-japanese-input.md](gb10-japanese-input.md)（GB10のデスクトップの日本語入力）、
+  [docs/server-deployment.md](server-deployment.md)（公開構成の考え方）、
   [README「ColabのL4 GPUに接続する」](../README.md#colabのl4-gpuに接続する)（`OLLAMA_HOST` の差し替え）、
   `ingest/chat.py` / `ingest/embedder.py`（Ollamaネイティブapiの呼び出し箇所）
