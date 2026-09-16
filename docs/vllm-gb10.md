@@ -243,6 +243,10 @@ vLLM（chat / code / embed）
 NVIDIAがGB10での動作を確認しているモデルは playbook の Model Support Matrix に
 一覧がある。用途別に、そこから選ぶのが安全である。
 
+> Nemotron系を軸に、生成・VLM・埋め込みの3本を具体的に選定して載せる手順は
+> [docs/vllm-gb10-models.md](vllm-gb10-models.md) に分けてある。下の表は
+> 全体像をつかむための一覧である。
+
 |用途|候補|量子化|備考|
 |---|---|---|---|
 |RAGの回答生成|`openai/gpt-oss-20b`|MXFP4|いま本リポジトリがOllamaで使っているものと同じ系列。移行の比較対象にしやすい|
