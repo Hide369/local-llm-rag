@@ -70,7 +70,37 @@ MoEが多いのはこのためである。
 
 ## 1. 前提の確認
 
-DGX OS（Ubuntuベース）が入った状態から始める。
+### OSと、手元のWindowsとの関係
+
+**GB10はWSLではない。素のLinuxが動く独立したマシンである。** DGX Sparkには
+DGX OS 7.x（Ubuntu 24.04 LTSベース、ARM64/`aarch64`）が入っている。Windowsは
+動かないので、WSLという概念自体がない。OpenSSHが既定で有効なので、初回は
+`ssh <ユーザー名>@spark-xxxx.local` で入り、テンポラリパスワードを変更する。
+以降は普通のUbuntuサーバーとして扱ってよい。
+
+**手元のWindows PCは今のまま変えない。** このリポジトリはPowerShellと
+`myvenv313` で動き、サーバーに対してやることはHTTPを投げるだけである。
+
+```text
+Windows PC（PowerShell + myvenv313 + Streamlit）   ← 現状のまま。WSLは要らない
+        │ HTTP/HTTPS（社内LAN）
+        ▼
+GB10（DGX OS 7 = Ubuntu 24.04, aarch64）
+        └── Docker → vLLM ／ Ollama
+```
+
+クライアント側にWSLを挟む理由は無い。むしろWSL↔Windows間のネットワークを
+1段増やすことになり、READMEに実測が載っている `localhost` がIPv6の `::1` に
+先に解決されて1リクエストあたり約2.1秒を浪費する類の問題を、自分から
+呼び込むことになる。
+
+WSLが要るのは別の場面である。GB10ではなく**Windowsのx86機にGPUを挿して
+vLLMを動かす**なら、vLLMにWindowsネイティブの対応が無いのでWSL2が唯一の道に
+なる。今回の構成では該当しない。
+
+### GB10側で確認すること
+
+DGX OSが入った状態から始める。
 
 ```bash
 # GPUが見えるか。ドライバのバージョンも控えておく
@@ -288,6 +318,38 @@ FP4は演算器で直接扱え、重みが小さくなるぶん[帯域の律速]
 緩む。gpt-ossは配布時点でMXFP4なのでそのままでよい。BF16のチェックポイントは、
 比較検証の用途を除けばGB10で選ぶ理由が薄い。
 
+### 入手経路とオフライン運用
+
+この文書のモデルハンドルはすべてHuggingFaceのものだが、**HFが唯一の経路では
+ない**。取ってくる物ごとに出どころが違う。
+
+|取ってくる物|出どころ|コマンド|
+|---|---|---|
+|コンテナイメージ|NGC（`nvcr.io/nvidia/vllm`）|`docker pull`。**HFではない**|
+|モデルの重み|HuggingFace|`hf download`。`HF_TOKEN` が要る|
+|同上（代替）|NGC / build.nvidia.com|NVIDIA製モデル（Nemotron系）はNGCにも置かれている|
+|Ollamaを併用する場合のモデル|ollama.com のレジストリ|`ollama pull`。HFを経由しない別チャネル|
+
+**閉域・オフラインで運用するなら**、外に出られるマシンで先に取り、
+`~/.cache/huggingface` ごと搬入する。
+
+```bash
+# 接続できる環境で一度だけ取る
+hf download nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4
+
+# GB10へ ~/.cache/huggingface を運んだあと、取りに行かせない
+export HF_HUB_OFFLINE=1
+```
+
+`HF_HUB_OFFLINE=1` を付けておくと、キャッシュに無いときに黙って外へ出ず、
+エラーで落ちる。**閉域では「静かに通信すること」のほうが事故**なので、
+これは付けておくほうがよい。`HF_HOME` でキャッシュの場所を変えているなら、
+systemdのunitとdockerの `-v` の両方を同じ場所に揃えること。
+
+同じ話がこのリポジトリ側にもある。`AGENTS.md` に書いてあるとおり、リランカーの
+初回チェック（`ingest/reranker.py`）が huggingface.co へHEADを投げる。GB10の
+構成とは独立に、オフライン運用では先にモデルを置いておく必要がある。
+
 ## 6. コーディングエージェント向けの起動
 
 playbookが載せている「Agent Ready」のレシピをそのまま引く。ツール呼び出しの
@@ -491,6 +553,8 @@ DBに入っているベクトルと問い合わせのベクトルは同じ経路
 - [vLLM issue #36821 — sm_121 / aarch64 でのビルド問題](https://github.com/vllm-project/vllm/issues/36821)
 - [vLLM issue #31128 — Blackwell SM121(DGX Spark) 対応](https://github.com/vllm-project/vllm/issues/31128)
 - [timothystewart6/vllm-gb10 — GB10（sm_121a）向けにビルドされた非公式イメージ](https://github.com/timothystewart6/vllm-gb10)
+- [HuggingFace — 環境変数（`HF_HOME` / `HF_HUB_OFFLINE`）](https://huggingface.co/docs/huggingface_hub/package_reference/environment_variables)（オフライン運用の出どころ）
+- [jschmied/dgx-spark-setup-guide](https://github.com/jschmied/dgx-spark-setup-guide) / [timothystewart6/ubuntu-gb10](https://github.com/timothystewart6/ubuntu-gb10)（DGX OSの版とSSHでの初期セットアップ）
 - 本リポジトリ内: [docs/gb10-japanese-input.md](gb10-japanese-input.md)（GB10のデスクトップの日本語入力）、
   [docs/server-deployment.md](server-deployment.md)（公開構成の考え方）、
   [README「ColabのL4 GPUに接続する」](../README.md#colabのl4-gpuに接続する)（`OLLAMA_HOST` の差し替え）、

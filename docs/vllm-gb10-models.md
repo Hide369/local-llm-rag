@@ -135,6 +135,11 @@ export HF_TOKEN="<HuggingFaceのトークン>"
 mkdir -p ~/.cache/huggingface
 ```
 
+以下のモデルはすべてHuggingFaceから落ちてくる。**閉域で運用する場合は、外に
+出られるマシンで `hf download` してから `~/.cache/huggingface` を搬入し、
+`HF_HUB_OFFLINE=1` を立てる**（[docs/vllm-gb10.md の入手経路](vllm-gb10.md#入手経路とオフライン運用)）。
+NVIDIA製のモデルはNGCにも置かれているので、社内でNGCを使っているならそちらでもよい。
+
 以降のコマンドは共通部分をまとめて `vllm_run()` として書く。
 
 ```bash
