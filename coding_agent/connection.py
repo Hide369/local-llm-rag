@@ -15,7 +15,15 @@ from dotenv import dotenv_values
 
 _MODEL = "gpt-oss:20b"
 _BACKUP_SUFFIX = "-before-coding-agent"
-_SUPPORTED_CONTEXT_SIZES = frozenset({32768, 65536})
+# 選べる値を並べて固定している。自由入力にしないのは、打ち間違いを --probe の
+# 失敗まで持ち越さないためである。大きすぎる値を入れてもOllamaは例外を出さず、
+# モデルの一部を黙ってCPUへ落とすだけなので、気づくのが遅れる。
+#
+# 32768 / 65536 は ColabのL4（24GB）で実配置を確認した値。131072 は 128GB の
+# ユニファイドメモリを持つ機械（GB10/DGX Spark など）で選べるように足した。
+# **どの機械でも通る値ではない。** 実際に載るかどうかは --probe が確かめる。
+# 小さい順に並べること。smaller_context_size() がこの並びに依存する。
+SUPPORTED_CONTEXT_SIZES = (32768, 65536, 131072)
 _PROBE_TOOL_NAME = "get_probe_value"
 _PROBE_VALUE = "73190462"
 _MAX_STREAM_BYTES = 1024 * 1024
@@ -71,9 +79,24 @@ def _validate_api_key(value: object) -> str:
 
 
 def _validate_context_size(value: object) -> int:
-    if not isinstance(value, int) or isinstance(value, bool) or value not in _SUPPORTED_CONTEXT_SIZES:
-        raise AgentError("context_size は32768または65536を指定してください")
+    if not isinstance(value, int) or isinstance(value, bool) or value not in SUPPORTED_CONTEXT_SIZES:
+        # 文言を定数から組み立てる。並びを増やしたときに、ここだけ古いまま
+        # 残って利用者に嘘を伝えるのを防ぐ。
+        allowed = "・".join(str(size) for size in SUPPORTED_CONTEXT_SIZES)
+        raise AgentError(f"context_size は{allowed}のいずれかを指定してください")
     return int(value)
+
+
+def smaller_context_size(value: int) -> int | None:
+    """指定より1段小さい対応値を返す。無ければ None。
+
+    --probe がCPU配置を見つけたときに、次に試す値を案内するために使う。
+    選べる値の並びを知っているのはこのモジュールだけなので、ここに置く。
+    呼び出し側が 32768 のような具体値を書くと、並びを増やしたときに案内が
+    ずれる（実際、かつて --probe の文言は 32768 を直に書いていた）。
+    """
+    smaller = [size for size in SUPPORTED_CONTEXT_SIZES if size < value]
+    return max(smaller) if smaller else None
 
 
 @dataclass(frozen=True)

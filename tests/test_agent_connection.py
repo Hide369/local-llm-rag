@@ -3,6 +3,7 @@ import json
 import pytest
 import requests
 
+from coding_agent import connection
 from coding_agent.connection import AgentError, AgentSettings, OllamaClient, load_settings
 
 
@@ -100,11 +101,39 @@ def test_load_settings_rejects_multiline_api_key(tmp_path):
         load_settings(tmp_path)
 
 
-@pytest.mark.parametrize("context_size", [0, 16384, 131072, True])
+@pytest.mark.parametrize("context_size", [0, 16384, 262144, True])
 def test_load_settings_allows_only_supported_context_sizes(tmp_path, context_size):
     write_env(tmp_path)
     with pytest.raises(AgentError, match="context"):
         load_settings(tmp_path, context_size=context_size)
+
+
+@pytest.mark.parametrize("context_size", connection.SUPPORTED_CONTEXT_SIZES)
+def test_load_settings_accepts_every_supported_context_size(tmp_path, context_size):
+    """並びに足した値が、実際に通ることを確かめる。
+
+    131072 を足したときに検証側を直し忘れると、CLIの choices は通るのに
+    load_settings で弾かれる、という食い違いになる。
+    """
+    write_env(tmp_path)
+    assert load_settings(tmp_path, context_size=context_size).context_size == context_size
+
+
+def test_the_rejection_message_lists_every_supported_size(tmp_path):
+    """文言を定数から組み立てていること。並びを増やしたときの言い漏らしを防ぐ。"""
+    write_env(tmp_path)
+    with pytest.raises(AgentError) as error:
+        load_settings(tmp_path, context_size=12345)
+    for size in connection.SUPPORTED_CONTEXT_SIZES:
+        assert str(size) in str(error.value)
+
+
+def test_smaller_context_size_steps_down_one_level():
+    """--probe がCPU配置を見つけたときに案内する値。"""
+    assert connection.smaller_context_size(131072) == 65536
+    assert connection.smaller_context_size(65536) == 32768
+    # 一番小さい値からは下がれない。呼び出し側はこの None で別の案内に切り替える。
+    assert connection.smaller_context_size(32768) is None
 
 
 @pytest.mark.parametrize("context_size", [{}, []])

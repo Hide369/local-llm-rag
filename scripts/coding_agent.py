@@ -6,7 +6,13 @@ from pathlib import Path
 import sys
 import tomllib
 
-from coding_agent.connection import AgentError, OllamaClient, load_settings
+from coding_agent.connection import (
+    SUPPORTED_CONTEXT_SIZES,
+    AgentError,
+    OllamaClient,
+    load_settings,
+    smaller_context_size,
+)
 from coding_agent.environment import (
     find_codex_executable, find_superpowers, launch_vscode,
     prepare_environment, runtime_directory,
@@ -35,7 +41,12 @@ def main(argv=None):
     mode.add_argument("--restore-context", action="store_true", help="保存した元モデルの設定へ戻す")
     mode.add_argument("--probe", action="store_true", help="GPU配置とResponses APIのツール往復を検証する")
     parser.add_argument("--project", metavar="PATH", help="VS Codeで開く対象プロジェクト（省略時は現在のフォルダ）")
-    parser.add_argument("--context-size", type=int, choices=(32768, 65536), help="省略時は保存済み設定、初回は65536")
+    parser.add_argument(
+        "--context-size",
+        type=int,
+        choices=SUPPORTED_CONTEXT_SIZES,
+        help="省略時は保存済み設定、初回は65536。131072は128GB級のメモリが要る",
+    )
     args = parser.parse_args(argv)
     try:
         project = project_directory(args.project)
@@ -58,7 +69,16 @@ def main(argv=None):
             if gpu.get("context_length") != settings.context_size:
                 raise AgentError("Colabのコンテキスト長が設定と一致しません。--configure-contextを実行してください。")
             if not gpu.get("fully_on_gpu"):
-                raise AgentError("モデルの一部がCPUへ配置されています。--context-size 32768で再設定・検証してください。")
+                # 次に試す値は並びから引く。具体値を書くと、選べる値を増やした
+                # ときに案内がずれる（131072 を足すまで、ここは 32768 固定だった）。
+                smaller = smaller_context_size(settings.context_size)
+                hint = (
+                    f"--context-size {smaller}で再設定・検証してください。"
+                    if smaller
+                    else "これ以上小さい対応値がありません。モデルを小さくするか、"
+                    "同じGPUを使う他の処理を止めてください。"
+                )
+                raise AgentError(f"モデルの一部がCPUへ配置されています。{hint}")
             result = {"gpu": gpu, "tools": client.probe_tools()}
         else:
             find_codex_executable()
