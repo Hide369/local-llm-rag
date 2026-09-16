@@ -417,6 +417,18 @@ Ollamaに肩代わりさせられる。現在Colab側に置いているのは `g
 - ローカルのOllamaに戻すには、`.env` の `OLLAMA_HOST` / `OLLAMA_API_KEY` を削除するか
   コメントアウトすればよい（既定値の `http://127.0.0.1:11434` に戻る）。
 
+## GB10サーバーにvLLMを立てる
+
+Nvidia GB10（DGX Spark）を社内の推論サーバーにして、生成とコーディングエージェントを
+そこへ寄せる場合の手順は [docs/vllm-gb10.md](docs/vllm-gb10.md) にある。
+
+ひとつ注意がある。**`.env` の `OLLAMA_HOST` にvLLMのURLを入れても動かない。**
+このアプリは `ingest/chat.py` が `/api/chat`、`ingest/embedder.py` が `/api/embed` と、
+Ollamaのネイティブapiを直接叩いている。vLLMが出すのはOpenAI互換の `/v1/...` だけで、
+これらのパスは存在しない。GB10へ移す最初の一歩としては、GB10側にOllamaも入れて
+RAGはそのまま繋ぎ、vLLMはコーディングエージェント用に使う形が無改修で済む。
+詳しくは上の手順書の「本リポジトリのRAGとつなぐ」を参照。
+
 ## フォーマットファイルから文書を作る（Cowork）
 
 1. フォーマットファイルにする Word / Excel / PowerPoint / Markdown を用意し、
