@@ -583,6 +583,8 @@ GitLabはOllamaとメモリを取り合うため常時起動はせず、必要�
 
 Colabの `gpt-oss:20b` をVS Codeのコーディングエージェントとして使う場合は、
 [VS CodeでColabのgpt-oss:20bを使う](docs/vscode-colab-agent.md) を参照する。
+社内LANのGB10（DGX Spark）へ繋いで `gpt-oss:120b` を使う場合は
+[GB10のOllamaでコーディングエージェントを動かす](docs/gb10-coding-agent.md) を参照する。
 
 | パス | 役割 |
 |---|---|

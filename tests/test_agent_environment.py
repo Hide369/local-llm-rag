@@ -216,3 +216,22 @@ def test_launch_failure_is_an_actionable_error(inputs, monkeypatch):
     with pytest.raises(AgentError, match="VS Code") as error:
         environment.launch_vscode(project, runtime, settings())
     assert "private process details" not in str(error.value)
+
+
+def test_the_catalog_follows_the_selected_model():
+    """config.toml の model と catalog の slug が食い違うと、Codexはモデルを
+    見つけられない。両方を同じ settings から作っていることを確かめる。
+    """
+    chosen = AgentSettings(
+        "http://192.168.1.50:11434", "", model="gpt-oss:120b", context_size=131072
+    )
+    config = tomllib.loads(environment.render_config(chosen))
+    catalog = json.loads(environment.render_catalog(chosen))["models"][0]
+
+    assert config["model"] == "gpt-oss:120b" == catalog["slug"]
+    assert catalog["context_window"] == 131072
+    assert catalog["max_context_window"] >= 131072
+    # キャッシュの取り違えを避けるため、モデルごとに別の値にする。
+    assert catalog["comp_hash"] != json.loads(
+        environment.render_catalog(AgentSettings("http://192.168.1.50:11434", ""))
+    )["models"][0]["comp_hash"]

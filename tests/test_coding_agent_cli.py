@@ -143,3 +143,36 @@ def test_cpu_placement_at_the_smallest_size_says_there_is_no_next_step(
     message = capsys.readouterr().err
     assert "--context-size" not in message
     assert "モデルを小さくする" in message
+
+
+def test_saved_model_is_used_on_next_launch(tmp_path, monkeypatch):
+    """モデルとコンテキスト長は別々に指定できる。
+
+    片方だけ渡した回で、もう片方が既定へ戻ってしまうと、120b で測っている
+    途中に黙って 20b へ落ちる。
+    """
+    (tmp_path / ".env").write_text("OLLAMA_HOST=http://192.168.1.50:11434\n")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    runtime = cli.runtime_directory(tmp_path)
+    (runtime / "codex").mkdir(parents=True)
+    (runtime / "codex/config.toml").write_text(
+        'model = "gpt-oss:120b"\nmodel_context_window = 131072\n'
+    )
+    received = []
+
+    class Client:
+        def __init__(self, settings):
+            received.append((settings.model, settings.context_size))
+
+        def inspect(self):
+            return {"tools": True}
+
+    monkeypatch.setattr(cli, "OllamaClient", Client)
+    assert cli.main(["--check", "--project", str(tmp_path)]) == 0
+    assert cli.main(["--check", "--project", str(tmp_path), "--context-size", "65536"]) == 0
+    assert cli.main(["--check", "--project", str(tmp_path), "--model", "gpt-oss:20b"]) == 0
+    assert received == [
+        ("gpt-oss:120b", 131072),
+        ("gpt-oss:120b", 65536),
+        ("gpt-oss:20b", 131072),
+    ]

@@ -2,6 +2,10 @@
 
 Google ColabのL4上で動くOllamaを推論に使い、ファイル編集とコマンド実行をWindows側のCodex拡張で行う。通常のVS Code/Codex設定には触れず、専用ウィンドウと専用設定を使う。
 
+> 社内LANのGB10（DGX Spark）に置いたOllamaへ繋ぎ、`gpt-oss:120b` を使う手順は
+> [GB10のOllamaでコーディングエージェントを動かす](gb10-coding-agent.md) にある。
+> 起動補助は同じもので、接続先・モデル・コンテキスト長が違うだけである。
+
 ## 前提
 
 - `colab/run_ollama_server.ipynb` をL4ランタイムで上から順に実行している

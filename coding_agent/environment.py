@@ -1,4 +1,4 @@
-"""Colab専用のCodex設定とVS Codeインスタンスを準備する。"""
+"""専用のCodex設定とVS Codeインスタンスを準備する。"""
 
 import hashlib
 import json
@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 import tomllib
 
-from coding_agent.connection import AgentError, AgentSettings
+from coding_agent.connection import SUPPORTED_CONTEXT_SIZES, AgentError, AgentSettings
 
 
 _BEGIN = "# BEGIN LOCAL_LLM_MANAGED_CONFIG"
@@ -51,12 +51,36 @@ def render_config(settings: AgentSettings, model_catalog_path: Path | None = Non
         model_catalog_path = path.with_name("models.json")
     text = Template(path.read_text(encoding="utf-8")).substitute(
         base_url=json.dumps(settings.host.rstrip("/") + "/v1", ensure_ascii=False),
+        model=json.dumps(settings.model, ensure_ascii=False),
+        provider_name=json.dumps(f"Ollama {settings.model}", ensure_ascii=False),
         model_catalog_path=json.dumps(str(model_catalog_path.resolve()), ensure_ascii=False),
         context_size=settings.context_size,
         compact_limit=settings.context_size * 3 // 4,
     )
     tomllib.loads(text)
     return text
+
+
+def render_catalog(settings: AgentSettings) -> str:
+    """選んだモデルとコンテキスト長に合わせた Codex の model catalog を返す。
+
+    雛形は infra/codex-colab/models.json に**JSONのまま**置いてある。
+    config.toml のように Template にしないのは、既定値をそのまま読めるように
+    しておくためである。差し替えるのは、モデル名で決まる4つの値だけ。
+
+    slug が config.toml の model と食い違うと、Codex はモデルを見つけられない。
+    両方を同じ settings から作るのはそのためである。
+    """
+    source = tool_root() / "infra/codex-colab/models.json"
+    catalog = json.loads(source.read_text(encoding="utf-8"))
+    model = catalog["models"][0]
+    model["slug"] = settings.model
+    model["display_name"] = settings.model
+    model["context_window"] = settings.context_size
+    model["max_context_window"] = max(SUPPORTED_CONTEXT_SIZES)
+    # キャッシュの取り違えを避けるため、モデルごとに別の値にする。
+    model["comp_hash"] = "local-" + settings.model.replace(":", "-").replace("/", "-")
+    return json.dumps(catalog, ensure_ascii=False, indent=2) + "\n"
 
 
 def _read_json(path: Path) -> dict:
@@ -205,12 +229,13 @@ def prepare_environment(project: Path, runtime: Path, settings: AgentSettings,
         installed.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(superpowers_source, installed)
     _atomic_write(marker, json.dumps(identity, ensure_ascii=False, indent=2) + "\n")
-    catalog_source = tool_root() / "infra/codex-colab/models.json"
-    _atomic_write(model_catalog_path, catalog_source.read_text(encoding="utf-8"))
+    _atomic_write(model_catalog_path, render_catalog(settings))
     _atomic_write(config_path, config)
     vscode_settings.setdefault("chatgpt.openOnStartup", True)
     vscode_settings["chatgpt.runCodexInWindowsSubsystemForLinux"] = False
-    vscode_settings.setdefault("window.title", "local_llm · Colab gpt-oss:20b · ${activeEditorShort}")
+    vscode_settings.setdefault(
+        "window.title", f"local_llm · {settings.model} · ${{activeEditorShort}}"
+    )
     _atomic_write(vscode_settings_path, json.dumps(vscode_settings, ensure_ascii=False, indent=2) + "\n")
     if legacy_managed:
         _remove_directory_link(legacy_link)

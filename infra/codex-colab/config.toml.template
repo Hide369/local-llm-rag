@@ -1,6 +1,6 @@
 # BEGIN LOCAL_LLM_MANAGED_CONFIG
 # このブロックは起動補助が更新する。追加設定はEND行の後へ記載する。
-model = "gpt-oss:20b"
+model = $model
 model_provider = "colab-oss"
 model_catalog_json = $model_catalog_path
 model_context_window = $context_size
@@ -19,7 +19,7 @@ Only report a command or test as successful when its actual command output prove
 """
 
 [model_providers.colab-oss]
-name = "Colab L4 gpt-oss:20b"
+name = $provider_name
 base_url = $base_url
 wire_api = "responses"
 requires_openai_auth = false

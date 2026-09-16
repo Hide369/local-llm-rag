@@ -71,17 +71,58 @@ def test_settings_hide_api_key():
 @pytest.mark.parametrize(
     "host",
     [
-        "http://example.test",
         "https://",
         "https://user@example.test",
         "https://example.test/path",
         "https://example.test?key=value",
         "https://example.test/#fragment",
+        "ftp://example.test",
     ],
 )
-def test_load_settings_rejects_non_root_https_urls(tmp_path, host):
+def test_load_settings_rejects_non_root_urls(tmp_path, host):
     write_env(tmp_path, host=host)
     with pytest.raises(AgentError, match="OLLAMA_HOST"):
+        load_settings(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "host",
+    ["http://example.test", "http://8.8.8.8:11434", "http://1.1.1.1"],
+)
+def test_plaintext_is_refused_for_destinations_outside_the_lan(tmp_path, host):
+    """平文を許すのは社内で閉じる宛先だけである。
+
+    外に出る経路で http を通すと、指示・コード断片・道具の結果がそのまま読まれる。
+    """
+    write_env(tmp_path, host=host)
+    with pytest.raises(AgentError, match="https"):
+        load_settings(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "http://127.0.0.1:11434",
+        "http://192.168.1.50:11434",
+        "http://10.0.0.5:11434",
+        "http://172.16.0.9:11434",
+        "http://spark-a1b2.local:11434",
+    ],
+)
+def test_plaintext_is_allowed_on_the_lan_without_a_key(tmp_path, host):
+    """社内LANのOllamaには通常 X-API-Key の認証が無い。
+
+    無い認証のためにダミーのキーを .env へ書かせるのは、設定を嘘にするだけである。
+    """
+    write_env(tmp_path, host=host, api_key="")
+    settings = load_settings(tmp_path)
+    assert settings.host == host
+    assert settings.api_key == ""
+
+
+def test_a_key_is_still_required_for_destinations_outside_the_lan(tmp_path):
+    write_env(tmp_path, host="https://example.ngrok-free.app", api_key="")
+    with pytest.raises(AgentError, match="OLLAMA_API_KEY"):
         load_settings(tmp_path)
 
 

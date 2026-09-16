@@ -1,4 +1,9 @@
-"""Colabのgpt-oss:20bを使うVS Code環境の診断・セットアップ・起動。"""
+"""OllamaのモデルをVS Codeのコーディングエージェントに使うための診断・セットアップ・起動。
+
+接続先は .env の OLLAMA_HOST、モデルは --model、コンテキスト長は --context-size で
+決める。ColabのL4（HTTPS＋APIキー）でも、社内LANのGB10（HTTP・認証なし）でも
+同じ補助を使う。手順は docs/vscode-colab-agent.md と docs/gb10-coding-agent.md。
+"""
 
 import argparse
 import json
@@ -7,6 +12,7 @@ import sys
 import tomllib
 
 from coding_agent.connection import (
+    DEFAULT_MODEL,
     SUPPORTED_CONTEXT_SIZES,
     AgentError,
     OllamaClient,
@@ -47,16 +53,26 @@ def main(argv=None):
         choices=SUPPORTED_CONTEXT_SIZES,
         help="省略時は保存済み設定、初回は65536。131072は128GB級のメモリが要る",
     )
+    parser.add_argument(
+        "--model",
+        metavar="NAME",
+        help=f"Ollamaのモデル名。省略時は保存済み設定、初回は{DEFAULT_MODEL}",
+    )
     args = parser.parse_args(argv)
     try:
         project = project_directory(args.project)
         runtime = runtime_directory(project)
+        # 保存済みのCodex設定を「前回の選択」として引き継ぐ。コンテキスト長と
+        # モデルは別々に指定できるので、片方だけ渡した回でももう片方は保たれる。
+        saved = runtime / "codex/config.toml"
+        config = tomllib.loads(saved.read_text(encoding="utf-8")) if saved.exists() else {}
         context_size = args.context_size
         if context_size is None:
-            saved = runtime / "codex/config.toml"
-            config = tomllib.loads(saved.read_text(encoding="utf-8")) if saved.exists() else {}
             context_size = config.get("model_context_window", 65536)
-        settings = load_settings(project, context_size)
+        model = args.model
+        if model is None:
+            model = config.get("model", DEFAULT_MODEL)
+        settings = load_settings(project, context_size, model)
         client = OllamaClient(settings)
         if args.check:
             result = client.inspect()
