@@ -10,7 +10,12 @@ import subprocess
 import tempfile
 import tomllib
 
-from coding_agent.connection import SUPPORTED_CONTEXT_SIZES, AgentError, AgentSettings
+from coding_agent.connection import (
+    SUPPORTED_CONTEXT_SIZES,
+    AgentError,
+    AgentSettings,
+    is_local_host,
+)
 
 
 _BEGIN = "# BEGIN LOCAL_LLM_MANAGED_CONFIG"
@@ -50,6 +55,7 @@ def render_config(settings: AgentSettings, model_catalog_path: Path | None = Non
     if model_catalog_path is None:
         model_catalog_path = path.with_name("models.json")
     text = Template(path.read_text(encoding="utf-8")).substitute(
+        provider_headers=_provider_headers(settings),
         base_url=json.dumps(settings.host.rstrip("/") + "/v1", ensure_ascii=False),
         model=json.dumps(settings.model, ensure_ascii=False),
         provider_name=json.dumps(f"Ollama {settings.model}", ensure_ascii=False),
@@ -59,6 +65,27 @@ def render_config(settings: AgentSettings, model_catalog_path: Path | None = Non
     )
     tomllib.loads(text)
     return text
+
+
+def _provider_headers(settings: AgentSettings) -> str:
+    """接続先に応じて、要る追加ヘッダーだけを返す。
+
+    どちらもColab経由のための仕掛けである。X-API-Key は ngrok の前に置いた
+    認証プロキシが見るもので、ngrok-skip-browser-warning は無料プランの
+    警告ページを避けるためのもの。社内LANのOllamaはどちらも見ないし、キーも
+    無い。意味のないヘッダーを設定に残すと、読んだ人が「これは何のためか」を
+    毎回確かめることになる。
+    """
+    if is_local_host(settings.host):
+        return ""
+    return (
+        "[model_providers.colab-oss.env_http_headers]\n"
+        'X-API-Key = "OLLAMA_API_KEY"\n'
+        "\n"
+        "[model_providers.colab-oss.http_headers]\n"
+        'ngrok-skip-browser-warning = "true"\n'
+        "\n"
+    )
 
 
 def render_catalog(settings: AgentSettings) -> str:

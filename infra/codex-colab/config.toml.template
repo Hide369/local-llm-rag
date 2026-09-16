@@ -27,13 +27,7 @@ request_max_retries = 1
 stream_max_retries = 0
 stream_idle_timeout_ms = 120000
 
-[model_providers.colab-oss.env_http_headers]
-X-API-Key = "OLLAMA_API_KEY"
-
-[model_providers.colab-oss.http_headers]
-ngrok-skip-browser-warning = "true"
-
-[shell_environment_policy]
+$provider_headers[shell_environment_policy]
 exclude = ["OLLAMA_API_KEY"]
 
 [windows]

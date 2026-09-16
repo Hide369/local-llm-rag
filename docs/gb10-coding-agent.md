@@ -27,6 +27,7 @@ GB10（DGX OS） → Ollama → gpt-oss:120b
 - [4. 接続とモデルを確かめる](#4-接続とモデルを確かめる)
 - [5. コンテキスト長を焼いて実配置を測る](#5-コンテキスト長を焼いて実配置を測る)
 - [6. Codex設定を作り直して起動する](#6-codex設定を作り直して起動する)
+- [6.5 config.toml の中身](#65-configtoml-の中身)
 - [7. 効果を測る](#7-効果を測る)
 - [元に戻す](#元に戻す)
 - [つまずきやすいところ](#つまずきやすいところ)
@@ -182,6 +183,134 @@ type $env:LOCALAPPDATA\local-llm\coding-agent\codex\config.toml | Select-String 
 .\myvenv313\Scripts\python.exe -m scripts.coding_agent
 ```
 
+## 6.5 config.toml の中身
+
+`--setup` が作る `config.toml` は、Codex拡張が読むクライアント設定である。
+**手で書く必要は無いが、何が書かれているかは把握しておく。** 繋がらないときに
+最初に見る場所になる。
+
+### 置き場所
+
+|起動の仕方|`config.toml`|
+|---|---|
+|`scripts.coding_agent`（この手順）|`%LOCALAPPDATA%\local-llm\coding-agent\codex\config.toml`|
+|同上・別プロジェクト|`%LOCALAPPDATA%\local-llm\coding-agent\projects\<指紋>\codex\config.toml`|
+|素のCodex|`%USERPROFILE%\.codex\config.toml`|
+
+起動補助は `CODEX_HOME` を専用フォルダに向けてVS Codeを起動する。**素のCodex設定
+（`~/.codex`）には触れない。** 普段使いのCodexと混ざらないようにするためである。
+
+### GB10へ繋いだときの中身
+
+```toml
+# BEGIN LOCAL_LLM_MANAGED_CONFIG
+# このブロックは起動補助が更新する。追加設定はEND行の後へ記載する。
+model = "gpt-oss:120b"
+model_provider = "colab-oss"
+model_catalog_json = "C:\\Users\\you\\AppData\\Local\\local-llm\\coding-agent\\codex\\models.json"
+model_context_window = 131072
+model_auto_compact_token_limit = 98304
+model_reasoning_effort = "medium"
+sandbox_mode = "workspace-write"
+approval_policy = "on-request"
+web_search = "disabled"
+developer_instructions = """
+（省略）
+"""
+
+[model_providers.colab-oss]
+name = "Ollama gpt-oss:120b"
+base_url = "http://192.168.1.50:11434/v1"
+wire_api = "responses"
+requires_openai_auth = false
+request_max_retries = 1
+stream_max_retries = 0
+stream_idle_timeout_ms = 120000
+
+[shell_environment_policy]
+exclude = ["OLLAMA_API_KEY"]
+
+[windows]
+sandbox = "unelevated"
+
+[analytics]
+enabled = false
+
+[features]
+plugins = false
+# END LOCAL_LLM_MANAGED_CONFIG
+```
+
+### 確かめる値
+
+繋がらないときは、上から順にこの4つを見る。
+
+|キー|GB10での値|意味|
+|---|---|---|
+|`model`|`"gpt-oss:120b"`|**`models.json` の `slug` と一致していること。** 食い違うとCodexはモデルを見つけられない|
+|`base_url`|`"http://<GB10のIP>:11434/v1"`|**末尾の `/v1` を落とさない。** OllamaのOpenAI互換エンドポイントである|
+|`model_context_window`|`131072`|`--probe` を通した値と揃っていること|
+|`model_auto_compact_token_limit`|`98304`|文脈の3/4。ここを超えると履歴の圧縮が走る|
+
+```powershell
+type $env:LOCALAPPDATA\local-llm\coding-agent\codex\config.toml | Select-String "^model|base_url"
+```
+
+### Colab接続との差
+
+**LAN宛てでは認証ヘッダーの2つが出力されない。**
+
+```toml
+# Colab（ngrok）へ繋いだときだけ出る
+[model_providers.colab-oss.env_http_headers]
+X-API-Key = "OLLAMA_API_KEY"
+
+[model_providers.colab-oss.http_headers]
+ngrok-skip-browser-warning = "true"
+```
+
+どちらもColab経由のための仕掛けである。`X-API-Key` は ngrok の前に置いた認証
+プロキシが見るもので、`ngrok-skip-browser-warning` は無料プランの警告ページを
+避けるためのもの。**社内LANのOllamaはどちらも見ないし、キーも無い。** 意味の
+無いヘッダーを設定に残さない。
+
+`shell_environment_policy.exclude` は LAN でも残す。エージェントが起動する
+シェルへ `OLLAMA_API_KEY` を渡さないための設定で、**Colabへ戻したときに
+外し忘れるほうが危ない**からである。
+
+### 自分の設定を足す
+
+**`# END LOCAL_LLM_MANAGED_CONFIG` より後に書く。** BEGIN〜END の間は
+`--setup` のたびに丸ごと差し替わるので、そこへ書いた内容は次回消える。
+END行より後ろはそのまま引き継がれる。
+
+```toml
+# END LOCAL_LLM_MANAGED_CONFIG
+
+# ここから下は --setup で保持される
+[mcp_servers.playwright]
+command = "npx"
+args = ["-y", "@playwright/mcp@latest", "--caps=testing", "--isolated"]
+```
+
+END行より後ろが管理ブロックと衝突する（同じキーを二重に定義するなど）場合、
+`--setup` は**書き込まずに中止する**。TOMLとして壊れた設定を残さないためである。
+BEGIN行が無い、またはEND行が複数あるファイルも、管理形式でないとみなして
+上書きしない。**手で全面的に書き換えたファイルがあると `--setup` は止まる。**
+
+### 起動補助を使わずに手で書く
+
+このリポジトリも仮想環境も無いPCから繋ぐ場合は、上のTOMLをそのまま
+`%USERPROFILE%\.codex\config.toml` に置けば足りる。ただし2つ落ちる。
+
+- `model_catalog_json` が指す `models.json`。**このファイルが無いと、Codexは
+  そのモデルを一覧に出さない。** 生成済みのものを1つコピーして、`slug` と
+  `context_window` を合わせる
+- Superpowersスキルの配置と、`developer_instructions` の中身
+
+**測り比べや日常の利用では `--setup` を使うこと。** この2つを手で揃え続けるのは
+割に合わない。
+
 ## 7. 効果を測る
 
 **入れ替えたら、上がったかどうかを測る。** モデルを大きくすれば精度が上がるとは
@@ -227,3 +356,4 @@ ColabのL4へ戻すなら、`.env` を `https://` のngrok URLと `OLLAMA_API_KE
 
 - [VS CodeでColabのgpt-oss:20bを使う](vscode-colab-agent.md) — 元の手順。コンテキスト長の選び方はこちらにある
 - [docs/mcp-tool-not-called.md](mcp-tool-not-called.md) — 道具が呼ばれないときの切り分け
+- [Playwright MCPの設定](playwright-mcp.md) — END行より後ろへ足す設定の実例

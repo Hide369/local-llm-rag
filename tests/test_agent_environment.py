@@ -235,3 +235,24 @@ def test_the_catalog_follows_the_selected_model():
     assert catalog["comp_hash"] != json.loads(
         environment.render_catalog(AgentSettings("http://192.168.1.50:11434", ""))
     )["models"][0]["comp_hash"]
+
+
+def test_the_lan_config_omits_the_colab_only_headers():
+    """X-API-Key も ngrok の警告回避も、Colab経由のための仕掛けである。
+
+    社内LANのOllamaはどちらも見ないし、キーも無い。意味のないヘッダーを残すと、
+    読んだ人が「これは何のためか」を毎回確かめることになる。
+    """
+    config = tomllib.loads(
+        environment.render_config(AgentSettings("http://192.168.1.50:11434", ""))
+    )
+    provider = config["model_providers"][config["model_provider"]]
+    assert "env_http_headers" not in provider
+    assert "http_headers" not in provider
+    assert provider["base_url"] == "http://192.168.1.50:11434/v1"
+
+
+def test_the_external_config_still_sends_the_key():
+    config = tomllib.loads(environment.render_config(settings()))
+    provider = config["model_providers"][config["model_provider"]]
+    assert provider["env_http_headers"] == {"X-API-Key": "OLLAMA_API_KEY"}
