@@ -171,6 +171,11 @@ curl.exe http://<GB10のIP>:4000/health
 
 ## 4. Windows側: Claude Codeを入れる
 
+**この経路に Python は要らない。** 設定は `settings.json` に書くだけで、この
+リポジトリも起動補助（`scripts/coding_agent.py`）も使わない。要るのは
+**Node.js / npm** と VS Code である。Codex 側だけが Python を使う
+（[GB10のOllamaでコーディングエージェントを動かす](gb10-coding-agent.md#windows側に要るもの)）。
+
 VS Code の拡張機能から **Claude Code** を入れる。拡張は内部で Claude Code CLI を
 起動するので、CLIも入れておく。
 

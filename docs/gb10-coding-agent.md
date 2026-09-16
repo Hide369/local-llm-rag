@@ -23,6 +23,7 @@ GB10（DGX OS） → Ollama → gpt-oss:120b
 - [0. 何が変わるか](#0-何が変わるか)
 - [1. GB10側: モデルを置く](#1-gb10側-モデルを置く)
 - [2. GB10側: LANへ公開する](#2-gb10側-lanへ公開する)
+- [Windows側に要るもの](#windows側に要るもの)
 - [3. Windows側: .env を書き換える](#3-windows側-env-を書き換える)
 - [4. 接続とモデルを確かめる](#4-接続とモデルを確かめる)
 - [5. コンテキスト長を焼いて実配置を測る](#5-コンテキスト長を焼いて実配置を測る)
@@ -99,6 +100,45 @@ curl.exe http://<GB10のIP>:11434/api/version
 > **Ollamaに認証は無い。** `0.0.0.0` にbindした時点で、そのLANから届く全員が
 > モデルを使える。社内の信頼できるセグメントに限ること。届く範囲が広いなら、
 > ファイアウォールで送信元を絞る。
+
+## Windows側に要るもの
+
+**3節から先は、このリポジトリと Python がクライアントにある前提である。**
+`.\myvenv313\Scripts\python.exe -m scripts.coding_agent` を打つ、という形そのものが
+そう要求している。
+
+|要るもの|なぜ|
+|---|---|
+|**このリポジトリ一式**|`scripts/coding_agent.py` と `coding_agent/`、`infra/codex-colab/` の雛形（`config.toml.template` / `models.json`）を読む|
+|**Python 3.13（`myvenv313`）**|上を動かすため|
+|外部パッケージ **2つだけ**|`requests`（`coding_agent/connection.py`）と `python-dotenv`（`.env` の読み取り）|
+|**`.env`**|対象プロジェクト直下。接続先をここから読む|
+|**Superpowers 6.3.0**|`~/.codex/plugins/cache` にあること。`--setup` の `find_superpowers()` が探す|
+|VS Code と Codex拡張|エージェント本体|
+
+**`requirements.txt` の全部は要らない。** pymupdf・streamlit・onnxruntime などはRAG
+アプリ用で、起動補助は触らない。起動補助だけなら次で足りる。
+
+```powershell
+py -3.13 -m venv myvenv313
+.\myvenv313\Scripts\python.exe -m pip install requests python-dotenv
+```
+
+**リポジトリは1か所に置けばよい。** `--project` で対象を指定できるので、作業する
+プロジェクトごとに複製する必要はない（[docs/vscode-colab-agent.md](vscode-colab-agent.md)
+の「別のプロジェクトを開く場合」）。
+
+### Pythonを入れたくない場合
+
+入れずに済む道はある。[6.5節の「起動補助を使わずに手で書く」](#起動補助を使わずに手で書く)で、
+`config.toml` と `models.json` を `%USERPROFILE%\.codex\` に手で置く。ただし2つ落ちる。
+
+- **`models.json`** — 無いとCodexがそのモデルを一覧に出さない。生成済みのものを
+  1つコピーして `slug` と `context_window` を合わせる
+- **Superpowersスキルの配置と `developer_instructions`** — `--setup` がやっていた分
+
+つまり「**クライアント全台にPythonを入れる**」か「**1台で生成した2ファイルを配る**」かの
+選択になる。台数が増えるなら後者のほうが現実的である。
 
 ## 3. Windows側: .env を書き換える
 
