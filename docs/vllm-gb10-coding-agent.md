@@ -42,6 +42,7 @@ Windows（VS Code）
 - [1. GB10: vLLMを立てる](#1-gb10-vllmを立てる)
 - [2. GB10: 道具呼び出しまで確かめる](#2-gb10-道具呼び出しまで確かめる)
 - [3. GB10: Claude Code用のプロキシを立てる](#3-gb10-claude-code用のプロキシを立てる)
+- [Windows側に要るもの](#windows側に要るもの)
 - [4. Windows: Codexを設定する](#4-windows-codexを設定する)
 - [5. Windows: Claude Codeを設定する](#5-windows-claude-codeを設定する)
 - [6. 両方を動かして確かめる](#6-両方を動かして確かめる)
@@ -217,6 +218,31 @@ curl http://127.0.0.1:4000/v1/messages \
   -H "content-type: application/json" \
   -d '{"model":"gpt-oss-120b","max_tokens":128,"messages":[{"role":"user","content":"12*17"}]}'
 ```
+
+## Windows側に要るもの
+
+**使うエージェントによって、要るものが違う。** 片方しか使わないなら、もう片方の
+行は不要である。
+
+|用途|要るもの|
+|---|---|
+|**Codex**|このリポジトリ一式、**Python 3.13（`myvenv313`）**、`requests` と `python-dotenv`、`.env`、Superpowers 6.3.0、VS Code + Codex拡張|
+|**Claude Code**|**Node.js / npm**（`@anthropic-ai/claude-code`）、VS Code + Claude Code拡張、`%USERPROFILE%\.claude\settings.json`|
+
+**Claude Code 側に Python は要らない。** 設定は `settings.json` に書くだけで、
+このリポジトリも使わない。**Codex 側だけが起動補助（Python）を使う。**
+
+Codex用の最小構成はこれで足りる。`requirements.txt` の全部（pymupdf・streamlit・
+onnxruntime など）はRAGアプリ用で、起動補助は触らない。
+
+```powershell
+py -3.13 -m venv myvenv313
+.\myvenv313\Scripts\python.exe -m pip install requests python-dotenv
+```
+
+**Codex でも Python を入れたくないなら**、`config.toml` と `models.json` を
+`%USERPROFILE%\.codex\` に手で置く道がある。落ちるものと注意点は
+[Ollama版の6.5節](gb10-coding-agent.md#起動補助を使わずに手で書く)と同じ。
 
 ## 4. Windows: Codexを設定する
 
