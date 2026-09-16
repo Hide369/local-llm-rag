@@ -424,6 +424,12 @@ Nvidia GB10（DGX Spark）を社内の推論サーバーにして、生成とコ
 載せるモデルの選定（生成・VLM・埋め込みの3本）と、その導入手順は
 [docs/vllm-gb10-models.md](docs/vllm-gb10-models.md) に分けてある。
 
+接続先は `.env` の `LLM_BACKEND` で切り替える（`ollama` / `vllm`、既定は `ollama`）。
+生成・埋め込み・VLMのすべてが `ingest/backend.py` の判定に従う。**`OLLAMA_HOST` に
+vLLMのURLを入れても動かない**（あちらはOllamaのネイティブAPIの宛先で、vLLMが出すのは
+OpenAI互換の `/v1/...` だけである）。設定できる項目は [.env.example](.env.example) に
+並べてある。
+
 ひとつ注意がある。**`.env` の `OLLAMA_HOST` にvLLMのURLを入れても動かない。**
 このアプリは `ingest/chat.py` が `/api/chat`、`ingest/embedder.py` が `/api/embed` と、
 Ollamaのネイティブapiを直接叩いている。vLLMが出すのはOpenAI互換の `/v1/...` だけで、
@@ -596,6 +602,10 @@ Colabの `gpt-oss:20b` をVS Codeのコーディングエージェントとし�
 | `rag_chat_app.py` | Streamlit UI |
 | `infra/gitlab/` | ローカルGitLab CEのDocker定義（アプリ本体には非依存） |
 | `run_gitlab.ps1` | ローカルGitLabの起動・停止・同期 |
+
+vLLM版のリポジトリ（`Hide369/local-llm-rag-vllm`）と併走させる場合の同期手順は
+[docs/two-repo-sync.md](docs/two-repo-sync.md) にある。2リポジトリの差分は
+`.env.example` と README の冒頭だけに保つこと。
 
 ベクトルは `vector_store.sqlite3`（既定では bge-m3 / 1024次元 / cosine）に保存する。
 1つの埋め込みモデルしか入らない設計で、モデルを差し替えるときはファイルごと消して

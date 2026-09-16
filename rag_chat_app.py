@@ -7,6 +7,7 @@
 source/ はサーバー側にあり、ブラウザーから使う利用者は資料を置けない。サイドバーの
 「資料をアップロード」ダイアログがクライアントから資料を入れる唯一の経路である。
 """
+import os
 import tempfile
 from datetime import date, datetime
 from pathlib import Path
@@ -14,9 +15,10 @@ from pathlib import Path
 import streamlit as st
 from dotenv import load_dotenv
 
-# OLLAMA_HOST を ingest.embedder がインポート時に読むため、他のプロジェクト内
-# importより先に .env を読み込む必要がある。ColabのL4 GPUに繋ぐ場合、ここで
-# OLLAMA_HOST（ngrokのURL）と OLLAMA_API_KEY を上書きする。
+# OLLAMA_HOST を ingest.embedder が、LLM_BACKEND を ingest.backend が、それぞれ
+# インポート時に読むため、他のプロジェクト内importより先に .env を読み込む必要が
+# ある。ColabのL4 GPUに繋ぐ場合はここで OLLAMA_HOST（ngrokのURL）と
+# OLLAMA_API_KEY を、GB10のvLLMに繋ぐ場合は LLM_BACKEND と VLLM_HOST を上書きする。
 load_dotenv()
 
 import docgen
@@ -825,7 +827,17 @@ st.sidebar.title("設定")
 # qwen3:32b も並べていたが、pull されていないモデルは選んだ時点で生成が失敗する
 # だけなので外した。使いたければ先に ollama pull してからここに足す。
 # 過去に取った実測比較はREADMEの「モデルの比較」に残してある。
-MODELS = ["gpt-oss:20b"]
+#
+# 接続先を vLLM に変えると、モデル名はOllamaのタグではなくサーバーが出している
+# HFのハンドル（`curl http://<host>:8000/v1/models` で分かる）になる。並びを
+# 環境変数で差し替えられるようにしてあるのはそのためで、CHAT_MODELS にカンマ
+# 区切りで書く。自由入力に戻したわけではない。打ち間違いが生成時のエラーに
+# なるまで分からない問題は、.env に1度だけ書く形なら起きない。
+MODELS = [
+    name.strip()
+    for name in os.environ.get("CHAT_MODELS", "gpt-oss:20b").split(",")
+    if name.strip()
+] or ["gpt-oss:20b"]
 model = st.sidebar.selectbox("モデル名", MODELS)
 temperature = st.sidebar.slider("Temperature", 0.0, 1.0, 0.3, 0.1)
 # サイドバーには出さない。利用者に編集させる項目ではないため。
