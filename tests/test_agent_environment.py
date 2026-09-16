@@ -216,3 +216,43 @@ def test_launch_failure_is_an_actionable_error(inputs, monkeypatch):
     with pytest.raises(AgentError, match="VS Code") as error:
         environment.launch_vscode(project, runtime, settings())
     assert "private process details" not in str(error.value)
+
+
+def test_the_catalog_follows_the_selected_model():
+    """config.toml の model と catalog の slug が食い違うと、Codexはモデルを
+    見つけられない。両方を同じ settings から作っていることを確かめる。
+    """
+    chosen = AgentSettings(
+        "http://192.168.1.50:11434", "", model="gpt-oss:120b", context_size=131072
+    )
+    config = tomllib.loads(environment.render_config(chosen))
+    catalog = json.loads(environment.render_catalog(chosen))["models"][0]
+
+    assert config["model"] == "gpt-oss:120b" == catalog["slug"]
+    assert catalog["context_window"] == 131072
+    assert catalog["max_context_window"] >= 131072
+    # キャッシュの取り違えを避けるため、モデルごとに別の値にする。
+    assert catalog["comp_hash"] != json.loads(
+        environment.render_catalog(AgentSettings("http://192.168.1.50:11434", ""))
+    )["models"][0]["comp_hash"]
+
+
+def test_the_lan_config_omits_the_colab_only_headers():
+    """X-API-Key も ngrok の警告回避も、Colab経由のための仕掛けである。
+
+    社内LANのOllamaはどちらも見ないし、キーも無い。意味のないヘッダーを残すと、
+    読んだ人が「これは何のためか」を毎回確かめることになる。
+    """
+    config = tomllib.loads(
+        environment.render_config(AgentSettings("http://192.168.1.50:11434", ""))
+    )
+    provider = config["model_providers"][config["model_provider"]]
+    assert "env_http_headers" not in provider
+    assert "http_headers" not in provider
+    assert provider["base_url"] == "http://192.168.1.50:11434/v1"
+
+
+def test_the_external_config_still_sends_the_key():
+    config = tomllib.loads(environment.render_config(settings()))
+    provider = config["model_providers"][config["model_provider"]]
+    assert provider["env_http_headers"] == {"X-API-Key": "OLLAMA_API_KEY"}

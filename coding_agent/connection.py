@@ -1,7 +1,14 @@
-"""Colab上のOllamaに安全に接続し、実行条件を診断する。"""
+"""Ollamaに安全に接続し、実行条件を診断する。
+
+接続先は2種類ある。**外にあるもの（ColabのL4をngrokで公開したものなど）と、
+社内LANにあるもの（GB10など）である。** 前者は通信が社外を通るのでHTTPSと
+APIキーを必須にする。後者は経路が社内で閉じるため、平文のHTTPと認証なしを許す。
+この線引きは _validate_host と _validate_api_key が持つ。
+"""
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import time
 from dataclasses import dataclass, field
@@ -13,9 +20,21 @@ import requests
 from dotenv import dotenv_values
 
 
-_MODEL = "gpt-oss:20b"
+# 既定のモデル。これ以外も指定できる（--model）。かつてはこの値以外を弾いて
+# いたが、L4の24GBに載る大きさがこれだけだったからで、128GB級の機械では
+# gpt-oss:120b のような大きいモデルを選ぶ理由がある。名前が正しいかどうかは
+# ここでは判断できないので、--check が接続先のOllamaに在庫を問い合わせる。
+DEFAULT_MODEL = "gpt-oss:20b"
 _BACKUP_SUFFIX = "-before-coding-agent"
-_SUPPORTED_CONTEXT_SIZES = frozenset({32768, 65536})
+# 選べる値を並べて固定している。自由入力にしないのは、打ち間違いを --probe の
+# 失敗まで持ち越さないためである。大きすぎる値を入れてもOllamaは例外を出さず、
+# モデルの一部を黙ってCPUへ落とすだけなので、気づくのが遅れる。
+#
+# 32768 / 65536 は ColabのL4（24GB）で実配置を確認した値。131072 は 128GB の
+# ユニファイドメモリを持つ機械（GB10/DGX Spark など）で選べるように足した。
+# **どの機械でも通る値ではない。** 実際に載るかどうかは --probe が確かめる。
+# 小さい順に並べること。smaller_context_size() がこの並びに依存する。
+SUPPORTED_CONTEXT_SIZES = (32768, 65536, 131072)
 _PROBE_TOOL_NAME = "get_probe_value"
 _PROBE_VALUE = "73190462"
 _MAX_STREAM_BYTES = 1024 * 1024
@@ -27,23 +46,50 @@ class AgentError(RuntimeError):
     """利用者が対処できる接続・設定エラー。"""
 
 
+_HOST_HELP = (
+    ".env の OLLAMA_HOST にHTTPSのルートURL、または社内LAN上のホストへの "
+    "http://<IPアドレス>:<ポート> を設定してください"
+)
+
+
+def is_local_host(host: str) -> bool:
+    """社内で閉じる宛先かどうか。
+
+    平文HTTPと認証なしを許すかどうかの判断に使う。判定はホスト名だけで行い、
+    名前解決はしない。解決結果に依存させると、同じ .env が実行環境によって
+    通ったり弾かれたりする。
+    """
+    hostname = urlsplit(host).hostname or ""
+    if hostname.endswith(".local"):
+        # mDNS の名前は定義上リンクローカルである。DGX Spark の既定のホスト名
+        # （spark-xxxx.local）がこれに当たる。
+        return True
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        return False
+    # is_global が False なら、インターネットへ経路を持たないアドレスである。
+    # ループバック・RFC1918・リンクローカルに加えて、CGNAT などもここに入る。
+    # 個別に列挙するより漏れが無い。
+    return not address.is_global
+
+
 def _validate_host(value: object) -> str:
     if not isinstance(value, str) or not value or value != value.strip():
-        raise AgentError(".env の OLLAMA_HOST にHTTPSのルートURLを設定してください")
+        raise AgentError(_HOST_HELP)
     if not value.isascii() or any(character.isspace() for character in value):
-        raise AgentError(".env の OLLAMA_HOST にHTTPSのルートURLを設定してください")
+        raise AgentError(_HOST_HELP)
 
     try:
         parsed = urlsplit(value)
         # Accessing port also validates malformed or out-of-range port values.
         parsed.port
     except ValueError:
-        raise AgentError(
-            ".env の OLLAMA_HOST にHTTPSのルートURLを設定してください"
-        ) from None
+        raise AgentError(_HOST_HELP) from None
 
+    scheme = parsed.scheme.lower()
     if (
-        parsed.scheme.lower() != "https"
+        scheme not in ("http", "https")
         or not parsed.netloc
         or not parsed.hostname
         or parsed.username is not None
@@ -52,11 +98,28 @@ def _validate_host(value: object) -> str:
         or parsed.query
         or parsed.fragment
     ):
-        raise AgentError(".env の OLLAMA_HOST にHTTPSのルートURLを設定してください")
-    return urlunsplit(("https", parsed.netloc, "", "", ""))
+        raise AgentError(_HOST_HELP)
+
+    normalized = urlunsplit((scheme, parsed.netloc, "", "", ""))
+    # 平文を許すのは社内で閉じる宛先だけである。外に出る経路で http を許すと、
+    # 指示・コード断片・道具の結果がそのまま読まれる。
+    if scheme == "http" and not is_local_host(normalized):
+        raise AgentError(
+            "http は社内LAN上のホスト（ループバック・プライベートIP・.local）に"
+            "だけ使えます。外部の宛先には https を指定してください"
+        )
+    return normalized
 
 
-def _validate_api_key(value: object) -> str:
+def _validate_api_key(value: object, host: str = "") -> str:
+    """APIキーを検査する。社内の宛先では未設定を許す。
+
+    ColabのOllamaは X-API-Key を見るリバースプロキシの後ろにあり、キーが無いと
+    誰でも叩けてしまう。一方、社内LANのOllamaには通常その認証が無い。無い認証の
+    ためにダミーのキーを .env へ書かせるのは、設定を嘘にするだけである。
+    """
+    if not value and is_local_host(host):
+        return ""
     if (
         not isinstance(value, str)
         or not value
@@ -70,29 +133,69 @@ def _validate_api_key(value: object) -> str:
     return value
 
 
+def _validate_model(value: object) -> str:
+    """モデル名を検査する。在庫の有無はここでは分からない。
+
+    打ち間違いは --check（/api/tags の照合）で見つかる。ここで弾けるのは
+    「Ollamaのモデル名として形になっていない」ものだけである。
+    """
+    if (
+        not isinstance(value, str)
+        or not value
+        or value != value.strip()
+        or not value.isascii()
+        or any(character.isspace() for character in value)
+    ):
+        raise AgentError("model には空白を含まないASCIIのOllamaモデル名を指定してください")
+    return value
+
+
 def _validate_context_size(value: object) -> int:
-    if not isinstance(value, int) or isinstance(value, bool) or value not in _SUPPORTED_CONTEXT_SIZES:
-        raise AgentError("context_size は32768または65536を指定してください")
+    if not isinstance(value, int) or isinstance(value, bool) or value not in SUPPORTED_CONTEXT_SIZES:
+        # 文言を定数から組み立てる。並びを増やしたときに、ここだけ古いまま
+        # 残って利用者に嘘を伝えるのを防ぐ。
+        allowed = "・".join(str(size) for size in SUPPORTED_CONTEXT_SIZES)
+        raise AgentError(f"context_size は{allowed}のいずれかを指定してください")
     return int(value)
+
+
+def smaller_context_size(value: int) -> int | None:
+    """指定より1段小さい対応値を返す。無ければ None。
+
+    --probe がCPU配置を見つけたときに、次に試す値を案内するために使う。
+    選べる値の並びを知っているのはこのモジュールだけなので、ここに置く。
+    呼び出し側が 32768 のような具体値を書くと、並びを増やしたときに案内が
+    ずれる（実際、かつて --probe の文言は 32768 を直に書いていた）。
+    """
+    smaller = [size for size in SUPPORTED_CONTEXT_SIZES if size < value]
+    return max(smaller) if smaller else None
 
 
 @dataclass(frozen=True)
 class AgentSettings:
     host: str
     api_key: str = field(repr=False)
-    model: str = _MODEL
+    model: str = DEFAULT_MODEL
     context_size: int = 65536
 
     def __post_init__(self) -> None:
+        # host を先に正規化する。APIキーを必須にするかどうかが宛先で決まるため、
+        # 順番を入れ替えると社内の宛先でもキーを要求してしまう。
         object.__setattr__(self, "host", _validate_host(self.host))
-        object.__setattr__(self, "api_key", _validate_api_key(self.api_key))
+        object.__setattr__(self, "api_key", _validate_api_key(self.api_key, self.host))
+        object.__setattr__(self, "model", _validate_model(self.model))
         object.__setattr__(self, "context_size", _validate_context_size(self.context_size))
-        if self.model != _MODEL:
-            raise AgentError(f"model は{_MODEL}のみ指定できます")
 
 
-def load_settings(project: Path, context_size: int = 65536) -> AgentSettings:
-    """プロジェクト直下の.envだけからColab接続設定を読む。"""
+def load_settings(
+    project: Path, context_size: int = 65536, model: str | None = None
+) -> AgentSettings:
+    """プロジェクト直下の.envだけから接続設定を読む。
+
+    モデルは .env ではなく引数で受ける。接続先（.env）と、そこに置いてある
+    どのモデルを使うか（CLIの --model、または保存済みのCodex設定）は別の決定
+    だからである。同じ .env のまま 20b と 120b を測り比べられる必要がある。
+    """
 
     env_path = Path(project) / ".env"
     if not env_path.is_file():
@@ -102,9 +205,11 @@ def load_settings(project: Path, context_size: int = 65536) -> AgentSettings:
     except (OSError, UnicodeError) as error:
         raise AgentError(".env を読み込めません") from error
 
+    host = _validate_host(values.get("OLLAMA_HOST"))
     return AgentSettings(
-        host=_validate_host(values.get("OLLAMA_HOST")),
-        api_key=_validate_api_key(values.get("OLLAMA_API_KEY")),
+        host=host,
+        api_key=_validate_api_key(values.get("OLLAMA_API_KEY"), host),
+        model=_validate_model(model if model is not None else DEFAULT_MODEL),
         context_size=_validate_context_size(context_size),
     )
 

@@ -91,3 +91,88 @@ def test_file_is_rejected_as_a_project(tmp_path, capsys, monkeypatch):
 
     assert cli.main(["--check", "--project", str(project_file)]) == 1
     assert "フォルダ" in capsys.readouterr().err
+
+
+def _probe_client(monkeypatch, *, fully_on_gpu, context_length):
+    """--probe の判定だけを見るための差し替え。推論も接続もしない。"""
+
+    class Client:
+        def __init__(self, settings):
+            self.settings = settings
+
+        def warmup(self):
+            return {"fully_on_gpu": fully_on_gpu, "context_length": context_length}
+
+        def probe_tools(self):
+            return {"called": True}
+
+    monkeypatch.setattr(cli, "OllamaClient", Client)
+
+
+def test_probe_accepts_the_largest_context_size(tmp_path, capsys, monkeypatch):
+    """131072 が CLI の選択肢を通り、そのまま検証まで届くこと。"""
+    (tmp_path / ".env").write_text("OLLAMA_HOST=https://example.ngrok-free.app\nOLLAMA_API_KEY=key\n")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    _probe_client(monkeypatch, fully_on_gpu=True, context_length=131072)
+
+    assert cli.main(["--probe", "--project", str(tmp_path), "--context-size", "131072"]) == 0
+    assert json.loads(capsys.readouterr().out)["gpu"]["context_length"] == 131072
+
+
+def test_cpu_placement_points_at_the_next_smaller_size(tmp_path, capsys, monkeypatch):
+    """案内する値は並びから引く。131072 で溢れたなら次は 65536 である。"""
+    (tmp_path / ".env").write_text("OLLAMA_HOST=https://example.ngrok-free.app\nOLLAMA_API_KEY=key\n")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    _probe_client(monkeypatch, fully_on_gpu=False, context_length=131072)
+
+    assert cli.main(["--probe", "--project", str(tmp_path), "--context-size", "131072"]) == 1
+    message = capsys.readouterr().err
+    assert "65536" in message
+    assert "32768" not in message
+
+
+def test_cpu_placement_at_the_smallest_size_says_there_is_no_next_step(
+    tmp_path, capsys, monkeypatch
+):
+    """一番小さい値でも溢れたら、下げる案内をしても意味がない。"""
+    (tmp_path / ".env").write_text("OLLAMA_HOST=https://example.ngrok-free.app\nOLLAMA_API_KEY=key\n")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    _probe_client(monkeypatch, fully_on_gpu=False, context_length=32768)
+
+    assert cli.main(["--probe", "--project", str(tmp_path), "--context-size", "32768"]) == 1
+    message = capsys.readouterr().err
+    assert "--context-size" not in message
+    assert "モデルを小さくする" in message
+
+
+def test_saved_model_is_used_on_next_launch(tmp_path, monkeypatch):
+    """モデルとコンテキスト長は別々に指定できる。
+
+    片方だけ渡した回で、もう片方が既定へ戻ってしまうと、120b で測っている
+    途中に黙って 20b へ落ちる。
+    """
+    (tmp_path / ".env").write_text("OLLAMA_HOST=http://192.168.1.50:11434\n")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    runtime = cli.runtime_directory(tmp_path)
+    (runtime / "codex").mkdir(parents=True)
+    (runtime / "codex/config.toml").write_text(
+        'model = "gpt-oss:120b"\nmodel_context_window = 131072\n'
+    )
+    received = []
+
+    class Client:
+        def __init__(self, settings):
+            received.append((settings.model, settings.context_size))
+
+        def inspect(self):
+            return {"tools": True}
+
+    monkeypatch.setattr(cli, "OllamaClient", Client)
+    assert cli.main(["--check", "--project", str(tmp_path)]) == 0
+    assert cli.main(["--check", "--project", str(tmp_path), "--context-size", "65536"]) == 0
+    assert cli.main(["--check", "--project", str(tmp_path), "--model", "gpt-oss:20b"]) == 0
+    assert received == [
+        ("gpt-oss:120b", 131072),
+        ("gpt-oss:120b", 65536),
+        ("gpt-oss:20b", 131072),
+    ]

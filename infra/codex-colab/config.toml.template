@@ -1,6 +1,6 @@
 # BEGIN LOCAL_LLM_MANAGED_CONFIG
 # このブロックは起動補助が更新する。追加設定はEND行の後へ記載する。
-model = "gpt-oss:20b"
+model = $model
 model_provider = "colab-oss"
 model_catalog_json = $model_catalog_path
 model_context_window = $context_size
@@ -19,7 +19,7 @@ Only report a command or test as successful when its actual command output prove
 """
 
 [model_providers.colab-oss]
-name = "Colab L4 gpt-oss:20b"
+name = $provider_name
 base_url = $base_url
 wire_api = "responses"
 requires_openai_auth = false
@@ -27,13 +27,7 @@ request_max_retries = 1
 stream_max_retries = 0
 stream_idle_timeout_ms = 120000
 
-[model_providers.colab-oss.env_http_headers]
-X-API-Key = "OLLAMA_API_KEY"
-
-[model_providers.colab-oss.http_headers]
-ngrok-skip-browser-warning = "true"
-
-[shell_environment_policy]
+$provider_headers[shell_environment_policy]
 exclude = ["OLLAMA_API_KEY"]
 
 [windows]

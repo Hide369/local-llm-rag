@@ -2,6 +2,10 @@
 
 Google ColabのL4上で動くOllamaを推論に使い、ファイル編集とコマンド実行をWindows側のCodex拡張で行う。通常のVS Code/Codex設定には触れず、専用ウィンドウと専用設定を使う。
 
+> 社内LANのGB10（DGX Spark）に置いたOllamaへ繋ぎ、`gpt-oss:120b` を使う手順は
+> [GB10のOllamaでコーディングエージェントを動かす](gb10-coding-agent.md) にある。
+> 起動補助は同じもので、接続先・モデル・コンテキスト長が違うだけである。
+
 ## 前提
 
 - `colab/run_ollama_server.ipynb` をL4ランタイムで上から順に実行している
@@ -42,13 +46,34 @@ try {
 }
 ```
 
-`--probe`がCPU配置を報告した場合は32kへ下げ、再測定する。
+## コンテキスト長を選ぶ
+
+`--context-size` に渡せるのは **32768 / 65536 / 131072** の3つだけである
+（`coding_agent/connection.py` の `SUPPORTED_CONTEXT_SIZES`）。自由入力にしていない
+のは、打ち間違いを `--probe` の失敗まで持ち越さないためである。Ollamaは大きすぎる
+値でも例外を出さず、モデルの一部を黙ってCPUへ落とすだけなので、気づくのが遅れる。
+
+|値|想定|
+|---|---|
+|32768|`--probe` がCPU配置を報告したときの退避先|
+|65536|**既定。** ColabのL4（24GB）で実配置を確認した値|
+|131072|128GB級のユニファイドメモリを持つ機械（GB10/DGX Spark など）向け。**L4では確実に溢れる**|
+
+**どの機械でも通る値ではない。実際に載るかどうかは `--probe` が確かめる。**
+数字を大きくしただけで読める量が増えるわけではなく、`--configure-context` で
+Ollama側に焼き、`--probe` で全層がGPUに載っていることを確認して、はじめて効く。
+
+`--probe`がCPU配置を報告した場合は1段下げて測り直す。次に試す値はエラーメッセージが
+名指しする（131072で溢れたなら65536、65536で溢れたなら32768）。
 
 ```powershell
 .\myvenv313\Scripts\python.exe -m scripts.coding_agent --configure-context --context-size 32768
 .\myvenv313\Scripts\python.exe -m scripts.coding_agent --probe --context-size 32768
 .\myvenv313\Scripts\python.exe -m scripts.coding_agent --setup --context-size 32768
 ```
+
+一番小さい32768でも溢れた場合、下げる先はもう無い。モデルを小さくするか、同じGPUを
+使う他の処理（VLM、RAGの取り込み）を止める。
 
 `local_llm`自身を開く場合のセットアップ先は `%LOCALAPPDATA%\local-llm\coding-agent\` である。外部プロジェクトでは、その配下のプロジェクト固有フォルダを使う。Superpowers 6.3.0を版ごとにコピーし、対象プロジェクトの `.agents\skills` 直下から14個のスキルを参照する。既存の同名ファイルや同じ対象プロジェクト用ではない設定がある場合は上書きせず終了する。
 
