@@ -417,10 +417,14 @@ Ollamaに肩代わりさせられる。現在Colab側に置いているのは `g
 - ローカルのOllamaに戻すには、`.env` の `OLLAMA_HOST` / `OLLAMA_API_KEY` を削除するか
   コメントアウトすればよい（既定値の `http://127.0.0.1:11434` に戻る）。
 
-## GB10サーバーにvLLMを立てる（見送り）
+## GB10サーバーにvLLMを立てる
 
-**2026-09-16に導入を見送った。このリポジトリはOllamaのまま運用する。**
+**RAG本体への導入は2026-09-16に見送った。検索と生成はOllamaのまま運用する。**
 以下は調査の記録である。実機で動かしてはいない。
+
+**コーディングエージェント向けにはvLLMを使う。** そちらの手順は
+[GB10のvLLM + gpt-oss-120b でCodexとClaude Codeを使う](docs/vllm-gb10-coding-agent.md)
+にある。
 
 Nvidia GB10（DGX Spark）を社内の推論サーバーにして、生成とコーディングエージェントを
 そこへ寄せる場合の手順は [docs/vllm-gb10.md](docs/vllm-gb10.md) にある。
@@ -588,6 +592,9 @@ Colabの `gpt-oss:20b` をVS Codeのコーディングエージェントとし�
 Codexではなく Claude Code を同じGB10へ向ける手順は
 [VS CodeのClaude CodeをGB10へ向ける](docs/claude-code-gb10.md) にある（Claude Code は
 Anthropic形式のAPIしか話さないため、変換プロキシが1つ要る）。
+OllamaではなくvLLMに `openai/gpt-oss-120b` を載せ、CodexとClaude Codeの両方を使う場合は
+[GB10のvLLM + gpt-oss-120b でCodexとClaude Codeを使う](docs/vllm-gb10-coding-agent.md)
+を参照する。
 
 | パス | 役割 |
 |---|---|

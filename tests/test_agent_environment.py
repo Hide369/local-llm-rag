@@ -256,3 +256,24 @@ def test_the_external_config_still_sends_the_key():
     config = tomllib.loads(environment.render_config(settings()))
     provider = config["model_providers"][config["model_provider"]]
     assert provider["env_http_headers"] == {"X-API-Key": "OLLAMA_API_KEY"}
+
+
+def test_the_wire_api_can_be_switched_for_vllm():
+    """vLLM の Responses API はストリーミングが最小限で、道具の呼び出しと結果が
+    まとめて返る（公式 recipe の Known Limitations）。エージェント用途では
+    chat を選べる必要がある。
+    """
+    chosen = AgentSettings(
+        "http://192.168.1.50:8000", "", model="openai/gpt-oss-120b", wire_api="chat"
+    )
+    config = tomllib.loads(environment.render_config(chosen))
+    provider = config["model_providers"][config["model_provider"]]
+    assert provider["wire_api"] == "chat"
+    assert provider["base_url"] == "http://192.168.1.50:8000/v1"
+
+
+def test_the_default_wire_api_is_unchanged():
+    """Ollama 相手に使ってきた経路を既定のまま保つ。"""
+    config = tomllib.loads(environment.render_config(settings()))
+    provider = config["model_providers"][config["model_provider"]]
+    assert provider["wire_api"] == "responses"

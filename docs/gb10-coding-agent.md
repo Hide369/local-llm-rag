@@ -219,7 +219,7 @@ developer_instructions = """
 """
 
 [model_providers.colab-oss]
-name = "Ollama gpt-oss:120b"
+name = "Local gpt-oss:120b"
 base_url = "http://192.168.1.50:11434/v1"
 wire_api = "responses"
 requires_openai_auth = false

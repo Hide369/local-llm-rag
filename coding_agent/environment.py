@@ -58,7 +58,9 @@ def render_config(settings: AgentSettings, model_catalog_path: Path | None = Non
         provider_headers=_provider_headers(settings),
         base_url=json.dumps(settings.host.rstrip("/") + "/v1", ensure_ascii=False),
         model=json.dumps(settings.model, ensure_ascii=False),
-        provider_name=json.dumps(f"Ollama {settings.model}", ensure_ascii=False),
+        wire_api=json.dumps(settings.wire_api, ensure_ascii=False),
+        # 接続先は Ollama とは限らない（vLLM もある）。表示名で断定しない。
+        provider_name=json.dumps(f"Local {settings.model}", ensure_ascii=False),
         model_catalog_path=json.dumps(str(model_catalog_path.resolve()), ensure_ascii=False),
         context_size=settings.context_size,
         compact_limit=settings.context_size * 3 // 4,

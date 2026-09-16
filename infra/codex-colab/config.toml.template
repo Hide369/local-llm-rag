@@ -21,7 +21,7 @@ Only report a command or test as successful when its actual command output prove
 [model_providers.colab-oss]
 name = $provider_name
 base_url = $base_url
-wire_api = "responses"
+wire_api = $wire_api
 requires_openai_auth = false
 request_max_retries = 1
 stream_max_retries = 0
