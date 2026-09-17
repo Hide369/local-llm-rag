@@ -47,6 +47,7 @@ Windows（VS Code）
 - [5. Windows: Claude Codeを設定する](#5-windows-claude-codeを設定する)
 - [6. 両方を動かして確かめる](#6-両方を動かして確かめる)
 - [MCPについて](#mcpについて)
+- [元に戻す](#元に戻す)
 - [つまずきやすいところ](#つまずきやすいところ)
 
 ## 1. GB10: vLLMを立てる
@@ -391,6 +392,23 @@ nvidia-smi                          # ユニファイドメモリの使用量
 
 vLLM 側の `--tool-server` も使わない。あれは gpt-oss の組み込み道具（ブラウザ、
 Python実行）をvLLM自身がMCPクライアントとして呼ぶ仕掛けで、**コード編集には要らない。**
+
+## 元に戻す
+
+**GB10側に後始末は要らない。** コンテキスト長はサーバー起動時の `--max-model-len` で
+決まり、**モデル自体を書き換えていない**ためである。コンテナを止めれば元に戻る。
+
+```bash
+docker rm -f vllm-code      # 必要なら litellm も止める
+```
+
+Ollama版はここが違う。`--configure-context` が同名のモデルを `num_ctx` 焼き込みで
+作り直すので、**共有サーバー上の状態が変わったままになる**。使うのをやめるときは
+`--restore-context` が要る（[Ollama版の「元に戻す」](gb10-coding-agent.md#元に戻す)）。
+
+クライアント側は、Ollama版・vLLM版どちらでも同じである。`.env` の接続先を書き戻し、
+`--setup` をやり直す。Claude Code は `settings.json` の `env` ブロックを消すか、
+値を書き戻す。
 
 ## つまずきやすいところ
 

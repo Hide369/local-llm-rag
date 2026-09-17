@@ -31,6 +31,8 @@ GB10（DGX OS） → Ollama → gpt-oss:120b
 - [6.5 config.toml の中身](#65-configtoml-の中身)
 - [7. 効果を測る](#7-効果を測る)
 - [元に戻す](#元に戻す)
+  - [GB10側の後始末（`--restore-context`）](#gb10側の後始末--restore-context)
+  - [ColabのL4へ戻す](#colabのl4へ戻す)
 - [つまずきやすいところ](#つまずきやすいところ)
 
 ## 0. 何が変わるか
@@ -371,14 +373,51 @@ gpt-oss:120b がツール呼び出しで不正なJSONを出して失敗したと
 
 ## 元に戻す
 
-`--configure-context` が焼いたモデル設定を戻す。
+性質の違う2つがある。**「効果が出なかったとき」の話は後半だけ**で、前半は
+使い続けるかどうかと関係なく必要になることがある。
+
+### GB10側の後始末（`--restore-context`）
+
+`--configure-context` が何をするかを先に押さえる。
+
+```
+/api/copy    gpt-oss:120b → gpt-oss:120b-before-coding-agent   # 元を退避
+/api/create  gpt-oss:120b（from: 自分自身、num_ctx を焼き込み） # 同じ名前で作り直す
+```
+
+**GB10のOllamaにある `gpt-oss:120b` そのものを置き換えている。** 共有サーバー上の
+状態への変更なので、そのOllamaを使う他の処理・他の人にも及ぶ。
 
 ```powershell
 .\myvenv313\Scripts\python.exe -m scripts.coding_agent --restore-context --model gpt-oss:120b
 ```
 
-ColabのL4へ戻すなら、`.env` を `https://` のngrok URLと `OLLAMA_API_KEY` に書き戻し、
+|場面|`--restore-context`|
+|---|---|
+|エージェントを使うのをやめる|**要る**|
+|GB10を他の用途・他の人に渡す|**要る**|
+|同じ `gpt-oss:120b` を使う別の処理と競合した|**要る**|
+|その文脈長のまま使い続ける|不要|
+|**コンテキスト長を変えたいだけ**（131072 → 65536 など）|**不要**|
+
+最後の行が紛らわしいので補足する。`--configure-context` は `from` に自分自身を
+指定するため、**値を変えるだけなら restore を挟まず打ち直せばよい**。
+[5節](#5-コンテキスト長を焼いて実配置を測る)でCPU配置のときに1段下げる手順が
+restoreを挟んでいないのは、そのためである。
+
+> **vLLM版にはこの後始末が無い。** コンテキスト長がサーバー起動時の
+> `--max-model-len` で決まり、モデル自体を書き換えないためである。
+> コンテナを止めれば元に戻る（[vLLM版](vllm-gb10-coding-agent.md)）。
+
+### ColabのL4へ戻す
+
+**こちらが「効果が出なかった」「やめる」場合である。**
+
+`.env` を `https://` のngrok URLと `OLLAMA_API_KEY` に書き戻し、
 `--model gpt-oss:20b --context-size 65536` で `--setup` をやり直す。
+
+上の後始末も忘れずに行う。GB10側に焼き込んだままにしておくと、次に誰かが
+その `gpt-oss:120b` を使ったときに、意図しない文脈長で載る。
 
 ## つまずきやすいところ
 

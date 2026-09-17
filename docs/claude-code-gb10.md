@@ -79,6 +79,11 @@ ollama run gpt-oss:120b-131k "hi" && ollama ps   # 全層がGPUに載ってい�
 載りきらなければ `num_ctx` を 65536 に下げる。**Claude Code側から `num_ctx` は
 指定できない**ので、ここで決まった値がそのまま上限になる。
 
+**この方法は元の `gpt-oss:120b` を書き換えない。** `gpt-oss:120b-131k` という別の
+名前で作るので、やめるときは `ollama rm gpt-oss:120b-131k` で消せばよい。
+Codex側の `--configure-context` は同じ名前で作り直すため後始末が要る、という違いが
+ある（[Ollama版Codexの「元に戻す」](gb10-coding-agent.md#元に戻す)）。
+
 ## 2. GB10側: LiteLLMを立てる
 
 ```bash
