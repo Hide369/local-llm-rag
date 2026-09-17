@@ -81,8 +81,9 @@ ollama run gpt-oss:120b-131k "hi" && ollama ps   # 全層がGPUに載ってい�
 
 **この方法は元の `gpt-oss:120b` を書き換えない。** `gpt-oss:120b-131k` という別の
 名前で作るので、やめるときは `ollama rm gpt-oss:120b-131k` で消せばよい。
-Codex側の `--configure-context` は同じ名前で作り直すため後始末が要る、という違いが
-ある（[Ollama版Codexの「元に戻す」](gb10-coding-agent.md#元に戻す)）。
+[Codex側の手順](gb10-coding-agent.md#2-gb10側-コンテキスト長を伸ばす)も同じやり方を
+とるので、モデルは共有できる。起動補助の `--configure-context` を使う場合だけ、
+同じ名前で作り直すため後始末が要る（[Ollama版Codexの「元に戻す」](gb10-coding-agent.md#元に戻す)）。
 
 ## 2. GB10側: LiteLLMを立てる
 
@@ -178,7 +179,7 @@ curl.exe http://<GB10のIP>:4000/health
 
 **この経路に Python は要らない。** 設定は `settings.json` に書くだけで、この
 リポジトリも起動補助（`scripts/coding_agent.py`）も使わない。要るのは
-**Node.js / npm** と VS Code である。Codex 側だけが Python を使う
+**Node.js / npm** と VS Code である。Codex 側も設定を手で置けばPythonは要らない
 （[GB10のOllamaでコーディングエージェントを動かす](gb10-coding-agent.md#windows側に要るもの)）。
 
 VS Code の拡張機能から **Claude Code** を入れる。拡張は内部で Claude Code CLI を

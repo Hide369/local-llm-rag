@@ -28,7 +28,7 @@ Windows（VS Code）
 |項目|Ollama版|vLLM版（この文書）|
 |---|---|---|
 |ポート|11434|8000（vLLM）／4000（LiteLLM）|
-|コンテキスト長|`--configure-context` でモデルに焼く|**サーバー起動時の `--max-model-len`**|
+|コンテキスト長|Modelfile を焼いて別名のモデルを作る|**サーバー起動時の `--max-model-len`**|
 |起動補助の `--check` / `--configure-context` / `--probe`|使える|**使えない**（Ollama固有のAPIを叩くため）|
 |起動補助の `--setup`|使える|**使える**（Ollamaに触れないため）|
 |`wire_api`|`responses`|**`chat` を勧める**（後述）|
@@ -242,8 +242,10 @@ py -3.13 -m venv myvenv313
 ```
 
 **Codex でも Python を入れたくないなら**、`config.toml` と `models.json` を
-`%USERPROFILE%\.codex\` に手で置く道がある。落ちるものと注意点は
-[Ollama版の6.5節](gb10-coding-agent.md#起動補助を使わずに手で書く)と同じ。
+`%USERPROFILE%\.codex\` に手で置く道がある。書き方と、そのとき落ちるもの
+（Superpowersスキルの自動配置）は
+[Ollama版の5節](gb10-coding-agent.md#5-windows側-configtoml-を置く)と同じで、
+`base_url` のポートと `wire_api` だけがこの文書の値になる。
 
 ## 4. Windows: Codexを設定する
 
@@ -304,7 +306,7 @@ X-API-Key = "OLLAMA_API_KEY"
 
 `models.json` の `slug` も `openai/gpt-oss-120b` になり、`config.toml` の `model` と
 揃う。**食い違うとCodexはモデルを見つけられない**ので、ここは自動で揃うようにしてある。
-各キーの意味は [Ollama版の6.5節](gb10-coding-agent.md#65-configtoml-の中身) と同じ。
+各キーの意味は [Ollama版の「確かめる値」](gb10-coding-agent.md#確かめる値) と同じ。
 
 > **キーの渡り方に1つ弱点がある。** 起動補助は `X-API-Key` ヘッダーで送る形しか
 > 持たないが、vLLM が見るのは `Authorization: Bearer` である。`--setup` だけを
@@ -402,13 +404,15 @@ Python実行）をvLLM自身がMCPクライアントとして呼ぶ仕掛けで�
 docker rm -f vllm-code      # 必要なら litellm も止める
 ```
 
-Ollama版はここが違う。`--configure-context` が同名のモデルを `num_ctx` 焼き込みで
-作り直すので、**共有サーバー上の状態が変わったままになる**。使うのをやめるときは
+Ollama版は、コンテキスト長をモデルに焼くぶんだけ後始末がある。別名で作って
+いれば `ollama rm gpt-oss:120b-131k` で終わる。起動補助の `--configure-context` を
+使った場合だけ、同名のモデルが `num_ctx` 焼き込みで作り直されているので、
 `--restore-context` が要る（[Ollama版の「元に戻す」](gb10-coding-agent.md#元に戻す)）。
 
-クライアント側は、Ollama版・vLLM版どちらでも同じである。`.env` の接続先を書き戻し、
-`--setup` をやり直す。Claude Code は `settings.json` の `env` ブロックを消すか、
-値を書き戻す。
+クライアント側は、Ollama版・vLLM版どちらでも同じである。設定を手で置いたなら
+`config.toml` の `model` と `base_url`、`models.json` の `slug` を書き戻す。
+起動補助を使ったなら `.env` の接続先を書き戻して `--setup` をやり直す。
+Claude Code は `settings.json` の `env` ブロックを消すか、値を書き戻す。
 
 ## つまずきやすいところ
 
@@ -426,8 +430,8 @@ Ollama版はここが違う。`--configure-context` が同名のモデルを `nu
 
 |観点|Ollama版|vLLM版|
 |---|---|---|
-|手順の短さ|**短い**（`--check` / `--probe` で確認まで自動）|長い（curlで自分で確かめる）|
-|実配置の確認|`--probe` が `fully_on_gpu` を見る|`nvidia-smi` と起動ログを自分で読む|
+|手順の短さ|**短い**（サーバーは `ollama pull` だけ）|長い（コンテナ、フラグ、LiteLLM）|
+|実配置の確認|`/api/ps` の `size` と `size_vram`（起動補助なら `--probe`）|`nvidia-smi` と起動ログを自分で読む|
 |多重実行|1人向け|**強い**（継続バッチング）|
 |Claude Code|プロキシが要る|**同じくプロキシが要る**|
 
