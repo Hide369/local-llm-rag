@@ -70,7 +70,37 @@ MoEが多いのはこのためである。
 
 ## 1. 前提の確認
 
-DGX OS（Ubuntuベース）が入った状態から始める。
+### OSと、手元のWindowsとの関係
+
+**GB10はWSLではない。素のLinuxが動く独立したマシンである。** DGX Sparkには
+DGX OS 7.x（Ubuntu 24.04 LTSベース、ARM64/`aarch64`）が入っている。Windowsは
+動かないので、WSLという概念自体がない。OpenSSHが既定で有効なので、初回は
+`ssh <ユーザー名>@spark-xxxx.local` で入り、テンポラリパスワードを変更する。
+以降は普通のUbuntuサーバーとして扱ってよい。
+
+**手元のWindows PCは今のまま変えない。** このリポジトリはPowerShellと
+`myvenv313` で動き、サーバーに対してやることはHTTPを投げるだけである。
+
+```text
+Windows PC（PowerShell + myvenv313 + Streamlit）   ← 現状のまま。WSLは要らない
+        │ HTTP/HTTPS（社内LAN）
+        ▼
+GB10（DGX OS 7 = Ubuntu 24.04, aarch64）
+        └── Docker → vLLM ／ Ollama
+```
+
+クライアント側にWSLを挟む理由は無い。むしろWSL↔Windows間のネットワークを
+1段増やすことになり、READMEに実測が載っている `localhost` がIPv6の `::1` に
+先に解決されて1リクエストあたり約2.1秒を浪費する類の問題を、自分から
+呼び込むことになる。
+
+WSLが要るのは別の場面である。GB10ではなく**Windowsのx86機にGPUを挿して
+vLLMを動かす**なら、vLLMにWindowsネイティブの対応が無いのでWSL2が唯一の道に
+なる。今回の構成では該当しない。
+
+### GB10側で確認すること
+
+DGX OSが入った状態から始める。
 
 ```bash
 # GPUが見えるか。ドライバのバージョンも控えておく
@@ -96,9 +126,12 @@ sudo usermod -aG docker $USER
 newgrp docker
 ```
 
-HuggingFaceのトークンも先に用意する（https://huggingface.co/settings/tokens ）。
-ゲートのかかったモデル（Llama系など）はブラウザーでライセンスに同意しないと
-落ちてこない。
+モデルの取得にHuggingFaceのトークンが要るかどうかは、**落とすモデルがゲート付き
+かどうかで決まる**。ゲートのかかったモデル（Llama系など）はアカウントを作り、
+ブラウザーでライセンスに同意しないと落ちてこない。そうでなければ匿名で取れる。
+判定と、ログインを避ける経路は[入手経路とオフライン運用](#入手経路とオフライン運用)に
+書いた。以下の例で `HF_TOKEN` を渡しているのは、ゲート付きも扱えるようにする
+ためで、必須という意味ではない。
 
 ## 2. vLLMコンテナを取得して起動する
 
@@ -287,6 +320,88 @@ NVIDIAがGB10での動作を確認しているモデルは playbook の Model Su
 FP4は演算器で直接扱え、重みが小さくなるぶん[帯域の律速](#gb10で先に知っておくこと)も
 緩む。gpt-ossは配布時点でMXFP4なのでそのままでよい。BF16のチェックポイントは、
 比較検証の用途を除けばGB10で選ぶ理由が薄い。
+
+### 入手経路とオフライン運用
+
+この文書のモデルハンドルはすべてHuggingFaceのものだが、**HFが唯一の経路では
+ない**。取ってくる物ごとに出どころが違う。
+
+|取ってくる物|出どころ|コマンド|
+|---|---|---|
+|コンテナイメージ|NGC（`nvcr.io/nvidia/vllm`）|`docker pull`。**HFではない**|
+|モデルの重み|HuggingFace|`hf download`。**ゲート付きでなければトークンは不要**（下記）|
+|同上（代替）|NGC / build.nvidia.com|NVIDIA製モデル（Nemotron系）はNGCにも置かれている|
+|Ollamaを併用する場合のモデル|ollama.com のレジストリ|`ollama pull`。HFを経由しない別チャネル|
+
+**閉域・オフラインで運用するなら**、外に出られるマシンで先に取り、
+`~/.cache/huggingface` ごと搬入する。
+
+```bash
+# 接続できる環境で一度だけ取る
+hf download nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4
+
+# GB10へ ~/.cache/huggingface を運んだあと、取りに行かせない
+export HF_HUB_OFFLINE=1
+```
+
+`HF_HUB_OFFLINE=1` を付けておくと、キャッシュに無いときに黙って外へ出ず、
+エラーで落ちる。**閉域では「静かに通信すること」のほうが事故**なので、
+これは付けておくほうがよい。`HF_HOME` でキャッシュの場所を変えているなら、
+systemdのunitとdockerの `-v` の両方を同じ場所に揃えること。
+
+同じ話がこのリポジトリ側にもある。`AGENTS.md` に書いてあるとおり、リランカーの
+初回チェック（`ingest/reranker.py`）が huggingface.co へHEADを投げる。GB10の
+構成とは独立に、オフライン運用では先にモデルを置いておく必要がある。
+
+### HuggingFaceにログインせずに取る
+
+**ログインは必須ではない。公開リポジトリは匿名で落とせる。** アカウントと
+トークンが要るのは「ゲート付き（gated）」のリポジトリだけで、代表例が
+`meta-llama/*` である。playbookが `HF_TOKEN` を前提に書いているのは、例として
+Llama 3.3 70Bを使っているからで、この文書が選んだモデルには当てはまらない
+可能性が高い。
+
+**まず、そのモデルがゲート付きかを確かめる。** 落とす前に1行で判定できる。
+
+```bash
+curl -s https://huggingface.co/api/models/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4 \
+  | python3 -c "import json,sys; d=json.load(sys.stdin); print('gated:', d.get('gated'), '/ license:', d.get('cardData',{}).get('license'))"
+```
+
+`gated: False` ならログイン不要でそのまま落とせる。`auto` か `manual` が返った
+ら、そのリポジトリはブラウザーでの同意（`manual` なら著者の承認まで）が要る。
+
+**匿名で落とす。**
+
+```bash
+unset HF_TOKEN            # 空のトークンが混ざると逆に401になる
+hf download nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4
+```
+
+`-e HF_TOKEN=...` を渡さずにコンテナを起動すれば、vLLMが起動時に取りに行く分も
+同じく匿名で通る。
+
+ひとつだけ注意がある。**匿名のダウンロードはレート制限が厳しい。** 60GB級の
+チェックポイントでは途中で絞られることがある。`hf download` は再開に対応して
+いるので、切れたら同じコマンドを打ち直せばよい。何度も切れて進まないなら、
+それはログインを避けることのコストであり、無料アカウントの読み取り専用トークンを
+使うか、下のHF以外の経路に替えるかを選ぶ。
+
+**HFを一度も使わない道もある。**
+
+|経路|アカウント|取れるもの|注意|
+|---|---|---|---|
+|`ollama pull`|**不要**|`bge-m3`、`gpt-oss`、`qwen2.5vl` など|このリポジトリの現構成そのもの。[8節](#8-本リポジトリのragとつなぐ)の道(a)（RAGはOllama、vLLMはエージェント）を採るなら、**HFに一度も触れずに済む**。ただしNemotron系のNVFP4は置かれていない|
+|NGC|環境による|Nemotron系などNVIDIA製モデル|公開アーティファクトはゲストモードで取れるとされるが、APIキーを求められる報告もある。社内でNGCを使っているなら試す価値がある|
+|ModelScope|不要|多くの公開モデル|vLLMが `VLLM_USE_MODELSCOPE=True` で対応する。ただし**外部の宛先が1本増える**。送るのはモデルファイルの要求だけで社内資料は出ないが、`AGENTS.md` の「外部へ出る通信」の一覧に追記すべき経路である。中国のサービスである点も、社内規程次第では判断材料になる|
+|別マシンで取って搬入|—|すべて|上のオフライン手順。匿名で取れるモデルなら、そのマシンでもログインは要らない|
+
+> **確認していないこと**: この文書を書いた環境から huggingface.co へ到達できて
+> いないため、**個々のモデルのゲート有無は確認していない**。一般論として、
+> `openai/gpt-oss-*`（Apache 2.0）、`BAAI/bge-m3`（MIT）、Qwen系はゲート無しで
+> 配られており、NVIDIAのNemotron系もNVIDIA Open Model Licenseで多くはゲート無し
+> である。ただしNVIDIAのリポジトリにも同意や申請を要求するものが実在する。
+> **上の1行で各自確認すること。**
 
 ## 6. コーディングエージェント向けの起動
 
@@ -491,6 +606,8 @@ DBに入っているベクトルと問い合わせのベクトルは同じ経路
 - [vLLM issue #36821 — sm_121 / aarch64 でのビルド問題](https://github.com/vllm-project/vllm/issues/36821)
 - [vLLM issue #31128 — Blackwell SM121(DGX Spark) 対応](https://github.com/vllm-project/vllm/issues/31128)
 - [timothystewart6/vllm-gb10 — GB10（sm_121a）向けにビルドされた非公式イメージ](https://github.com/timothystewart6/vllm-gb10)
+- [HuggingFace — 環境変数（`HF_HOME` / `HF_HUB_OFFLINE`）](https://huggingface.co/docs/huggingface_hub/package_reference/environment_variables)（オフライン運用の出どころ）
+- [jschmied/dgx-spark-setup-guide](https://github.com/jschmied/dgx-spark-setup-guide) / [timothystewart6/ubuntu-gb10](https://github.com/timothystewart6/ubuntu-gb10)（DGX OSの版とSSHでの初期セットアップ）
 - 本リポジトリ内: [docs/gb10-japanese-input.md](gb10-japanese-input.md)（GB10のデスクトップの日本語入力）、
   [docs/server-deployment.md](server-deployment.md)（公開構成の考え方）、
   [README「ColabのL4 GPUに接続する」](../README.md#colabのl4-gpuに接続する)（`OLLAMA_HOST` の差し替え）、
