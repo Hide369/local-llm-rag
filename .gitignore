@@ -16,7 +16,7 @@ myvenv313/
 vector_store.sqlite3
 vector_store.sqlite3.bak-*
 
-# 旧ベクトルDB。本システムはもう使わないが udemy3.py が使い続ける
+# 旧ベクトルDB。本システムはもう使わないが、ローカルの旧教材スクリプトが使い続ける
 chroma_db/
 
 # 取り込み対象の原本（バイナリが大きく、内容も配布対象ではない）
@@ -60,7 +60,6 @@ source_archive/
 .worktrees/
 
 # リポジトリには含めないローカル専用スクリプト
-udemy[0-9].py
 stream.py
 
 # 生成した設計書の試作置き場。成果物であって入力ではないため追跡しない
