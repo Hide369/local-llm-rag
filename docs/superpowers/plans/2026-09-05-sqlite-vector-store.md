@@ -15,7 +15,7 @@
 - 実行は必ず `myvenv313\Scripts\python.exe -m ...` 経由（README「コマンドは必ず `python.exe -m` 経由で実行すること」）
 - コメントは「なぜ」を書く。「何を」はコードで表現する（既存コードの流儀に揃える）
 - 新規の pip 依存を追加しない。`numpy` と標準ライブラリ `sqlite3`・`json` のみ
-- `chroma_db/` には一切書き込まない（`udemy3.py` が使い続ける）
+- `chroma_db/` には一切書き込まない（旧教材スクリプトが使い続ける）
 - ベクトルの次元は `ingest/embedder.py` の `EMBED_DIM` を唯一の情報源とし、他所に固定値を書かない
 - cosine距離は `1 - 内積`（両者をL2正規化）。ChromaDBの `hnsw:space="cosine"` と同一定義
 - コミットメッセージはコンベンショナルコミット形式・英語
@@ -1256,7 +1256,7 @@ git commit -m "refactor: open the SQLite store from the CLI, the UI and the test
 - [ ] **Step 4: `README.md` を更新する**
 
 - 「構成」節の `chroma_db/` に関する段落を、`vector_store.sqlite3` の説明に差し替える。
-  `local_docs` / `local_docs_v2` の共存の話は `udemy3.py` 側の事情として残す
+  `local_docs` / `local_docs_v2` の共存の話は旧教材スクリプト側の事情として残す
 - 「**取り込み中は `chroma_db` を開くプロセスを他に一切起動しないこと。**」を削除する。
   SQLite のトランザクションで守られるため、この制約は無くなった
 - 「既知の制約」の ChromaDB 由来の記述を見直す
@@ -1269,7 +1269,7 @@ git commit -m "refactor: open the SQLite store from the CLI, the UI and the test
 vector_store.sqlite3
 ```
 
-`chroma_db/` の行は**残す**（`udemy3.py` が使い続ける）。
+`chroma_db/` の行は**残す**（旧教材スクリプトが使い続ける）。
 
 - [ ] **Step 6: テストが通ることを確認する**
 
@@ -1367,4 +1367,4 @@ git commit -m "feat: verify the store is readable after ingestion"
 - `check_retrieval` のゲートが分離している
 - 差分取り込みを2回繰り返してもDBが読める
 - `requirements.txt` に `chromadb` が無い
-- `chroma_db/` が変更されていない（`udemy3.py` が動く）
+- `chroma_db/` が変更されていない（旧教材スクリプトが動く）

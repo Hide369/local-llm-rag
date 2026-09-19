@@ -16,7 +16,7 @@
 - 外部サービスへの送信は一切行わない。埋め込み・生成・OCR はすべてローカル
 - Ollama の接続先は既定 `http://127.0.0.1:12000`。**`localhost` は使用しない**（Windows環境で1リクエストあたり約2.1秒を浪費するため）。環境変数 `OLLAMA_HOST` で上書き可能とする
 - 埋め込みモデルは `bge-m3`、次元数 1024、バッチサイズ **8**（32は1件あたり遅い）
-- ChromaDB のコレクション名は `local_docs_v2`、距離空間は `cosine`。既存の `local_docs` には一切触れない（`udemy3.py` を動作させ続けるため）
+- ChromaDB のコレクション名は `local_docs_v2`、距離空間は `cosine`。既存の `local_docs` には一切触れない（旧教材スクリプトを動作させ続けるため）
 - チャンクサイズ 800文字、オーバーラップ 100文字。800文字以下の単位は分割しない
 - PDFのOCR判定境界は **30文字未満**、OCRのレンダリング解像度は **200dpi**
 - チャンクIDの形式は `{source}::{location_type}{location}::{chunk_index}`
@@ -1268,7 +1268,7 @@ def _add(collection, source, file_hash, count=2):
 
 
 def test_collection_name_does_not_collide_with_the_course_collection():
-    """local_docs は udemy3.py が768次元で使い続けるため触らない。"""
+    """local_docs は旧教材スクリプトが768次元で使い続けるため触らない。"""
     assert COLLECTION_NAME == "local_docs_v2"
 
 
@@ -1347,7 +1347,7 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'ingest.store'`
 """
 from ingest.models import Chunk
 
-# udemy3.py が使う local_docs (nomic-embed-text / 768次元) とは別に作る。
+# 旧教材スクリプトが使う local_docs (nomic-embed-text / 768次元) とは別に作る。
 # 同じコレクションを使い回すと次元不一致で既存の教材が動かなくなる。
 COLLECTION_NAME = "local_docs_v2"
 DISTANCE_SPACE = "cosine"
@@ -2288,7 +2288,7 @@ minute run belongs on the CLI."
 
 **Files:**
 - Create: `README.md`
-- Verify: `udemy3.py`（変更しない）
+- Verify: 旧教材スクリプト（変更しない）
 
 **Interfaces:**
 - Consumes: すべてのタスクの成果物
@@ -2302,9 +2302,9 @@ Run:
 ```
 Expected: `local_docs` が21チャンク、`local_docs_v2` が260前後。**2つが共存していること**
 
-- [ ] **Step 2: udemy3.py が今も起動することを確認する**
+- [ ] **Step 2: 旧教材スクリプトが今も起動することを確認する**
 
-Run: `.\myvenv313\Scripts\streamlit.exe run udemy3.py`
+Run: `.\myvenv313\Scripts\streamlit.exe run <旧教材スクリプト>`
 
 議事録に関する質問（「AI活用プロジェクトの初期スコープは」）に回答できることを確認したら停止する。
 
@@ -2352,7 +2352,7 @@ UIサイドバーの「差分を取り込む」も同じ処理を呼ぶ。
 | `scripts/ingest_source.py` | 取り込みCLI |
 | `scripts/check_retrieval.py` | 関連度しきい値を決めるための距離実測 |
 | `rag_chat_app.py` | Streamlit UI |
-| `udemy1.py` 〜 `udemy3.py` | 教材の各段階。`local_docs` コレクションを使い続ける |
+| 旧教材スクリプト（ローカル専用） | 教材の各段階。`local_docs` コレクションを使い続ける |
 
 ## テスト
 

@@ -17,7 +17,7 @@ RAGの概念説明としては図解の質が非常に高く、初学者向け�
 
 - [ ] **P1** サブタイトル「ハンズオンを通して〜」に対しハンズオンのスライドが0枚 →ハンズオン章を追加、またはサブタイトルを「仕組みを理解しよう」等に変更
 - [ ] **P4 / P18〜P21** 第2章が4枚のみ（1章は11枚）で、P18で提示した5要素のうち Reranker・コンテキスト構築が未解説 →スライド追加（「追加スライド案」参照）
-- [ ] **P26** 学習リソースが画像認識セミナーからの流用（Udemy外観検査／G検定YouTube／DL書籍／TensorFlow Playground／GitHubパス `ai-seminar`）→ RAG関連（LangChain・Ollama・Chroma/Qdrant・RAGAS等）に全面差し替え＋GitHubパス修正
+- [ ] **P26** 学習リソースが画像認識セミナーからの流用（外観検査ハンズオン講座／G検定YouTube／DL書籍／TensorFlow Playground／GitHubパス `ai-seminar`）→ RAG関連（LangChain・Ollama・Chroma/Qdrant・RAGAS等）に全面差し替え＋GitHubパス修正
 
 ---
 

@@ -17,7 +17,7 @@
 - **テストは `./myvenv313/Scripts/python.exe -m pytest`。** 開始時点で 487 passed, 3 deselected（実測 efcd780）。
 - **`git add -A` / `git add .` は禁止。** 触ったファイルを個別に指定する。作業ツリーには無関係の未追跡物（`.worktrees/generalize-coding-agent/`）がある。
 - **`ingest/chunker.py` と `ingest/retrieval.py` は変更しない**（設計書3.2・8節）。
-- **`chroma_db/` に書き込まない。** 旧アプリ `udemy3.py` がまだ使っている。
+- **`chroma_db/` に書き込まない。** 旧アプリの旧教材スクリプトがまだ使っている。
 - コミットはコンベンショナルコミット形式、英語。
 - 数字を書くときは実測するか、いつ・どの規模で測ったかを添える。測っていない数字を実測済みに見せない。
 
