@@ -30,7 +30,7 @@ DBに固定されており、技術ドキュメント側を測る手段が無か
 """
 import argparse
 from collections import defaultdict, deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -187,6 +187,58 @@ DOCS_RELEVANT = (
     "huggingface_hubでリポジトリにファイルをアップロードする方法を教えてください",
 )
 
+# 関連質問ごとに「根拠として出てほしい資料」。出典（Hit.citation）にこの文字列が
+# 含まれる根拠が1件でも残れば合格とする。
+#
+# 件数だけを見る判定では足りない。実測 2026-09-20: 候補数12で測ったとき、
+# 「C#の確定代入の規則」に残った根拠は typescript.md ＞ Definite Assignment
+# Assertions の1件だけで、csharp-spec の節は枠の外に居たままだった。件数は1件
+# なので合否は通り、C# の質問に TypeScript の資料が付いたまま緑になる。
+# 測定が通ることと、正しい資料が出ることは別である。
+#
+# 1位であることまでは求めない。アプリが生成に渡すのは上位 SEARCH_RESULT_COUNT
+# 件であり（rag_chat_app.py）、実害は「LLMが見る材料に正しい資料が無い」ことで
+# 決まる。順位まで固定すると、実害の無い入れ替わりで赤が出る。
+#
+# 資料の粒度に合わせて書く。1ファイルで来るものはファイル名、ディレクトリで
+# 来るもの（csharp / go / mermaid / markdown）は先頭のディレクトリ名にする。
+DOCS_EXPECTED = {
+    "Streamlitでデータをキャッシュするにはどう書きますか": "streamlit.md",
+    "Streamlitでモーダルダイアログを表示する方法を教えてください": "streamlit.md",
+    "LangChainで長い文章をチャンクに分割するにはどうすればよいですか": "langchain-text-splitters.md",
+    "Ollamaの埋め込みAPIをPythonから呼ぶ方法を教えてください": "ollama.md",
+    "huggingface_hubでモデルのファイルを1つだけダウンロードする関数は何ですか": "huggingface_hub.md",
+    "MCPサーバーでツールを定義するにはどう書きますか": "mcp.md",
+    "PyMuPDFでPDFのページを画像として書き出すにはどうしますか": "pymupdf.md",
+    "C#のrecord型はどう定義しますか": "csharp/",
+    "C#のswitch式でパターンマッチングを書く方法を教えてください": "csharp/",
+    "C#のasync awaitで非同期メソッドを書く方法を教えてください": "csharp/",
+    # 仕様そのものを尋ねているので、解説側（csharp/）ではなく仕様書を求める。
+    # この2問が TypeScript の追加で枠から押し出された当事者である。
+    "C#の確定代入の規則を教えてください": "csharp-spec.md",
+    "C#のオーバーロード解決で最適な関数メンバーを選ぶ規則を教えてください": "csharp-spec.md",
+    "Goでジェネリクスの型パラメータを使う書き方を教えてください": "go-spec.md",
+    "Goのモジュールでバージョンを上げて公開する手順を教えてください": "go/doc/modules/",
+    "Goのselect文の構文を教えてください": "go-spec.md",
+    "Goのfor文でrange句を使うときの構文を教えてください": "go-spec.md",
+    "Goでゴルーチンとチャネルを使う例を教えてください": "go-spec.md",
+    "Pythonの名前解決とスコープの規則を教えてください": "python-spec.md",
+    "Pythonのデスクリプタはどのように属性アクセスへ介入しますか": "python-spec.md",
+    "TypeScriptでユニオン型を絞り込む書き方を教えてください": "typescript.md",
+    "TypeScriptのtsconfig.jsonでstrictを有効にすると何が変わりますか": "typescript.md",
+    "Mermaidでフローチャートを書く構文を教えてください": "mermaid/",
+    "Mermaidのシーケンス図で参加者を宣言するにはどう書きますか": "mermaid/",
+    "Markdownで表を書く記法を教えてください": "markdown/",
+    "GitHubのMarkdownでタスクリストを書く記法を教えてください": "markdown/",
+    "Streamlitでサイドバーにウィジェットを置くにはどう書きますか": "streamlit.md",
+    "huggingface_hubでリポジトリにファイルをアップロードする方法を教えてください": "huggingface_hub.md",
+}
+
+# 質問文を書き換えたのに表を直し忘れると、その質問は黙って無検査になる。
+assert set(DOCS_EXPECTED) <= set(DOCS_RELEVANT), sorted(
+    set(DOCS_EXPECTED) - set(DOCS_RELEVANT)
+)
+
 # 技術ドキュメントのどこにも答えがない「問い」。合否判定はこちらだけで行う。
 #
 # 社内資料側の質問（育児休業・懲戒解雇・有給休暇）をわざと混ぜてある。この2つの
@@ -285,6 +337,10 @@ class Corpus:
     rerank_floor: float | None = None
     # 断片だけが資料に紛れ込んでいる話題。測って表示するが合否には使わない。
     incidental: tuple[str, ...] = ()
+    # 関連質問ごとの「根拠として出てほしい資料」。空なら件数だけで判定する。
+    # 社内資料側は空のままにしてある。あちらで同じ実測をしていないためで、
+    # 測っていない期待を合否に効かせないという方針（rerank_floor と同じ）。
+    expected: dict[str, str] = field(default_factory=dict)
 
 
 INTERNAL = Corpus(
@@ -310,6 +366,7 @@ DOCS = Corpus(
     rerank_floor=DOCS_RERANK_FLOOR,
     incidental=DOCS_INCIDENTAL,
     relevant=DOCS_RELEVANT,
+    expected=DOCS_EXPECTED,
     out_of_domain=DOCS_OUT_OF_DOMAIN,
     greetings=DOCS_GREETINGS,
     # 技術ドキュメント側にBM25の回帰ケースは置かない。社内資料の回帰ケースは
@@ -417,16 +474,23 @@ def translation_worked(corpus, query_of) -> bool:
     )
 
 
-def _floor_report(collection, index, session, corpus, title, questions, query_of):
+def _floor_report(
+    collection, index, session, corpus, title, questions, query_of, expected=None
+):
     """床を効かせた search() を実際に呼び、残った件数とスコアを出す。
 
     しきい値の実測と違い、こちらは本番と同じ経路をそのまま通す。採否を決めて
     いる機構が何であれ、その機構で測らないと検査にならない。
 
-    質問ごとの残り件数の並びを返す。
+    expected を渡すと、質問ごとに「出てほしい資料」が根拠に含まれるかも見る。
+    件数だけでは、正しい資料が枠から落ちて別の資料が1件だけ残った状態を
+    合格と数えてしまう（DOCS_EXPECTED のコメントに実測がある）。
+
+    (質問ごとの残り件数の並び, 期待した資料が出なかった質問の並び) を返す。
     """
     print(f"\n=== {title} ===")
     kept = []
+    missing = []
     for question in questions:
         hits = search(
             collection,
@@ -442,10 +506,16 @@ def _floor_report(collection, index, session, corpus, title, questions, query_of
             f"{hit.rerank_score:6.2f}" if hit.rerank_score is not None else " 未計測"
             for hit in hits
         )
-        print(f"  {len(hits)}件 [{scores}]  {question}")
+        want = (expected or {}).get(question)
+        if want is not None and not any(want in hit.citation for hit in hits):
+            missing.append(question)
+            note = f"  ← {want} が根拠に無い"
+        else:
+            note = ""
+        print(f"  {len(hits)}件 [{scores}]  {question}{note}")
         for hit in hits:
             print(f"        {hit.citation}")
-    return kept
+    return kept, missing
 
 
 def _report(collection, index, session, title, questions, query_of, translate=False):
@@ -610,16 +680,16 @@ def _floor_verdict(collection, index, corpus, args) -> int:
 
         query_of = translator(corpus, ask)
         print(f"\n採否はリランカーの床 {corpus.rerank_floor} で決めます。")
-        relevant = _floor_report(
+        relevant, missing = _floor_report(
             collection, index, session, corpus, "関連する質問（1件以上残ること）",
-            corpus.relevant, query_of,
+            corpus.relevant, query_of, expected=corpus.expected,
         )
-        out_of_domain = _floor_report(
+        out_of_domain, _ = _floor_report(
             collection, index, session, corpus, "圏外の質問（0件になること）",
             corpus.out_of_domain, query_of,
         )
         if corpus.incidental:
-            _floor_report(
+            _floor_report(  # 記録のみ。戻り値は使わない
                 collection, index, session, corpus,
                 "断片だけ資料にある話題（記録のみ。合否には使わない）",
                 corpus.incidental, query_of,
@@ -631,7 +701,13 @@ def _floor_verdict(collection, index, corpus, args) -> int:
     leaked = sum(1 for count in out_of_domain if count > 0)
     print(f"\n根拠が残らなかった関連質問: {lost} / {len(relevant)}")
     print(f"根拠が残ってしまった圏外質問: {leaked} / {len(out_of_domain)}")
-    if lost or leaked:
+    if corpus.expected:
+        print(
+            f"期待した資料が根拠に無い関連質問: {len(missing)} / {len(corpus.expected)}"
+        )
+        for question in missing:
+            print(f"  - {question}（{corpus.expected[question]}）")
+    if lost or leaked or missing:
         print(
             f"床 {corpus.rerank_floor} では分けられていません。床の値か、"
             "コーパス側（短すぎるチャンク・見出し）の見直しが必要です。"
