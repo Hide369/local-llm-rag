@@ -3,6 +3,7 @@
 足切りをしないと、挨拶のような検索対象外の入力でも必ず最近傍が1件返ってきて、
 無関係な文書がコンテキストに紛れ込む。
 """
+import difflib
 import sys
 from dataclasses import dataclass, replace
 
@@ -353,7 +354,54 @@ def search(
                 for hit in ranked
                 if hit.rerank_score is not None and hit.rerank_score >= rerank_floor
             ]
-    return ranked[:n_results]
+    return _without_near_duplicates(ranked, n_results)
+
+
+# 本文がこれ以上似ている根拠は同じものとみなす。実測 2026-09-20、difflib の
+# SequenceMatcher.ratio() を空白を畳んだ本文に当てた値である。
+#
+#   枠を食っていた組（streamlit.md ＞ Utilities の3件）  0.991 / 0.993 / 0.998
+#   正当に複数ある組（mermaid ＞ Syntax の5件）          0.643 〜 0.911
+#   同上（streamlit.md ＞ Write your Streamlit app）      0.906 〜 0.968
+#
+# 0.98 は上の2群の隙間（0.968 と 0.991）に置いた。**余裕は0.02しかない。**
+# 資料を入れ替えたら測り直すこと。節の名前ではなく本文で見るのは、同じ節から
+# 複数の根拠が出ること自体は正しいためである。節に上限をかける案も測ったが、
+# 「Mermaidのシーケンス図」で3件目の sequenceDiagram.md を捨てて無関係な
+# mcp.md を入れてしまった。詳細は docs/コーディング対応ライブラリ.md
+# 「同じ本文が根拠の枠を食っていた（2026-09-20）」。
+NEAR_DUPLICATE_RATIO = 0.98
+
+
+def _without_near_duplicates(hits, n_results):
+    """本文がほぼ同じ根拠は先頭の1件だけ採る。
+
+    同じ一文が根拠の枠を埋めると、LLMへ渡す材料がそのぶん減る。実測
+    2026-09-20:「GitHubのMarkdownでタスクリストを書く記法」で、上位4件のうち
+    3件が streamlit.md の同じAPIパラメータ表（"The text to display as
+    GitHub-flavored Markdown. Syntax information can be found at: ..."）だった。
+    正解の markdown/...about-tasklists.md は床1.0を越えた1.18を取りながら
+    5位で切られていた。落としていたのは床でも候補数でもなく、この重複である。
+
+    比較は上位から順に、採用済みのものとだけ行う。n_results 件そろった時点で
+    打ち切るので、実測 2026-09-20 で16件から4件を選ぶのに中央値2.2ms・最大
+    3.7ms（20回）。リランカーの数秒に対して無視できる。
+    """
+    kept = []
+    bodies = []
+    for hit in hits:
+        body = " ".join(hit.text.split())
+        if any(
+            difflib.SequenceMatcher(None, body, other).ratio()
+            >= NEAR_DUPLICATE_RATIO
+            for other in bodies
+        ):
+            continue
+        bodies.append(body)
+        kept.append(hit)
+        if len(kept) >= n_results:
+            break
+    return kept
 
 
 def _reranked(hits, query, rerank):
