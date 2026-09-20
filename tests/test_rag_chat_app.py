@@ -1338,16 +1338,37 @@ def test_the_corpus_radio_is_disabled_while_generating(app):
     「if st.session_state.generating:」が前コーパス向けの質問を新しい
     コーパスへ再検索してしまう（上の約470行のコメント参照）。chat_input を
     無効化しているのと同じ理由・同じ手当てが、このラジオにも要る。
+
+    描画された時点の値を記録して確かめる。最終状態を見てはいけない。
+    AppTest.run() は st.rerun() を全部消化するため、仕込んだ generating は
+    「生成ブロックが最後まで走り、finally で False に戻り、再実行された後」の
+    画面しか残さない。実測 2026-09-20: 最終状態は generating=False・
+    pending_question=None・messages 2件（回答が積まれている）で、ラジオは
+    有効に戻っていた。app.sidebar.radio[0].disabled を見ると、アプリ側の配線
+    （rag_chat_app.py の disabled=st.session_state.get("generating", False)）が
+    正しくても必ず False になる。観測したいのは生成中に描かれた1回目である。
     """
-    with patch.object(
-        store_module,
-        "open_store",
-        _stub_open_store_per_path({"docs_store": "st.dialog を使います。"}),
+    rendered_disabled = []
+    original_radio = st.sidebar.radio
+
+    def recording_radio(*args, **kwargs):
+        if kwargs.get("key") == "corpus_radio":
+            rendered_disabled.append(kwargs.get("disabled"))
+        return original_radio(*args, **kwargs)
+
+    with (
+        patch.object(st.sidebar, "radio", recording_radio),
+        patch.object(
+            store_module,
+            "open_store",
+            _stub_open_store_per_path({"docs_store": "st.dialog を使います。"}),
+        ),
     ):
         _seed_mid_generation_state(app, "就業規則の有給休暇は？")
         app.run()
 
-    assert app.sidebar.radio[0].disabled is True
+    assert rendered_disabled, "コーパス切り替えラジオが描画されていない"
+    assert rendered_disabled[0] is True
 
 
 def test_switching_corpus_mid_generation_does_not_reprocess_the_stale_question(app):
