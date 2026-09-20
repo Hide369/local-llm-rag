@@ -107,7 +107,7 @@ def normalise(body: str, section_level: int = 2, demote_h1: bool = False) -> str
     「見出しに親の名前を継がせようとして、やめた」）。リランカー単体では狙い
     どおり点が上がる（3.44 → 3.69）のに、関連25問で通るのが 24 → 22 に減る。
     見出しへ語を足すと BM25 の語彙と文書長が動き、ingest/retrieval.py の
-    RERANK_CANDIDATE_COUNT = 8 の枠から正解が押し出されるためである。
+    RERANK_CANDIDATE_COUNT の枠（当時8件）から正解が押し出されるためである。
     1バイトも変えていない go-spec.md の質問まで落ちた。ここを触る前に読むこと。
     """
     shift = max(section_level - 2, 0)

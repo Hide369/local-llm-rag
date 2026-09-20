@@ -342,8 +342,12 @@ def test_rerank_reorders_the_results():
 
 
 def test_only_the_top_candidates_are_reranked():
-    """RERANK_CANDIDATE_COUNT 件までしかリランカーに渡さない。1.34秒の根拠。"""
-    count = 12
+    """RERANK_CANDIDATE_COUNT 件までしかリランカーに渡さない。
+
+    件数は定数から導くこと。固定値で書くと、定数を上げたときに「上限より多い
+    候補を与える」という前提が黙って崩れる。実際 8→16 で 12 が下回った。
+    """
+    count = RERANK_CANDIDATE_COUNT + 4
     collection = _FakeCollection(
         [f"本文{n}" * 10 for n in range(count)],
         [0.10 + n * 0.01 for n in range(count)],
