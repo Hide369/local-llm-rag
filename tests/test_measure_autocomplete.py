@@ -126,7 +126,12 @@ class _Handler(BaseHTTPRequestHandler):
         self.rfile.read(int(self.headers["Content-Length"]))
         status, body, delay_s = self.server.reply
         time.sleep(delay_s)
-        data = body.encode() if isinstance(body, str) else json.dumps(body).encode()
+        if isinstance(body, bytes):
+            data = body
+        elif isinstance(body, str):
+            data = body.encode()
+        else:
+            data = json.dumps(body).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
@@ -234,3 +239,48 @@ def test_main_stops_when_warm_up_fails(monkeypatch, capsys):
 def test_main_rejects_zero_count():
     with pytest.raises(SystemExit):
         measure.main(["--count", "0"])
+
+
+class _TruncatingHandler(BaseHTTPRequestHandler):
+    """Content-Length より短い本文を送って接続を閉じる（途中で切れた応答）。"""
+
+    def do_POST(self):
+        self.rfile.read(int(self.headers["Content-Length"]))
+        self.send_response(self.server.status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", "1000")
+        self.end_headers()
+        self.wfile.write(b'{"total_duration": 1')
+        self.close_connection = True
+
+    def log_message(self, *args):
+        pass
+
+
+@pytest.fixture
+def truncating_server():
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), _TruncatingHandler)
+    httpd.status = 200
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    yield httpd
+    httpd.shutdown()
+    httpd.server_close()
+
+
+@pytest.mark.parametrize(
+    ("status", "prefix"),
+    [(200, "接続できない"), (500, "HTTP 500: 本文を読めない")],
+)
+def test_send_reports_truncated_response_as_failure(truncating_server, status, prefix):
+    truncating_server.status = status
+    result = measure.send(_url(truncating_server), measure.fim_payload("m", 0), timeout_s=5)
+    assert isinstance(result, measure.Failure)
+    assert result.reason.startswith(prefix)
+
+
+def test_send_reports_non_utf8_body(server):
+    server.reply = (200, b'{"response": "\x80"}', 0.0)  # UTF-8 として不正なバイト
+    result = measure.send(_url(server), measure.fim_payload("m", 0), timeout_s=5)
+    assert isinstance(result, measure.Failure)
+    assert result.reason.startswith("応答が JSON でない")

@@ -5,6 +5,7 @@
 GB10 へファイル1つで持っていけるよう、標準ライブラリだけで書く。
 """
 import argparse
+import http.client
 import json
 import math
 import statistics
@@ -145,6 +146,11 @@ def format_summary(summary: Summary, concurrency: int, target_ms: float) -> str:
     return "\n".join(lines)
 
 
+# URLError・タイムアウト・接続拒否は OSError。本文の途中で切れたときの
+# IncompleteRead は OSError ではなく HTTPException の側にある。
+_CONNECTION_ERRORS = (OSError, http.client.HTTPException)
+
+
 def _error_text(error: urllib.error.HTTPError) -> str:
     raw = error.read().decode("utf-8", errors="replace")
     try:
@@ -166,13 +172,16 @@ def send(url: str, payload: dict, timeout_s: float) -> "Sample | Failure":
         with urllib.request.urlopen(request, timeout=timeout_s) as response:
             raw = response.read()
     except urllib.error.HTTPError as error:
-        return Failure(f"HTTP {error.code}: {_error_text(error)}")
-    except OSError as error:  # URLError・タイムアウト・接続拒否はすべて OSError
-        return Failure(f"接続できない: {error}")
+        try:
+            return Failure(f"HTTP {error.code}: {_error_text(error)}")
+        except _CONNECTION_ERRORS as read_error:
+            return Failure(f"HTTP {error.code}: 本文を読めない: {read_error!r}")
+    except _CONNECTION_ERRORS as error:
+        return Failure(f"接続できない: {error!r}")
     round_trip_s = time.perf_counter() - started
     try:
         body = json.loads(raw)
-    except json.JSONDecodeError as error:
+    except ValueError as error:  # JSONDecodeError と、UTF-8 として不正な本文の UnicodeDecodeError
         return Failure(f"応答が JSON でない: {error}")
     try:
         return parse_response(body, round_trip_s)
