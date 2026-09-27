@@ -13,3 +13,7 @@ docs/pg_data/** -text
 # シェルスクリプトは Linux（GB10 など）へ運んで実行する。autocrlf で CRLF が
 # 混ざると bash が行末の CR を解釈できずに止まるので、作業ツリーでも LF に固定する。
 *.sh text eol=lf
+
+# systemd のユニットも GB10 へ運んで置く。CR が残ると値の末尾に付いたまま読まれ、
+# ExecStart や環境変数が壊れる。
+*.service text eol=lf

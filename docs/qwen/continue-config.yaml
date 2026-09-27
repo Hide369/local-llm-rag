@@ -1,0 +1,21 @@
+# GB10 の補完用 Ollama（:4000）で、Continue のタブ補完だけを使う。
+# 置き場所: %USERPROFILE%\.continue\config.yaml
+# <GB10のIP> を GB10 の社内LANのアドレスに置き換える。
+# チャット・編集の役割は持たせない（エージェントは Codex が担う）。
+name: GB10 Autocomplete
+version: 0.0.1
+schema: v1
+
+models:
+  - name: Qwen2.5-Coder 1.5B (GB10)
+    provider: ollama
+    model: qwen2.5-coder:1.5b-base
+    apiBase: http://<GB10のIP>:4000
+    roles:
+      - autocomplete
+    autocompleteOptions:
+      # サーバー側の文脈長 8192 より小さく。超えた分は黙って切り詰められる
+      maxPromptTokens: 1536
+      debounceDelay: 250
+      # LAN 越しなので長めに取る。短いと、間に合わなかった補完が黙って捨てられる
+      modelTimeout: 1000
