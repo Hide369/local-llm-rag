@@ -338,7 +338,7 @@ enabled = false
 |行|理由|
 |---|---|
 |`model_catalog_json` を**書かない**|指す先のファイルが無いと、起動時に失敗しうる|
-|`model_context_window` / `model_auto_compact_token_limit` を**書く**|`models.json` が持っていた値をここで持つ。書かなければ既定値（文脈 272000 の95%、圧縮はその9割）になる|
+|`model_context_window` / `model_auto_compact_token_limit` を**書く**|`models.json` が持っていた値をここで持つ。書かなければ既定値になる: 文脈 272000（使えるのはその95%の 258400）、圧縮は 272000 の9割の 244800。Ollama の 262144 との差が約17000しか無く、大きな出力1つで超えうる。超えると Ollama はエラーにせず古い部分を黙って切り捨てる|
 |`model_reasoning_summary = "none"` を**書く**|既定値では思考の要約に `auto` を要求する。思考しないモデルなので求めない|
 |`model_reasoning_effort` は**書かない**|既定値では思考の強さを送らないので、Qwen が 400 を返すことは無い。書くと上の版と同じく全要求が 400 になる|
 
