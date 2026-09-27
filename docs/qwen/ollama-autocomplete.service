@@ -1,0 +1,26 @@
+# GB10 の補完専用 Ollama（:4000）。エージェント用の ollama.service（:11434）とは別に動かす。
+# 設計: docs/superpowers/specs/2026-09-27-gb10-tab-autocomplete-design.md
+# 置き場所: /etc/systemd/system/ollama-autocomplete.service
+[Unit]
+Description=Ollama for tab autocomplete (:4000)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/ollama serve
+User=ollama
+Group=ollama
+Restart=always
+RestartSec=3
+Environment="OLLAMA_HOST=0.0.0.0:4000"
+# ollama.service と同じ置き場所を使い、モデルを二重に取得しない
+Environment="OLLAMA_MODELS=/usr/share/ollama/.ollama/models"
+# 数人が同時に打つ。同時処理数はこの Ollama にだけ効く
+Environment="OLLAMA_NUM_PARALLEL=4"
+Environment="OLLAMA_MAX_LOADED_MODELS=1"
+Environment="OLLAMA_KEEP_ALIVE=-1"
+# 1本あたりの文脈長。KV は 8192 × 4本ぶん確保される
+Environment="OLLAMA_CONTEXT_LENGTH=8192"
+
+[Install]
+WantedBy=multi-user.target

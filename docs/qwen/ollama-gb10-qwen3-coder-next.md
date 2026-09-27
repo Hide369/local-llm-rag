@@ -237,6 +237,11 @@ ollama ps     # UNTIL が Forever であること
 
 GB10 を再起動したときも同じく最初の1回だけ読み込みを待つ。
 
+> **補完用の Ollama を併設する場合:** タブ補完のために別の Ollama を `:4000` で
+> 立てる手順は [GB10のOllamaにタブ補完用のQwenを併設する](ollama-gb10-autocomplete.md)
+> にある。この節の `OLLAMA_MAX_LOADED_MODELS=1` と `OLLAMA_KEEP_ALIVE=-1` は
+> `:11434` の Ollama にだけ効くので、併設しても変えなくてよい。
+
 ## 6. Windows: models.json を置き換える
 
 `config.toml` の `model_catalog_json` が指しているファイルを
