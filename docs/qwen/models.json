@@ -1,0 +1,42 @@
+{
+  "models": [
+    {
+      "slug": "qwen3-coder-next:q8_0-256k",
+      "display_name": "qwen3-coder-next:q8_0-256k (GB10)",
+      "description": "Local open-weight coding model served by Ollama on GB10. Does not think.",
+      "base_instructions": "You are a coding agent working with the user in one workspace. Follow developer and user instructions, inspect relevant repository guidance, and use the available tools to read, edit, and test code. Use the shell for searches, focused file edits, and commands. On Windows, write valid PowerShell commands. Preserve unrelated user changes. Keep working until the requested task is complete, and report tests as passing only when actual command output proves it.",
+      "default_reasoning_level": "none",
+      "supported_reasoning_levels": [
+        {"effort": "none", "description": "This model does not think. Other levels are rejected by Ollama"}
+      ],
+      "shell_type": "unified_exec",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 1,
+      "additional_speed_tiers": [],
+      "service_tiers": [],
+      "availability_nux": null,
+      "upgrade": null,
+      "include_skills_usage_instructions": true,
+      "include_plugin_usage_instructions": false,
+      "include_apps_usage_instructions": false,
+      "default_reasoning_summary": "none",
+      "support_verbosity": false,
+      "default_verbosity": "medium",
+      "web_search_tool_type": "text_and_image",
+      "truncation_policy": {"mode": "tokens", "limit": 10000},
+      "supports_image_detail_original": false,
+      "context_window": 262144,
+      "max_context_window": 262144,
+      "auto_compact_token_limit": 196608,
+      "comp_hash": "local-qwen3-coder-next-q8-256k",
+      "effective_context_window_percent": 100,
+      "experimental_supported_tools": [],
+      "input_modalities": ["text"],
+      "supports_search_tool": false,
+      "use_responses_lite": false,
+      "node_repl_auto_review_required": false,
+      "node_repl_disabled": true
+    }
+  ]
+}
