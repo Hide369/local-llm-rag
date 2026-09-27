@@ -241,6 +241,7 @@ GB10 を再起動したときも同じく最初の1回だけ読み込みを待�
 
 `config.toml` の `model_catalog_json` が指しているファイルを
 **`models.json.bak` として残してから**、[`docs/qwen/models.json`](models.json) で置き換える。
+置かずに済ませる場合は、この節を飛ばして[7節の「models.json を置かない場合」](#modelsjson-を置かない場合)へ進む。
 
 gpt-oss 用の雛形から変えた点:
 
@@ -297,6 +298,63 @@ enabled = false
 
 `wire_api` は `"responses"` のままにする。**今の Codex は `"chat"` を受け付けず、
 設定を読んだ時点でエラーになる。**
+
+### models.json を置かない場合
+
+`models.json` は必須ではない。一覧に無いモデル名に対して、Codex は既定値
+（`model_info_from_slug`）で動く。その場合は6節を飛ばし、`config.toml` を次のように書く。
+
+```toml
+model = "qwen3-coder-next:q8_0-256k"
+model_provider = "gb10-oss"
+model_context_window = 262144
+model_auto_compact_token_limit = 196608
+model_reasoning_summary = "none"
+sandbox_mode = "workspace-write"
+approval_policy = "on-request"
+web_search = "disabled"
+developer_instructions = """
+（今までどおり）
+"""
+
+[model_providers.gb10-oss]
+name = "GB10 Ollama"
+base_url = "http://192.168.1.50:11434/v1"
+wire_api = "responses"
+requires_openai_auth = false
+request_max_retries = 1
+stream_max_retries = 0
+stream_idle_timeout_ms = 300000
+
+[windows]
+sandbox = "unelevated"
+
+[analytics]
+enabled = false
+```
+
+上の版との違い:
+
+|行|理由|
+|---|---|
+|`model_catalog_json` を**書かない**|指す先のファイルが無いと、起動時に失敗しうる|
+|`model_context_window` / `model_auto_compact_token_limit` を**書く**|`models.json` が持っていた値をここで持つ。書かなければ既定値（文脈 272000 の95%、圧縮はその9割）になる|
+|`model_reasoning_summary = "none"` を**書く**|既定値では思考の要約に `auto` を要求する。思考しないモデルなので求めない|
+|`model_reasoning_effort` は**書かない**|既定値では思考の強さを送らないので、Qwen が 400 を返すことは無い。書くと上の版と同じく全要求が 400 になる|
+
+**この3行は、必ず最初の `[...]` 見出しより前に書く。** TOML では見出しの後の行はその
+見出しに属するので、`[model_providers.gb10-oss]` の下に書くとプロバイダーの設定として
+読まれ、全体の設定としては効かない。
+
+置いた場合と比べて失うものは2つある。
+
+- **モデル選択の画面に出ない。** `config.toml` の `model` で使われるだけである
+- **スキルの使い方の指示がモデルに渡らない。** 既定値では `include_skills_usage_instructions`
+  が `false` になる。Superpowers を使うなら `models.json` を置くほうがよい
+  （[8節](#superpowers-について)）
+
+起動ログに `Unknown model … fallback model metadata` と警告が出るが、既定値で動いている
+という意味で、エラーではない。
 
 ## 8. 起動して確かめる
 
