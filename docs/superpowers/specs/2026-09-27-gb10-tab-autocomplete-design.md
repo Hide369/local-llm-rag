@@ -82,6 +82,9 @@ GB10 ─ ollama-autocomplete.service  :4000（新設）
   `apiBase: http://<GB10のIP>:4000`、`roles: [autocomplete]` のモデルを1つだけ書く。
   補完に使う文脈の上限（`autocompleteOptions.maxPromptTokens`）は、サーバー側の
   8192 以下にする。超えた分はサーバー側で黙って切り詰められる。
+  `defaultCompletionOptions` で `keepAlive: -1` と `contextLength: 8192` を送らせる。
+  Continue は既定で `keep_alive` を30分として送り、要求の値がサーバー側の
+  `OLLAMA_KEEP_ALIVE=-1` より優先されるため、そのままでは常駐にならない。
 
 ## 5. メモリの見積もり（未検証）
 

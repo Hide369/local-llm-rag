@@ -13,6 +13,12 @@ models:
     apiBase: http://<GB10のIP>:4000
     roles:
       - autocomplete
+    defaultCompletionOptions:
+      # Continue は既定で keep_alive を30分として要求ごとに送り、サーバー側の
+      # OLLAMA_KEEP_ALIVE=-1 を上書きする。-1 で降ろさせない
+      keepAlive: -1
+      # サーバー側の OLLAMA_CONTEXT_LENGTH と揃える。食い違うと要求のたびに読み直しになる
+      contextLength: 8192
     autocompleteOptions:
       # サーバー側の文脈長 8192 より小さく。超えた分は黙って切り詰められる
       maxPromptTokens: 1536

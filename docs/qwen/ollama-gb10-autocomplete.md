@@ -124,8 +124,8 @@ curl -s http://127.0.0.1:11434/api/version    # エージェント側も生き�
 |`OLLAMA_MODELS`（`ollama.service` と同じ）|モデルを二重に取得しない|
 |`OLLAMA_NUM_PARALLEL=4`|数人が同時に打つ。この Ollama にだけ効く|
 |`OLLAMA_MAX_LOADED_MODELS=1`|補完用に載せるのは1つだけ。7B を試すときは 1.5B と入れ替わる|
-|`OLLAMA_KEEP_ALIVE=-1`|降ろさない。補完のたびに読み込みを待たせない|
-|`OLLAMA_CONTEXT_LENGTH=8192`|1本あたりの文脈長。Continue 側の `maxPromptTokens`（1536）より十分大きい|
+|`OLLAMA_KEEP_ALIVE=-1`|降ろさない。補完のたびに読み込みを待たせない。ただし要求に `keep_alive` が付いているとそちらが優先されるので、Continue 側でも `keepAlive: -1` を送らせる（7節）|
+|`OLLAMA_CONTEXT_LENGTH=8192`|1本あたりの文脈長。Continue 側の `contextLength` と揃え、`maxPromptTokens`（1536）より十分大きくする。変えるときは2か所を一緒に変える|
 
 ユニット名が `ollama.service` と別なので、Ollama を公式のインストールスクリプトで更新
 しても書き換えられない。同じ実行ファイルを使うため、`sudo systemctl restart
@@ -282,6 +282,8 @@ p90 が 500ms 以下なら、7節の `config.yaml` の `model` と `name` を 7B
 |`apiBase`|`http://<GB10のIP>:4000`|`:11434` ではない|
 |`maxPromptTokens`|1536|サーバー側の文脈長 8192 より小さく。超えた分は黙って切り詰められる|
 |`modelTimeout`|1000（ms）|LAN 越しなので長めに取る。短いと、間に合わなかった補完が黙って捨てられる|
+|`keepAlive`|-1|Continue は既定で `keep_alive` を30分として要求ごとに送り、サーバー側の `OLLAMA_KEEP_ALIVE=-1` を上書きする。そのままだと30分使わないとモデルが降り、次の補完が読み込み待ちで `modelTimeout` を超えて捨てられる（Continue のソース `core/llm/llms/Ollama.ts` で確認。ドキュメントには載っていない）|
+|`contextLength`|8192|サーバー側の `OLLAMA_CONTEXT_LENGTH` と揃える。食い違うと、要求のたびにモデルを読み直す|
 
 **成功の目安:**
 
@@ -289,6 +291,9 @@ p90 が 500ms 以下なら、7節の `config.yaml` の `model` と `name` を 7B
 - VS Code の出力パネルで Continue のログを選び、要求先が `http://<GB10のIP>:4000` である
   （ログのチャンネル名は Continue の版で変わりうる。一覧から Continue を含むものを選ぶ）。
 - `continue.telemetryEnabled` が `false` で、Continue にサインインしていない。
+- Continue でしばらく補完を使った後、GB10 で `OLLAMA_HOST=127.0.0.1:4000 ollama ps` の
+  `UNTIL` が `Forever` のままである。残り時間（`29 minutes from now` など）が出るなら
+  `keepAlive: -1` が効いていない（[つまずきやすいところ](#つまずきやすいところ)）。
 
 ## 8. 何がどこへ流れるか
 
@@ -325,6 +330,7 @@ Windows 側は Continue をアンインストールし、`%USERPROFILE%\.continu
 |症状|原因|対処|
 |---|---|---|
 |灰色の候補が出ない|`modelTimeout` が短く、LAN 越しの応答が間に合わずに捨てられている。または `apiBase` の誤り|3節の `curl.exe` で届くか確かめる。6節の往復時間の p90 より `modelTimeout` を大きくする|
+|しばらく使わないと、最初の補完だけ出ない|補完モデルが降りている。Continue が送る `keep_alive` がサーバー側の `-1` を上書きしている|`config.yaml` に `keepAlive: -1` があるか。`:4000` の `ollama ps` の `UNTIL` が `Forever` か（7節）|
 |`HTTP 404: model '…' not found`|`:4000` 側で取得していない、または `OLLAMA_MODELS` が `ollama.service` と違う|[4節](#4-gb10-モデルを取得しfim-を確かめる)の `pull`。[1節](#1-gb10-ポートと既存の設定を確かめる)で確かめた値をユニットに書く|
 |候補に説明文が混ざる、後ろのコードを繰り返す|instruct 版を指定している、またはテンプレートに `Suffix` が無い|`-base` のタグを使う。4節の `ollama show --template`|
 |`ollama-autocomplete` が起動しない（`address already in use`）|4000 番を他が使っている|1節の `ss`。止められなければポートを決め直す|
