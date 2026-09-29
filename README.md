@@ -596,6 +596,8 @@ Anthropic形式のAPIしか話さないため、変換プロキシが1つ要る�
 OllamaではなくvLLMに `openai/gpt-oss-120b` を載せ、CodexとClaude Codeの両方を使う場合は
 [GB10のvLLM + gpt-oss-120b でCodexとClaude Codeを使う](docs/vllm-gb10-coding-agent.md)
 を参照する。
+Claude Code にプラグイン Superpowers を入れて使う手順と、ローカルLLMでの注意点は
+[Superpowers プラグイン導入手順](docs/superpowers-setup.md) にある。
 
 | パス | 役割 |
 |---|---|
