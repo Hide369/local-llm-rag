@@ -13,6 +13,10 @@ GB10 → Ollama :11434 → qwen3-coder-next:q8_0-256k（常駐）
 **前提:** [GB10のOllamaでコーディングエージェントを動かす](../gb10-coding-agent.md)の
 手順で、`gpt-oss:120b-131k` を Codex から使えていること。この文書はその差分だけを書く。
 
+Codex ではなく VS Code の Claude Code から使う場合は、この文書の1〜5節（GB10 側）の後に
+[VS CodeのClaude CodeをGB10のQwen3-Coder-Nextへ向ける](claude-code-gb10-qwen3-coder-next.md)
+へ進む。プロキシは要らず、Windows 側は `settings.json` を書くだけである。
+
 **`gpt-oss:120b` は、Codex から Qwen を使えると確かめるまで消さない。** 消すのは最後の
 [9節](#9-gpt-oss120b-を消す任意)で、任意である。それまでは Windows 側の設定を戻す
 だけで元に戻れる。

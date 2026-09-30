@@ -591,8 +591,11 @@ Colabの `gpt-oss:20b` をVS Codeのコーディングエージェントとし�
 [GB10のOllamaでコーディングエージェントを動かす](docs/gb10-coding-agent.md) を参照する
 （**クライアントにOllamaもPythonも入れない**構成で、設定ファイル2つを手で置く）。
 Codexではなく Claude Code を同じGB10へ向ける手順は
-[VS CodeのClaude CodeをGB10へ向ける](docs/claude-code-gb10.md) にある（Claude Code は
-Anthropic形式のAPIしか話さないため、変換プロキシが1つ要る）。
+[VS CodeのClaude CodeをGB10へ向ける](docs/claude-code-gb10.md) にある（LiteLLM を変換
+プロキシとして挟む旧手順）。
+Qwen3-Coder-Next に置き換えたGB10へ、プロキシを立てずに Claude Code を直接繋ぐ手順は
+[VS CodeのClaude CodeをGB10のQwen3-Coder-Nextへ向ける](docs/qwen/claude-code-gb10-qwen3-coder-next.md)
+にある（Ollama v0.14.0 以降は `/v1/messages` を自分で話す。クライアントは `settings.json` だけ）。
 OllamaではなくvLLMに `openai/gpt-oss-120b` を載せ、CodexとClaude Codeの両方を使う場合は
 [GB10のvLLM + gpt-oss-120b でCodexとClaude Codeを使う](docs/vllm-gb10-coding-agent.md)
 を参照する。
