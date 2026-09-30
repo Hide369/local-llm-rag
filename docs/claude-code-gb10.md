@@ -3,11 +3,17 @@
 Windows の VS Code で Claude Code を使い、推論は社内LANのGB10（DGX Spark）に置いた
 `gpt-oss:120b` に行わせる手順。**MCPは使わない。**
 
+> **この文書は古い前提で書かれている。** Ollama は v0.14.0（2026-01）から
+> Anthropic Messages API（`/v1/messages`）を自分で話すので、いまは変換プロキシを挟まず
+> `ANTHROPIC_BASE_URL` に Ollama を直接書ける。Qwen3-Coder-Next に置き換えた GB10 へ
+> プロキシなしで繋ぐ手順は
+> [VS CodeのClaude CodeをGB10のQwen3-Coder-Nextへ向ける](qwen/claude-code-gb10-qwen3-coder-next.md)
+> にある。以下は LiteLLM を挟んでいた当時の手順として残す。
+
 ## 先に読むこと
 
-**Claude Code は Anthropic Messages API（`/v1/messages`）しか話さない。** Ollamaは
-それを出さないので、**変換プロキシを1つ挟むことが避けられない**。MCPは使わないが、
-プロキシは要る。ここを飛ばして `ANTHROPIC_BASE_URL` にOllamaを直接書いても動かない。
+**Claude Code は Anthropic Messages API（`/v1/messages`）しか話さない。** 当時の Ollama は
+それを出さなかったので、**変換プロキシを1つ挟んでいた**。
 
 そのうえで、選ぶ前に知っておくべきことが3つある。
 
