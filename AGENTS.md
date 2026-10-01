@@ -23,7 +23,21 @@
 
 - OSS ライブラリ・フレームワークの API や設定は `context7` で調べること。
 - 社内固有の情報を context7 のクエリ文に含めないこと。context7 は社外の
-  サービスであり、**こちらから内容を送る唯一の経路**である。
+  サービスであり、**こちらから内容を送る唯一の経路**である。送った `query` と
+  `libraryName` は先方に匿名で保存され、結果の並べ替えのため先方が使う外部 LLM
+  にも渡る（手順と根拠は `docs/context7-claude-code.md`）。
+  - `query` / `libraryName` に書いてよいのは、公開ライブラリ名とバージョン
+    （例: `fastapi 0.115`）と、一般的な機能・概念の説明
+    （例: `dependency injection with async database session`）だけである。
+  - 書いてはいけないもの: 社内のシステム名・プロジェクト名・リポジトリ名・
+    ホスト名・URL、社内コード由来のファイル名・関数名・クラス名・変数名、
+    ソースコード片、エラーメッセージ中の社内パスや設定値、顧客名・個人情報、
+    API キー・パスワード・トークン、業務内容や仕様が推測できる記述。
+  - 送る前に、調べたい内容を「公開ライブラリの一般的な使い方」へ抽象化し、
+    上の禁止事項が残っていないか確かめること。抽象化できない（社内固有の事情に
+    依存する）質問には context7 を使わず、手元のコードと社内資料を参照すること。
+  - 例: NG `<社内システム名> の retriever.py で ChromaDB の検索が遅い` →
+    OK `chromadb query performance tuning`
 - 外部へ出る通信は context7 だけではない。`search_documents` の初回呼び出しは、
   リランカーのモデルが手元にあるかを確かめるため huggingface.co へ HEAD を6回
   送る（実測 2026-09-08。`ingest/reranker.py` の `check_reranker` →

@@ -150,6 +150,8 @@ notepad $env:USERPROFILE\.claude\CLAUDE.md
 context7 も併用するなら「外部ドキュメントの参照」節も貼る。社内固有の語を context7
 のクエリに含めない、という制約はここにしか無い。context7 は社外のサービスであり、
 MCP サーバを経由しないため、この一行を落とすと社内の語がそのまま外へ出る。
+context7 の登録手順と、社内の語が漏れないかの確認方法は
+[context7-claude-code.md](context7-claude-code.md) にある。
 
 ### 本リポジトリで開発する人：`CLAUDE.md` から `AGENTS.md` を読ませる
 
