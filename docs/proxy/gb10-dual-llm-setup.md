@@ -25,7 +25,7 @@ LiteLLM で束ねて VS Code の Claude Code からモデルを切り替えて�
 
 | 役割 | ホスト | IP（例） | ポート | served-model-name |
 |---|---|---|---|---|
-| 設計用LLM | GB10-A | 192.168.10.11 | 8000 | `gpt-oss-120b` |
+| 設計用LLM | GB10-A | 127.0.0.1（ループバックのみ） | 8000 | `gpt-oss-120b` |
 | コーディング用LLM | GB10-B | 192.168.10.12 | 8000 | `qwen3-coder-next` |
 | ゲートウェイ | GB10-A | 192.168.10.11 | 4000 | – |
 
@@ -57,13 +57,16 @@ LiteLLM で束ねて VS Code の Claude Code からモデルを切り替えて�
 | 両方 | 22/tcp | SSH（管理用） | 管理者PC |
 
 - クライアントPCが接続するのは **GB10-A の 4000番だけ**。vLLM の 8000番はクライアントに開けない。
-- GB10-A の 8000番は LiteLLM が同じマシンから呼ぶので、LAN に開けなくてよい。5章の `curl` をクライアントから実行するときだけ一時的に開ける。
+- GB10-A の 8000番は LiteLLM が同じマシンから呼ぶので、ループバック（127.0.0.1）だけで待ち受ける。LAN からは届かないので、クライアントからの確認は LiteLLM 経由（6.4）で行う。
 - 外向きは、初回のモデル取得と `pip` 用に **443/tcp**（huggingface.co など）が必要。モデル取得後は閉じてもよい。
 - クライアントの外向き通信は `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`（7章）で抑える。ただし Context7 MCP を使う場合、その通信は残る。
 
-ufw で絞る例（IP は1章の例示値）：
+ufw で絞る例（IP は1章の例示値）。SSH の許可を先に入れてから有効化すること：
 
 ```bash
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+
 # GB10-A
 sudo ufw allow from 192.168.10.0/24 to any port 4000 proto tcp
 sudo ufw allow from 192.168.10.0/24 to any port 22 proto tcp
@@ -71,6 +74,10 @@ sudo ufw allow from 192.168.10.0/24 to any port 22 proto tcp
 # GB10-B（vLLM は GB10-A からのみ）
 sudo ufw allow from 192.168.10.11 to any port 8000 proto tcp
 sudo ufw allow from 192.168.10.0/24 to any port 22 proto tcp
+
+# 両方
+sudo ufw enable
+sudo ufw status numbered
 ```
 
 > **Docker 利用時の注意**: `-p 8000:8000` で公開したポートは ufw のルールより先に通ってしまうことがある。
@@ -85,7 +92,7 @@ sudo ufw allow from 192.168.10.0/24 to any port 22 proto tcp
 ```bash
 vllm serve openai/gpt-oss-120b \
   --served-model-name gpt-oss-120b \
-  --host 0.0.0.0 --port 8000 \
+  --host 127.0.0.1 --port 8000 \
   --enable-auto-tool-choice \
   --tool-call-parser openai \
   --reasoning-parser openai_gptoss \
@@ -97,7 +104,8 @@ vllm serve openai/gpt-oss-120b \
 **注意**
 - `--served-model-name` は**スラッシュなし**にする（Claude Code は `openai/gpt-oss-120b` のような名前を扱えない）。
 - gpt-oss のツール呼び出しは `tool_choice="auto"` のみ対応。
-- LiteLLM を同じ GB10-A で動かすので、`--gpu-memory-utilization` はやや控えめに。
+- `--host 127.0.0.1` で LAN に公開しない（2章）。Docker で動かす場合はコンテナ内を `--host 0.0.0.0` にし、`-p 127.0.0.1:8000:8000` でホストのループバックだけに公開する。
+- GB10 は CPU と GPU がメモリを共有するため、LiteLLM や OS の分を残して `--gpu-memory-utilization` はやや控えめにする。
 
 ---
 
@@ -124,7 +132,7 @@ vllm serve Qwen/Qwen3-Coder-Next-FP8 \
 
 ## 5. 各サーバーの動作確認
 
-GB10-A から実行（クライアントPCから実行する場合は、2章のとおり一時的にポートを開ける）：
+GB10-A で実行する（GB10-A の 8000番はループバックのみなので、クライアントPCからは届かない）：
 
 ```bash
 curl http://127.0.0.1:8000/v1/models       # gpt-oss-120b が見えること（GB10-A 自身）
@@ -142,7 +150,7 @@ pip install 'litellm[proxy]'
 ```
 
 ### 6.2 設定ファイル
-同じフォルダの [litellm-config.yaml](litellm-config.yaml) を配置し、`api_base` の IP と `master_key` を環境に合わせて変更する。
+同じフォルダの [litellm-config.yaml](litellm-config.yaml) を配置し、GB10-B の `api_base` の IP と `master_key` を環境に合わせて変更する。GB10-A 側の `api_base` は `127.0.0.1` のままでよい（LiteLLM と同じマシンのため）。
 
 ### 6.3 起動
 ```bash
@@ -153,6 +161,8 @@ litellm --config litellm-config.yaml --port 4000
 常駐させる場合は systemd サービス化、または Docker（`ghcr.io/berriai/litellm`）で運用する。
 
 ### 6.4 動作確認（Anthropic形式）
+GB10-A またはクライアントPCから実行する。Windows の PowerShell では `curl` が別コマンドの別名になっているため、Git Bash か WSL で実行するか、`curl.exe` と書く（その場合は改行の `\` とクォートを PowerShell 向けに直す）。
+
 ```bash
 for m in gpt-oss-120b qwen3-coder-next; do
   curl -s http://192.168.10.11:4000/v1/messages \
