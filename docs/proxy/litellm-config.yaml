@@ -1,0 +1,27 @@
+# LiteLLM ゲートウェイ設定
+# GB10-A (gpt-oss-120b) と GB10-B (qwen3-coder-next) をモデル名で振り分ける
+# 起動: litellm --config litellm-config.yaml --port 4000
+
+model_list:
+  # 設計・レビュー用（GB10-A）
+  - model_name: gpt-oss-120b
+    litellm_params:
+      model: hosted_vllm/gpt-oss-120b        # vLLM の --served-model-name と一致させる
+      api_base: http://192.168.10.11:8000/v1 # ← GB10-A の IP に変更
+      api_key: dummy
+      timeout: 600
+
+  # コーディング用（GB10-B）
+  - model_name: qwen3-coder-next
+    litellm_params:
+      model: hosted_vllm/qwen3-coder-next
+      api_base: http://192.168.10.12:8000/v1 # ← GB10-B の IP に変更
+      api_key: dummy
+      timeout: 600
+
+litellm_settings:
+  drop_params: true        # vLLM が受け付けない Anthropic 固有パラメータを捨てる
+  request_timeout: 600
+
+general_settings:
+  master_key: sk-local-change-me   # Claude Code の ANTHROPIC_AUTH_TOKEN と同じ値にする
