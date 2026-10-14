@@ -47,6 +47,37 @@ LiteLLM で束ねて VS Code の Claude Code からモデルを切り替えて�
   - コミュニティ版 [eugr/spark-vllm-docker](https://github.com/eugr/spark-vllm-docker)
 - 以下のコマンド例は `vllm serve` 部分のみ記載。使用するコンテナに合わせて `docker run ... <image> vllm serve ...` の形にする。
 
+### ネットワーク（ポート一覧）
+
+| サーバー | ポート | 用途 | 接続を許可する相手 |
+|---|---|---|---|
+| GB10-A | **4000/tcp** | LiteLLM ゲートウェイ | クライアントPC（VS Code） |
+| GB10-A | **8000/tcp** | vLLM（gpt-oss-120b） | GB10-A 自身（LiteLLM） |
+| GB10-B | **8000/tcp** | vLLM（Qwen3-Coder-Next） | GB10-A のみ |
+| 両方 | 22/tcp | SSH（管理用） | 管理者PC |
+
+- クライアントPCが接続するのは **GB10-A の 4000番だけ**。vLLM の 8000番はクライアントに開けない。
+- GB10-A の 8000番は LiteLLM が同じマシンから呼ぶので、LAN に開けなくてよい。5章の `curl` をクライアントから実行するときだけ一時的に開ける。
+- 外向きは、初回のモデル取得と `pip` 用に **443/tcp**（huggingface.co など）が必要。モデル取得後は閉じてもよい。
+- クライアントの外向き通信は `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`（7章）で抑える。ただし Context7 MCP を使う場合、その通信は残る。
+
+ufw で絞る例（IP は1章の例示値）：
+
+```bash
+# GB10-A
+sudo ufw allow from 192.168.10.0/24 to any port 4000 proto tcp
+sudo ufw allow from 192.168.10.0/24 to any port 22 proto tcp
+
+# GB10-B（vLLM は GB10-A からのみ）
+sudo ufw allow from 192.168.10.11 to any port 8000 proto tcp
+sudo ufw allow from 192.168.10.0/24 to any port 22 proto tcp
+```
+
+> **Docker 利用時の注意**: `-p 8000:8000` で公開したポートは ufw のルールより先に通ってしまうことがある。
+> GB10-A では `-p 127.0.0.1:8000:8000` とループバックだけに公開する。GB10-B は Docker 側で
+> `-p 192.168.10.12:8000:8000` のように LAN 側 IP に限定したうえで、`DOCKER-USER` チェーンで
+> GB10-A 以外からの接続を落とす。
+
 ---
 
 ## 3. GB10-A：gpt-oss-120b の起動
@@ -93,10 +124,10 @@ vllm serve Qwen/Qwen3-Coder-Next-FP8 \
 
 ## 5. 各サーバーの動作確認
 
-クライアントPCまたは GB10-A から実行：
+GB10-A から実行（クライアントPCから実行する場合は、2章のとおり一時的にポートを開ける）：
 
 ```bash
-curl http://192.168.10.11:8000/v1/models   # gpt-oss-120b が見えること
+curl http://127.0.0.1:8000/v1/models       # gpt-oss-120b が見えること（GB10-A 自身）
 curl http://192.168.10.12:8000/v1/models   # qwen3-coder-next が見えること
 ```
 
@@ -199,6 +230,7 @@ VS Code 拡張は `~/.claude/settings.json`（Windows では `%USERPROFILE%\.cla
 | 症状 | 確認ポイント |
 |---|---|
 | `model not found` | `--served-model-name`・LiteLLM の `model_name`・Claude Code の設定値が完全一致しているか |
+| 接続できない / タイムアウト | 2章のポート一覧どおり開いているか（`sudo ufw status`、`ss -ltnp`）。GB10-B の 8000番が GB10-A から届くか |
 | 401 / 認証エラー | `ANTHROPIC_AUTH_TOKEN` と LiteLLM の `master_key` が一致しているか |
 | ツールが呼ばれず文章だけ返る | vLLM の `--enable-auto-tool-choice` と `--tool-call-parser`（gpt-oss=`openai`、Qwen=`qwen3_coder`）を確認 |
 | 長い会話で途中エラー | `--max-model-len` 超過。値を確認し、Claude Code 側の自動圧縮（`/compact`）を早めに使う |

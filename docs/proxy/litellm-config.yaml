@@ -7,7 +7,8 @@ model_list:
   - model_name: gpt-oss-120b
     litellm_params:
       model: hosted_vllm/gpt-oss-120b        # vLLM の --served-model-name と一致させる
-      api_base: http://192.168.10.11:8000/v1 # ← GB10-A の IP に変更
+      api_base: http://127.0.0.1:8000/v1     # LiteLLM と同じ GB10-A 上（vLLM はループバック公開）
+                                             # LiteLLM を Docker で動かす場合は --network host で起動する
       api_key: dummy
       timeout: 600
 
