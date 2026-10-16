@@ -407,6 +407,28 @@ def test_template_dialog_shows_a_broken_template_but_still_offers_delete(app, tm
     assert app.button(key="remove_壊れた.docx") is not None
 
 
+def test_template_dialog_stays_closed_after_dismissing_it(app, tmp_path):
+    """「×」で閉じたあと画面を操作しても、ダイアログが勝手に開き直さない。"""
+    from tests.test_rag_chat_app import dismiss_dialog
+
+    store = tmp_path / "templates"
+    store.mkdir(parents=True, exist_ok=True)
+    with (
+        patch.object(store_module, "open_store", _stub_store()),
+        patch.object(templates_module, "TEMPLATE_DIR", store),
+    ):
+        app.run()
+        app.segmented_control[0].set_value("Cowork").run()
+        button = next(b for b in app.button if b.label == "フォーマットファイルを登録・削除")
+        button.click().run()
+        dismiss_dialog(app)
+        app.run()
+
+    assert not app.exception
+    assert not [node for node in app._tree if getattr(node, "type", None) == "dialog"]
+    assert app.session_state["template_dialog_open"] is False
+
+
 def test_cowork_does_not_leave_the_request_in_the_chat_history(app, tmp_path):
     """Cowork の依頼文をチャット履歴に残さない。
 

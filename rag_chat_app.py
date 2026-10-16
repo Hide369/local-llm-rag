@@ -201,7 +201,20 @@ def uploaded_sources(collection):
     )
 
 
-@st.dialog("資料をアップロードして取り込む")
+def _forget_dialog(flag):
+    """「×」・Esc・外側クリックで閉じたときに、開閉のフラグを戻す。
+
+    ダイアログはフラグで開いている（サイドバーの「資料をアップロード」の
+    コメント参照）。「閉じる」ボタンだけがフラグを戻していたため、それ以外の
+    閉じ方ではフラグが残り、次に画面が動いたときにダイアログが開き直していた。
+    """
+    def forget():
+        st.session_state[flag] = False
+
+    return forget
+
+
+@st.dialog("資料をアップロードして取り込む", on_dismiss=_forget_dialog("upload_dialog_open"))
 def upload_dialog(collection):
     """クライアントの手元にある資料を取り込む。
 
@@ -275,7 +288,7 @@ def upload_dialog(collection):
                     st.rerun()
 
 
-@st.dialog("フォーマットファイルを登録・削除する")
+@st.dialog("フォーマットファイルを登録・削除する", on_dismiss=_forget_dialog("template_dialog_open"))
 def template_dialog():
     st.caption(
         "フォーマットファイルの空欄は {{会議名}} のように書いてください。"

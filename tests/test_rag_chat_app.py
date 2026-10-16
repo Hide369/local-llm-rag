@@ -794,6 +794,46 @@ def test_the_close_button_comes_before_the_uploaded_list(app):
     assert keys.index("close_upload_dialog") < keys.index("delete_uploads/資料0.md")
 
 
+def _open_dialogs(app):
+    return [node for node in app._tree if getattr(node, "type", None) == "dialog"]
+
+
+def dismiss_dialog(app):
+    """「×」・Esc・外側クリックでダイアログを閉じた操作を再現する。
+
+    AppTest には閉じる操作が無い。フロントエンドが閉じたときに送るのは、
+    ダイアログIDへのトリガー値だけである（streamlit/elements/lib/dialog.py。
+    on_dismiss を指定したときだけ dialog.id が付き、送られるようになる）。
+    """
+    from streamlit.proto.WidgetStates_pb2 import WidgetState
+
+    (dialog,) = _open_dialogs(app)
+    dialog_id = dialog.proto.dialog.id
+    assert dialog_id, "on_dismiss が無いと、閉じたことがサーバーへ届かない"
+    states = app._tree.get_widget_states()
+    states.widgets.append(WidgetState(id=dialog_id, trigger_value=True))
+    app._run(states)
+    return app
+
+
+def test_the_upload_dialog_stays_closed_after_dismissing_it(app):
+    """「×」で閉じたあと画面を操作しても、ダイアログが勝手に開き直さない。
+
+    開閉のフラグを「閉じる」ボタンでしか戻していなかったため、「×」で閉じると
+    フラグが残り、次の再実行でまた開いていた。
+    """
+    with patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})):
+        app.run()
+        _open_upload_dialog(app)
+        assert _open_dialogs(app)
+        dismiss_dialog(app)
+        app.run()
+
+    assert not app.exception
+    assert not _open_dialogs(app)
+    assert app.session_state["upload_dialog_open"] is False
+
+
 def _pixel_heights(node, found):
     """要素ツリーを辿って、高さを固定したコンテナの高さを集める。
 
