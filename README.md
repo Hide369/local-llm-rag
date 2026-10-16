@@ -46,7 +46,7 @@ Windowsサーバーへ配置し、別PCのブラウザーから利用する場�
 
 ## 使い方
 
-取り込みたい資料を `source/` に置く（`.pdf` / `.pptx` / `.docx` / `.xlsx` / `.md` / `.txt` /
+取り込みたい資料を `source/` に置く（`.pdf` / `.pptx` / `.docx` / `.xlsx` / `.xlsm` / `.md` / `.txt` /
 `.html` / `.htm` / `.png` / `.jpg` / `.jpeg` / `.drawio`、およびソースコードと設定
 ファイル `.go` / `.cs` / `.sh` / `.py` / `.ps1` / `.ts` / `.tsx` / `.js` / `.vue` /
 `.json` / `.bat` / `.yaml` / `.yml` / `.mod` / `.sum`）。

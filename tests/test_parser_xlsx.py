@@ -128,6 +128,47 @@ def test_xlsx_is_routed_by_the_registry(book_path):
     assert parse(book_path)[0].heading == "商品一覧"
 
 
+@pytest.fixture
+def macro_book_path(tmp_path):
+    """マクロ付きの content type を持つ本物の .xlsm。
+
+    拡張子だけ .xlsm に変えた xlsx では、ブック本体の content type が
+    macroEnabled にならず、実物の .xlsm を読めることの確認にならない。
+    openpyxl でマクロ付きを書き出すには本物の VBA プロジェクトが要るため、
+    xlsx を書いてから content type だけを Excel が .xlsm に付けるものへ替える。
+    """
+    import zipfile
+
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "集計"
+    sheet.append(["部署", "件数"])
+    sheet.append(["営業", 12])
+    plain = tmp_path / "集計.xlsx"
+    book.save(plain)
+
+    path = tmp_path / "集計.xlsm"
+    with zipfile.ZipFile(plain) as source, zipfile.ZipFile(path, "w") as target:
+        for item in source.infolist():
+            data = source.read(item)
+            if item.filename == "[Content_Types].xml":
+                data = data.replace(
+                    b"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+                    b"application/vnd.ms-excel.sheet.macroEnabled.main+xml",
+                )
+                assert b"macroEnabled" in data
+            target.writestr(item, data)
+    return path
+
+
+def test_xlsm_is_routed_by_the_registry(macro_book_path):
+    """マクロ付きブックも表の中身は xlsx と同じに読める。マクロ自体は本文ではない。"""
+    assert ".xlsm" in SUPPORTED_SUFFIXES
+    unit = parse(macro_book_path)[0]
+    assert unit.heading == "集計"
+    assert "営業 | 12" in unit.text
+
+
 def test_caption_image_is_now_wired_up(book_with_image_path):
     """Task 6で本文へ反映されるようになった（旧: test_caption_image_is_not_yet_wired_up）。
 
