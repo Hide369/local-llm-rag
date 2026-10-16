@@ -273,7 +273,7 @@ Get-ScheduledTaskInfo -TaskName 'Local-LLM-RAG-Warmup'
 Get-ChildItem 'C:\RAG\logs\warmup-*.log' | Sort-Object LastWriteTime -Descending | Select-Object -First 1 | Get-Content -Encoding UTF8
 ```
 
-リランカーはOllamaとは別にHugging Faceから取得する。初回準備にはサーバーの外向きHTTPSが必要。画像PDFを扱う場合はRapidOCRのモデルも必要なので、同じ専用アカウントで後述のIngestタスクに検証用画像PDFを取り込ませ、モデル取得・OCRを確認する。VLMは任意機能で、本例では無効。使うなら `qwen2.5vl:7b` も取得し、Ingestの起動引数に `--with-vlm` を加えるようランチャーを変更する。[依存関係一覧](依存関係一覧.md)
+リランカーはOllamaとは別にHugging Faceから取得する。初回準備にはサーバーの外向きHTTPSが必要。画像PDFを扱う場合はRapidOCRのモデルも必要なので、同じ専用アカウントで後述のIngestタスクに検証用画像PDFを取り込ませ、モデル取得・OCRを確認する。VLMは任意機能で、本例では無効。使うなら `qwen3-vl:8b` も取得し、Ingestの起動引数に `--with-vlm` を加えるようランチャーを変更する。[依存関係一覧](依存関係一覧.md)
 
 ### 4.2 Streamlitを起動する
 

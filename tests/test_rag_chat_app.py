@@ -359,7 +359,7 @@ def test_ingesting_without_a_vlm_still_ingests_and_says_why(app):
         return ingest_source.IngestReport()
 
     def failing_check_vlm(*a, **k):
-        raise vlm_module.VlmError("VLMモデル qwen2.5vl:7b がありません")
+        raise vlm_module.VlmError("VLMモデル qwen3-vl:8b がありません")
 
     with (
         patch("ingest.store.open_store", _stub_open_store({"source": "a.md"})),
@@ -372,7 +372,7 @@ def test_ingesting_without_a_vlm_still_ingests_and_says_why(app):
 
     assert not app.exception
     assert calls == [{"caption_image": None}]
-    assert any("qwen2.5vl:7b" in warning.value for warning in app.warning)
+    assert any("qwen3-vl:8b" in warning.value for warning in app.warning)
 
 
 def test_the_ingest_result_survives_the_rerun(app):
