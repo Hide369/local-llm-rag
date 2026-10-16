@@ -5,7 +5,7 @@
 説明文化・埋め込み）と、コーディングエージェントである。
 
 > **RAG向けの選定は見送った（2026-09-16）。**
-> RAG本体は Ollama（`gpt-oss:20b` / `bge-m3` / `qwen2.5vl:7b`）のまま運用する。
+> RAG本体は Ollama（`gpt-oss:20b` / `bge-m3` / `qwen3-vl:8b`）のまま運用する。
 > 以下は調査の記録として残してある。**ここで挙げたモデルを実機で動かしてはいない。**
 > 日本語の生成品質を現行の `gpt-oss:20b` と比べた実測も無い。
 >
@@ -44,7 +44,7 @@
 |**生成**（RAG回答・エージェント）|`nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4`|NVFP4|120B中12Bだけを活性化するMoEで、NVFP4の重みは約60GiB。**128GBのGB10に1台で載る上限クラス**。日本語がサポート言語に入っており、1Mトークン文脈とツール呼び出しに対応する|
 |生成（軽量代替）|`nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8`|FP8|30B中3B活性化。vLLM公式レシピに**DGX Spark専用の起動例がある**唯一のNemotron。VLMと埋め込みを同時常駐させたいならこちら|
 |**VLM**（図表の説明文化）|`nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-NVFP4`|NVFP4|画像・動画・音声・テキストを1モデルで扱う。C-RADIOv4-Hの視覚エンコーダーで**文書理解（図表・スクリーンショット）に強い**。本リポジトリのVLM用途はまさにこれ|
-|VLM（軽量代替）|`nvidia/Qwen2.5-VL-7B-Instruct-NVFP4`|NVFP4|いま使っている `qwen2.5vl:7b` の直系。プロンプトを変えずに移れる|
+|VLM（軽量代替）|`nvidia/Qwen2.5-VL-7B-Instruct-NVFP4`|NVFP4|以前Ollamaで使っていた `qwen2.5vl:7b` の直系。プロンプトを変えずに移れる|
 |**埋め込み**|`nvidia/Nemotron-3-Embed-1B-NVFP4`|NVFP4|RTEBで首位を取った系列。評価対象34言語に日本語を含む。2048次元。1Bなので取り込みのバッチ処理が速い|
 |埋め込み（現状維持）|`BAAI/bge-m3`|—|1024次元。**コード変更ゼロで移れる**唯一の選択肢|
 |リランカー（任意）|`nvidia/llama-nemotron-rerank-1b-v2`|—|26言語（日本語含む）のクロスエンコーダー。8192トークンまで。現状はCPUのONNXで足りている|
@@ -296,7 +296,7 @@ curl http://localhost:8003/v1/chat/completions -H "Content-Type: application/jso
 ```
 
 軽く済ませたいなら `nvidia/Qwen2.5-VL-7B-Instruct-NVFP4` に差し替える。重みが
-小さく（`--gpu-memory-utilization 0.08` 程度）、いまOllamaで使っている
+小さく（`--gpu-memory-utilization 0.08` 程度）、以前Ollamaで使っていた
 `qwen2.5vl:7b` と同じ系列なので、`ingest/vlm.py` の `CAPTION_PROMPT` を
 書き換えずに済む可能性が高い。**まずこちらで経路を通し、品質に不満が出てから
 Omniへ上げる**のが手戻りが少ない。

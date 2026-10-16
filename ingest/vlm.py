@@ -14,7 +14,7 @@ from ingest.embedder import OLLAMA_HOST, new_session
 # importしないので循環にはならない）。
 from ingest.image_text import DECORATION
 
-VLM_MODEL = os.environ.get("OLLAMA_VLM_MODEL", "qwen2.5vl:7b")
+VLM_MODEL = os.environ.get("OLLAMA_VLM_MODEL", "qwen3-vl:8b")
 
 CAPTION_PROMPT = (
     "この画像に写っている図表・写真の内容を、日本語で2〜3文にまとめて説明してください。"

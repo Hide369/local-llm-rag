@@ -46,7 +46,7 @@ Windowsサーバーへ配置し、別PCのブラウザーから利用する場�
 
 ## 使い方
 
-取り込みたい資料を `source/` に置く（`.pdf` / `.pptx` / `.docx` / `.xlsx` / `.md` / `.txt` /
+取り込みたい資料を `source/` に置く（`.pdf` / `.pptx` / `.docx` / `.xlsx` / `.xlsm` / `.md` / `.txt` /
 `.html` / `.htm` / `.png` / `.jpg` / `.jpeg` / `.drawio`、およびソースコードと設定
 ファイル `.go` / `.cs` / `.sh` / `.py` / `.ps1` / `.ts` / `.tsx` / `.js` / `.vue` /
 `.json` / `.bat` / `.yaml` / `.yml` / `.mod` / `.sum`）。
@@ -76,7 +76,7 @@ XMLから図形のラベル文字を直接読む（ラベルはすでに構造�
 .\myvenv313\Scripts\python.exe -m scripts.ingest_source --force --only-suffix .pptx
 
 # PDF/PPTX内の図・写真もVLMで説明文化する（大幅に時間が伸びる。事前に
-# ollama pull qwen2.5vl:7b が必要。ColabのL4に接続していればそちらで処理される）
+# ollama pull qwen3-vl:8b が必要。ColabのL4に接続していればそちらで処理される）
 # チャット画面からの取り込みはこれを常に行う（下の「図表の説明文化」参照）。
 # CLIで選べるようにしてあるのは、初回の全量取り込みで外せるようにするためである
 .\myvenv313\Scripts\python.exe -m scripts.ingest_source --with-vlm
@@ -134,7 +134,7 @@ VLMの説明文（`[図の説明] `）とOCRで読んだ文字（`[画像内の�
 黙って欠けるだけだった。パーサーは画像を見つけたときにしか
 `caption_image` を呼ばないため、図の無い資料に渡しても取り込みは遅くならない。
 
-VLMが使えないとき（`ollama pull qwen2.5vl:7b` がまだ、Ollamaが停止しているなど）は
+VLMが使えないとき（`ollama pull qwen3-vl:8b` がまだ、Ollamaが停止しているなど）は
 **取り込みを止めない**。図表の説明を付けずに取り込み、その理由を画面に出す。
 本文だけでも入れられるほうが役に立つためである。`caption_image` を渡したまま
 失敗させる選択は取っていない。画像1枚ごとに4回のリトライ（1+2+4秒）が走り、
@@ -158,7 +158,7 @@ CLIの `--with-vlm` はそのまま残してある。初回の全量取り込み
 
 **この入れ直しにどれだけ待つかの実測**（2026-09-12、絞り込みなしで
 `--force --with-vlm` を全44ファイル（.md 30 / .pptx 7 / .docx 5 / .pdf 2）に流した場合）:
-Colab L4上のOllama（`bge-m3` の埋め込み、`qwen2.5vl:7b` のVLM、OCRも含めて全部リモート。
+Colab L4上のOllama（`bge-m3` の埋め込み、`qwen3-vl:8b` のVLM、OCRも含めて全部リモート。
 ngrok経由でローカルから接続）で **2340秒（39分0秒、02:33:45Z〜03:12:45Z、終了コード0）**。
 812チャンク・33件のナビゲーション除外（7ファイル）に加えて、画像からは
 「[図の説明] 」186行・「[画像内の文字] 」164行（9ファイル）が入った。186と164の差の
@@ -384,7 +384,7 @@ Task 1〜6を終えた時点では、この機能は**日本語の質問に対�
 
 ローカルPCのGPUが非力な場合、生成・埋め込みの両方をGoogle Colab（有料版のL4 GPU）上の
 Ollamaに肩代わりさせられる。現在Colab側に置いているのは `gpt-oss:20b`（生成）・
-`bge-m3`（埋め込み）・`qwen2.5vl:7b`（VLM）の3つで、合計してもL4の24GB VRAMに収まる。
+`bge-m3`（埋め込み）・`qwen3-vl:8b`（VLM）の3つで、合計してもL4の24GB VRAMに収まる。
 
 仕組みは単純で、[ingest/embedder.py](ingest/embedder.py) と [rag_chat_app.py](rag_chat_app.py)
 が接続先を環境変数 `OLLAMA_HOST` から読む既存の仕組みをそのまま使う。Colab側にOllamaと、

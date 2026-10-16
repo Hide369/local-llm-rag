@@ -62,6 +62,9 @@ _PARSERS = {
     ".md": parse_md,
     ".txt": parse_txt,
     ".xlsx": parse_xlsx,
+    # マクロ付きブックも中身は xlsx と同じ形式で、openpyxl がそのまま読める。
+    # マクロ（VBAプロジェクト）は本文ではないので読まない。
+    ".xlsm": parse_xlsx,
     ".png": parse_image,
     ".jpg": parse_image,
     ".jpeg": parse_image,

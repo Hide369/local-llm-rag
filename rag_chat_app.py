@@ -201,7 +201,20 @@ def uploaded_sources(collection):
     )
 
 
-@st.dialog("資料をアップロードして取り込む")
+def _forget_dialog(flag):
+    """「×」・Esc・外側クリックで閉じたときに、開閉のフラグを戻す。
+
+    ダイアログはフラグで開いている（サイドバーの「資料をアップロード」の
+    コメント参照）。「閉じる」ボタンだけがフラグを戻していたため、それ以外の
+    閉じ方ではフラグが残り、次に画面が動いたときにダイアログが開き直していた。
+    """
+    def forget():
+        st.session_state[flag] = False
+
+    return forget
+
+
+@st.dialog("資料をアップロードして取り込む", on_dismiss=_forget_dialog("upload_dialog_open"))
 def upload_dialog(collection):
     """クライアントの手元にある資料を取り込む。
 
@@ -275,7 +288,7 @@ def upload_dialog(collection):
                     st.rerun()
 
 
-@st.dialog("フォーマットファイルを登録・削除する")
+@st.dialog("フォーマットファイルを登録・削除する", on_dismiss=_forget_dialog("template_dialog_open"))
 def template_dialog():
     st.caption(
         "フォーマットファイルの空欄は {{会議名}} のように書いてください。"
@@ -820,7 +833,7 @@ st.sidebar.title("設定")
 # ollama pull済みのモデルだけを並べる。自由入力にしていた頃は打ち間違いや
 # 未取得のモデル名が、生成時のchat.ChatErrorになるまで分からなかった。
 # gpt-oss:20b の1つだけなのは、接続先のOllamaに置いてある生成モデルがこれだけ
-# だからである（同居する bge-m3 は埋め込み、qwen2.5vl:7b はVLM専用で、
+# だからである（同居する bge-m3 は埋め込み、qwen3-vl:8b はVLM専用で、
 # どちらも回答生成には使わない）。以前は qwen2.5:7b-instruct / llama3.1:8b /
 # qwen3:32b も並べていたが、pull されていないモデルは選んだ時点で生成が失敗する
 # だけなので外した。使いたければ先に ollama pull してからここに足す。

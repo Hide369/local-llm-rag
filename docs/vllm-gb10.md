@@ -298,7 +298,7 @@ NVIDIAがGB10での動作を確認しているモデルは playbook の Model Su
 |RAGの回答生成（大きく）|`openai/gpt-oss-120b`|MXFP4|128GBならMoEの120Bが載る。GB10を買った意味が最も出る枠|
 |同上|`nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4`|NVFP4|NVIDIA製。NVFP4はBlackwellの4bit形式で、帯域の節約になる|
 |コーディングエージェント|`nvidia/Qwen3.6-35B-A3B-NVFP4`|NVFP4|playbookに「Agent Ready」の起動レシピがある（[6節](#6-コーディングエージェント向けの起動)）|
-|図表の説明文化（VLM）|`nvidia/Qwen2.5-VL-7B-Instruct-NVFP4`|NVFP4|本リポジトリが `qwen2.5vl:7b` で行っている処理に対応する|
+|図表の説明文化（VLM）|`nvidia/Qwen2.5-VL-7B-Instruct-NVFP4`|NVFP4|本リポジトリが `qwen3-vl:8b` で行っている処理に対応する|
 |埋め込み|`BAAI/bge-m3`|—|本リポジトリの既定と同じモデル（[7節](#7-埋め込みとリランカーをvllmで出す)、ただし注意あり）|
 |リランカー|`BAAI/bge-reranker-v2-m3`|—|同上。いまはCPUのONNXで動いており、移す必然性は薄い|
 
@@ -391,7 +391,7 @@ hf download nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4
 
 |経路|アカウント|取れるもの|注意|
 |---|---|---|---|
-|`ollama pull`|**不要**|`bge-m3`、`gpt-oss`、`qwen2.5vl` など|このリポジトリの現構成そのもの。[8節](#8-本リポジトリのragとつなぐ)の道(a)（RAGはOllama、vLLMはエージェント）を採るなら、**HFに一度も触れずに済む**。ただしNemotron系のNVFP4は置かれていない|
+|`ollama pull`|**不要**|`bge-m3`、`gpt-oss`、`qwen3-vl` など|このリポジトリの現構成そのもの。[8節](#8-本リポジトリのragとつなぐ)の道(a)（RAGはOllama、vLLMはエージェント）を採るなら、**HFに一度も触れずに済む**。ただしNemotron系のNVFP4は置かれていない|
 |NGC|環境による|Nemotron系などNVIDIA製モデル|公開アーティファクトはゲストモードで取れるとされるが、APIキーを求められる報告もある。社内でNGCを使っているなら試す価値がある|
 |ModelScope|不要|多くの公開モデル|vLLMが `VLLM_USE_MODELSCOPE=True` で対応する。ただし**外部の宛先が1本増える**。送るのはモデルファイルの要求だけで社内資料は出ないが、`AGENTS.md` の「外部へ出る通信」の一覧に追記すべき経路である。中国のサービスである点も、社内規程次第では判断材料になる|
 |別マシンで取って搬入|—|すべて|上のオフライン手順。匿名で取れるモデルなら、そのマシンでもログインは要らない|
