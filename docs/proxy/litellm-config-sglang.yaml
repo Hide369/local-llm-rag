@@ -1,0 +1,32 @@
+# LiteLLM ゲートウェイ設定（SGLang 版）
+# GB10-A (gpt-oss-120b) と GB10-B (qwen3-coder-next) をモデル名で振り分ける
+# 手順書: gb10-dual-sglang-setup.md
+# 起動: litellm --config litellm-config-sglang.yaml --port 4000
+#
+# SGLang は Anthropic 互換の /v1/messages を標準で持つため、provider は anthropic/ にして
+# Claude Code のリクエストを OpenAI 形式へ変換せずにそのまま SGLang へ渡す。
+# LiteLLM は api_base の末尾に /v1/messages を付けるので、api_base に /v1 は付けない。
+
+model_list:
+  # 設計・レビュー用（GB10-A）
+  - model_name: gpt-oss-120b
+    litellm_params:
+      model: anthropic/gpt-oss-120b          # SGLang の --served-model-name と一致させる
+      api_base: http://192.168.10.11:30000   # ← GB10-A の IP に変更（/v1 は付けない）
+      api_key: dummy                         # SGLang を --api-key なしで起動する前提
+      timeout: 600
+
+  # 実装・コーディング用（GB10-B）
+  - model_name: qwen3-coder-next
+    litellm_params:
+      model: anthropic/qwen3-coder-next
+      api_base: http://192.168.10.12:30000   # ← GB10-B の IP に変更
+      api_key: dummy
+      timeout: 600
+
+litellm_settings:
+  drop_params: true        # 受け付けられないパラメータは捨てる
+  request_timeout: 600
+
+general_settings:
+  master_key: sk-local-change-me   # Claude Code の ANTHROPIC_AUTH_TOKEN と同じ値にする
