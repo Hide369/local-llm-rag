@@ -7,6 +7,7 @@ LiteLLM で束ねて VS Code の Claude Code からモデルを切り替えて�
 > [VS CodeのClaude CodeをGB10のQwen3-Coder-Nextへ向ける](../qwen/claude-code-gb10-qwen3-coder-next.md)、
 > 1台構成で LiteLLM を挟んでいた旧手順は [claude-code-gb10.md](../claude-code-gb10.md) にある。
 > 本書は **2台をモデル名で振り分ける**ためにゲートウェイを置く構成である。
+> 推論エンジンを SGLang にする場合は [gb10-dual-sglang-setup.md](gb10-dual-sglang-setup.md) を参照。
 
 ## 1. 構成概要
 
