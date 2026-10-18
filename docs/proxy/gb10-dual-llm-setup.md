@@ -26,7 +26,7 @@ LiteLLM で束ねて VS Code の Claude Code からモデルを切り替えて�
 
 | 役割 | ホスト | IP（例） | ポート | served-model-name |
 |---|---|---|---|---|
-| 設計用LLM | GB10-A | 192.168.10.11 | 8000 | `gpt-oss-120b` |
+| 設計用LLM | GB10-A | 127.0.0.1（ループバックのみ） | 8000 | `gpt-oss-120b` |
 | コーディング用LLM | GB10-B | 192.168.10.12 | 8000 | `qwen3-coder-next` |
 | ゲートウェイ | GB10-A | 192.168.10.11 | 4000 | – |
 
@@ -48,6 +48,44 @@ LiteLLM で束ねて VS Code の Claude Code からモデルを切り替えて�
   - コミュニティ版 [eugr/spark-vllm-docker](https://github.com/eugr/spark-vllm-docker)
 - 以下のコマンド例は `vllm serve` 部分のみ記載。使用するコンテナに合わせて `docker run ... <image> vllm serve ...` の形にする。
 
+### ネットワーク（ポート一覧）
+
+| サーバー | ポート | 用途 | 接続を許可する相手 |
+|---|---|---|---|
+| GB10-A | **4000/tcp** | LiteLLM ゲートウェイ | クライアントPC（VS Code） |
+| GB10-A | **8000/tcp** | vLLM（gpt-oss-120b） | GB10-A 自身（LiteLLM） |
+| GB10-B | **8000/tcp** | vLLM（Qwen3-Coder-Next） | GB10-A のみ |
+| 両方 | 22/tcp | SSH（管理用） | 管理者PC |
+
+- クライアントPCが接続するのは **GB10-A の 4000番だけ**。vLLM の 8000番はクライアントに開けない。
+- GB10-A の 8000番は LiteLLM が同じマシンから呼ぶので、ループバック（127.0.0.1）だけで待ち受ける。LAN からは届かないので、クライアントからの確認は LiteLLM 経由（6.4）で行う。
+- 外向きは、初回のモデル取得と `pip` 用に **443/tcp**（huggingface.co など）が必要。モデル取得後は閉じてもよい。
+- クライアントの外向き通信は `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`（7章）で抑える。ただし Context7 MCP を使う場合、その通信は残る。
+
+ufw で絞る例（IP は1章の例示値）。SSH の許可を先に入れてから有効化すること：
+
+```bash
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+
+# GB10-A
+sudo ufw allow from 192.168.10.0/24 to any port 4000 proto tcp
+sudo ufw allow from 192.168.10.0/24 to any port 22 proto tcp
+
+# GB10-B（vLLM は GB10-A からのみ）
+sudo ufw allow from 192.168.10.11 to any port 8000 proto tcp
+sudo ufw allow from 192.168.10.0/24 to any port 22 proto tcp
+
+# 両方
+sudo ufw enable
+sudo ufw status numbered
+```
+
+> **Docker 利用時の注意**: `-p 8000:8000` で公開したポートは ufw のルールより先に通ってしまうことがある。
+> GB10-A では `-p 127.0.0.1:8000:8000` とループバックだけに公開する。GB10-B は Docker 側で
+> `-p 192.168.10.12:8000:8000` のように LAN 側 IP に限定したうえで、`DOCKER-USER` チェーンで
+> GB10-A 以外からの接続を落とす。
+
 ---
 
 ## 3. GB10-A：gpt-oss-120b の起動
@@ -55,7 +93,7 @@ LiteLLM で束ねて VS Code の Claude Code からモデルを切り替えて�
 ```bash
 vllm serve openai/gpt-oss-120b \
   --served-model-name gpt-oss-120b \
-  --host 0.0.0.0 --port 8000 \
+  --host 127.0.0.1 --port 8000 \
   --enable-auto-tool-choice \
   --tool-call-parser openai \
   --reasoning-parser openai_gptoss \
@@ -67,7 +105,8 @@ vllm serve openai/gpt-oss-120b \
 **注意**
 - `--served-model-name` は**スラッシュなし**にする（Claude Code は `openai/gpt-oss-120b` のような名前を扱えない）。
 - gpt-oss のツール呼び出しは `tool_choice="auto"` のみ対応。
-- LiteLLM を同じ GB10-A で動かすので、`--gpu-memory-utilization` はやや控えめに。
+- `--host 127.0.0.1` で LAN に公開しない（2章）。Docker で動かす場合はコンテナ内を `--host 0.0.0.0` にし、`-p 127.0.0.1:8000:8000` でホストのループバックだけに公開する。
+- GB10 は CPU と GPU がメモリを共有するため、LiteLLM や OS の分を残して `--gpu-memory-utilization` はやや控えめにする。
 
 ---
 
@@ -94,10 +133,10 @@ vllm serve Qwen/Qwen3-Coder-Next-FP8 \
 
 ## 5. 各サーバーの動作確認
 
-クライアントPCまたは GB10-A から実行：
+GB10-A で実行する（GB10-A の 8000番はループバックのみなので、クライアントPCからは届かない）：
 
 ```bash
-curl http://192.168.10.11:8000/v1/models   # gpt-oss-120b が見えること
+curl http://127.0.0.1:8000/v1/models       # gpt-oss-120b が見えること（GB10-A 自身）
 curl http://192.168.10.12:8000/v1/models   # qwen3-coder-next が見えること
 ```
 
@@ -112,7 +151,7 @@ pip install 'litellm[proxy]'
 ```
 
 ### 6.2 設定ファイル
-同じフォルダの [litellm-config.yaml](litellm-config.yaml) を配置し、`api_base` の IP と `master_key` を環境に合わせて変更する。
+同じフォルダの [litellm-config.yaml](litellm-config.yaml) を配置し、GB10-B の `api_base` の IP と `master_key` を環境に合わせて変更する。GB10-A 側の `api_base` は `127.0.0.1` のままでよい（LiteLLM と同じマシンのため）。
 
 ### 6.3 起動
 ```bash
@@ -123,6 +162,8 @@ litellm --config litellm-config.yaml --port 4000
 常駐させる場合は systemd サービス化、または Docker（`ghcr.io/berriai/litellm`）で運用する。
 
 ### 6.4 動作確認（Anthropic形式）
+GB10-A またはクライアントPCから実行する。Windows の PowerShell では `curl` が別コマンドの別名になっているため、Git Bash か WSL で実行するか、`curl.exe` と書く（その場合は改行の `\` とクォートを PowerShell 向けに直す）。
+
 ```bash
 for m in gpt-oss-120b qwen3-coder-next; do
   curl -s http://192.168.10.11:4000/v1/messages \
@@ -200,6 +241,7 @@ VS Code 拡張は `~/.claude/settings.json`（Windows では `%USERPROFILE%\.cla
 | 症状 | 確認ポイント |
 |---|---|
 | `model not found` | `--served-model-name`・LiteLLM の `model_name`・Claude Code の設定値が完全一致しているか |
+| 接続できない / タイムアウト | 2章のポート一覧どおり開いているか（`sudo ufw status`、`ss -ltnp`）。GB10-B の 8000番が GB10-A から届くか |
 | 401 / 認証エラー | `ANTHROPIC_AUTH_TOKEN` と LiteLLM の `master_key` が一致しているか |
 | ツールが呼ばれず文章だけ返る | vLLM の `--enable-auto-tool-choice` と `--tool-call-parser`（gpt-oss=`openai`、Qwen=`qwen3_coder`）を確認 |
 | 長い会話で途中エラー | `--max-model-len` 超過。値を確認し、Claude Code 側の自動圧縮（`/compact`）を早めに使う |
