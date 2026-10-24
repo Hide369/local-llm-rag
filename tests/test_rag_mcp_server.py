@@ -532,9 +532,9 @@ def test_two_searches_never_run_at_the_same_time(monkeypatch):
 
     stdio では Codex が単一クライアントなのでリクエストが直列に届き、共有状態の
     競合は起きなかった。HTTP で複数PCから引くとその前提が消える。
-    VectorStore._current() は self._entries, self._matrix を2回に分けて代入し、
-    ロックを持たない（_write_lock は書き込み専用）。片方のスレッドが新しい
-    entries と古い matrix の組を読むと、例外を出さずに検索結果がずれる。
+    VectorStore 単体の読み書きは VectorStore._lock が直列化しているが、検索1回は
+    VectorStore の呼び出しを何度もまたぎ、リランカーの遅延初期化も守られていない。
+    その組み合わせは入口で直列化するしかない。
 
     ロックが無ければ4スレッドは重なり、peak は1にならない。
     """
