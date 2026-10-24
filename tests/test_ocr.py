@@ -65,6 +65,37 @@ def test_recognized_texts_are_joined(blank_page, monkeypatch):
     assert ocr_page(blank_page) == "社内 ナレッジ"
 
 
+def test_an_engine_that_cannot_start_raises_ocr_unavailable(blank_page, monkeypatch):
+    """モデルが手元に無い（オフラインで取得できない）状態を、呼び出し側が
+    他の失敗と区別できること。pdf_parser はこれだけを握ってページを飛ばす。
+    """
+    def _build():
+        raise RuntimeError("model not found")
+
+    monkeypatch.setattr(ocr_module, "_build_engine", _build)
+
+    with pytest.raises(ocr_module.OcrUnavailableError, match="model not found"):
+        ocr_page(blank_page)
+
+
+def test_a_failed_start_is_not_retried_on_every_page(blank_page, monkeypatch):
+    """起動の失敗は覚えておく。オフラインでは1回の起動の試みにモデル取得の
+    待ちが乗るので、白紙ページのたびに払うと取り込みが進まない。
+    """
+    calls = []
+
+    def _build():
+        calls.append(1)
+        raise RuntimeError("model not found")
+
+    monkeypatch.setattr(ocr_module, "_build_engine", _build)
+    for _ in range(3):
+        with pytest.raises(ocr_module.OcrUnavailableError):
+            ocr_page(blank_page)
+
+    assert len(calls) == 1
+
+
 def test_engine_is_built_only_once(blank_page, monkeypatch):
     calls = []
 
