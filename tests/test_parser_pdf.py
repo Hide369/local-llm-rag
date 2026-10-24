@@ -5,6 +5,7 @@ import pytest
 from PIL import Image
 
 from ingest.image_text import CAPTION_PREFIX, OCR_PREFIX
+from ingest.ocr import OcrUnavailableError
 from ingest.parsers import parse
 from ingest.parsers.pdf_parser import OCR_MIN_CHARS, parse_pdf
 
@@ -97,6 +98,67 @@ def test_pages_are_numbered_from_one(tmp_path):
 def test_page_is_skipped_when_ocr_also_finds_nothing(image_pdf):
     """白紙ページで空チャンクを作らない。"""
     assert parse_pdf(image_pdf, ocr_page=lambda _page: "") == []
+
+
+def _ocr_unavailable(_page):
+    raise OcrUnavailableError("OCRエンジンを起動できません: model not found")
+
+
+def test_without_ocr_a_blank_page_is_skipped_and_the_rest_is_kept(tmp_path, capsys):
+    """白紙が1枚あるだけで PDF 全体が取り込めなくなってはならない。
+
+    実測 2026-10-24: OCR が使えない状態では、白紙や表紙のような30文字未満の
+    ページが1枚でもあると PDF ごと失敗し、本文のあるページも1件も入らなかった。
+    """
+    path = _make_pdf(
+        tmp_path, ["Chapter one has plenty of extractable text here.", ""]
+    )
+
+    units = parse_pdf(path, ocr_page=_ocr_unavailable)
+
+    assert [u.location for u in units] == [1]
+    assert "Chapter one" in units[0].text
+    warning = capsys.readouterr().err
+    assert "test.pdf p.2" in warning
+    assert "model not found" in warning
+
+
+def test_without_ocr_a_short_page_keeps_the_text_it_has(tmp_path):
+    """表紙の「出張規程」のような短い文字は、OCR できなくても捨てない。
+
+    30文字未満で OCR へ回すのは、文字が無いか足りない画像ページを読むためで
+    ある。読めた文字まで落とす理由はない。
+    """
+    path = _make_pdf(
+        tmp_path, ["Title", "Chapter one has plenty of extractable text here."]
+    )
+
+    units = parse_pdf(path, ocr_page=_ocr_unavailable)
+
+    assert [(u.location, u.text) for u in units][0] == (1, "Title")
+    assert units[0].ocr is False
+    assert len(units) == 2
+
+
+def test_without_ocr_a_pdf_with_nothing_readable_still_fails(image_pdf):
+    """全ページが読めないスキャンPDFは失敗として返す。
+
+    空のユニット列を返すと「0チャンクで取り込み成功」になり、取り込み直しの
+    ときは DB にあった分まで消える（store.replace_source に空を渡すため）。
+    """
+    with pytest.raises(OcrUnavailableError, match="test.pdf"):
+        parse_pdf(image_pdf, ocr_page=_ocr_unavailable)
+
+
+def test_other_ocr_errors_are_not_swallowed(tmp_path):
+    """握るのは「OCR が使えない」ことだけである。それ以外の失敗は隠さない。"""
+    path = _make_pdf(tmp_path, ["Chapter one has plenty of extractable text here.", ""])
+
+    def _broken(_page):
+        raise ValueError("想定外の失敗")
+
+    with pytest.raises(ValueError):
+        parse_pdf(path, ocr_page=_broken)
 
 
 def test_ocr_threshold_is_30_characters():

@@ -15,6 +15,7 @@ import pymupdf
 
 from ingest.image_text import describe_image, has_caption, has_ocr
 from ingest.models import PAGE, ParsedUnit
+from ingest.ocr import OcrUnavailableError
 
 OCR_MIN_CHARS = 30
 
@@ -66,6 +67,9 @@ def parse_pdf(
         ocr_page = ocr_page_impl
 
     units = []
+    # OCR が使えずに読めなかったページの理由。全ページがこれで終わったときだけ
+    # 失敗として外へ出す（下の raise 参照）。
+    ocr_unavailable = None
     doc = pymupdf.open(path)
     try:
         for number, page in enumerate(doc, start=1):
@@ -90,8 +94,21 @@ def parse_pdf(
                     used_vlm = has_caption(text)
                     used_ocr = has_ocr(text)
                 else:
-                    text = ocr_page(page).strip()
-                    used_ocr = True
+                    try:
+                        text = ocr_page(page).strip()
+                        used_ocr = True
+                    except OcrUnavailableError as error:
+                        # OCR が使えないだけで PDF ごと捨てない。白紙や表紙が
+                        # 1枚あるだけで本文のページまで入らなくなる（実測
+                        # 2026-10-24）。抽出できた短い文字（表紙の題名など）は
+                        # そのまま使う。_describe_images が画像1枚の失敗を
+                        # 警告にして続けるのと同じ方針である。
+                        ocr_unavailable = error
+                        print(
+                            f"警告: OCRできないため文字の少ないページを読めませんでした"
+                            f"（{path.name} p.{number}）: {error}",
+                            file=sys.stderr,
+                        )
             elif captions:
                 for block in captions:
                     text = f"{text}\n\n{block}".strip()
@@ -110,4 +127,11 @@ def parse_pdf(
                 )
     finally:
         doc.close()
+    if not units and ocr_unavailable is not None:
+        # 読めたものが1つも無いのに空を返すと「0チャンクで取り込み成功」になり、
+        # 取り込み直しでは DB にあった分まで消える（store.replace_source に空の
+        # 列を渡すため）。スキャンPDFは失敗として見せる。
+        raise OcrUnavailableError(
+            f"{path.name}: 文字を取り出せるページがありません。{ocr_unavailable}"
+        )
     return units

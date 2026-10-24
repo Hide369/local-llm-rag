@@ -11,6 +11,18 @@ RapidOCR(onnxruntime)を使う。日本語モデル japan_PP-OCRv4_rec_mobile �
 OCR_DPI = 200
 
 _engine = None
+# 起動に失敗した理由。覚えておくのは、オフラインでは起動の試み1回ごとに
+# モデル取得の待ちが乗り、白紙ページのたびに払うと取り込みが進まないため。
+# 代わりに、モデルを入れた後はプロセスの再起動が要る（メッセージに書く）。
+_engine_error = None
+
+
+class OcrUnavailableError(Exception):
+    """OCRエンジンを起動できない（モデルが手元に無く取得もできない等）。
+
+    個々の画像の読み取り失敗と区別するために分けてある。pdf_parser は
+    これだけを握ってページを飛ばし、それ以外の失敗は隠さない。
+    """
 
 
 def _build_engine():
@@ -28,9 +40,26 @@ def _build_engine():
 
 
 def reset_engine() -> None:
-    """生成済みエンジンを破棄する（主にテスト用）。"""
-    global _engine
+    """生成済みエンジンと、覚えている起動失敗を破棄する（主にテスト用）。"""
+    global _engine, _engine_error
     _engine = None
+    _engine_error = None
+
+
+def _get_engine():
+    """エンジンを返す。起動できなければ OcrUnavailableError。"""
+    global _engine, _engine_error
+    if _engine is None and _engine_error is None:
+        try:
+            _engine = _build_engine()
+        except Exception as error:  # noqa: BLE001  モデル取得・読み込みの何が落ちるか保証がない
+            _engine_error = (
+                f"OCRエンジンを起動できません: {error}"
+                "（モデルを入れた後は、アプリまたは取り込みを起動し直してください）"
+            )
+    if _engine_error is not None:
+        raise OcrUnavailableError(_engine_error)
+    return _engine
 
 
 def ocr_bytes(data: bytes) -> str:
@@ -41,10 +70,7 @@ def ocr_bytes(data: bytes) -> str:
     バイト列だった。PDF以外の形式（xlsx・docx・md参照先・画像単体）から
     呼べるよう、その入口を切り出しただけである。
     """
-    global _engine
-    if _engine is None:
-        _engine = _build_engine()
-    result = _engine(data)
+    result = _get_engine()(data)
     return " ".join(result.txts) if result.txts else ""
 
 
