@@ -11,6 +11,7 @@ __pycache__/
 # 仮想環境
 myvenv/
 myvenv313/
+rag_env/
 
 # ベクトルストア（source からいつでも再生成できるため追跡しない）
 vector_store.sqlite3
