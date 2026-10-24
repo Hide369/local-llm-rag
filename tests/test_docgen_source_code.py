@@ -16,8 +16,8 @@ class _Hit:
 
 def test_the_prompt_names_the_language_it_wants():
     """「コードを書け」だけでは何の言語か決まらない。"""
-    assert "Go" in source_code.build_prompt("APIを書いて", [], [], "", ".go")
-    assert "C#" in source_code.build_prompt("APIを書いて", [], [], "", ".cs")
+    assert "Go" in source_code.build_prompt("APIを書いて", [], [], ".go")
+    assert "C#" in source_code.build_prompt("APIを書いて", [], [], ".cs")
 
 
 def test_the_prompt_forbids_fences_and_prose():
@@ -25,7 +25,7 @@ def test_the_prompt_forbids_fences_and_prose():
 
     剥がす処理は入れてあるが、そもそも書かせないほうが確実である。
     """
-    prompt = source_code.build_prompt("依頼", [], [], "", ".go")
+    prompt = source_code.build_prompt("依頼", [], [], ".go")
 
     assert "フェンス" in prompt
     assert "説明" in prompt
@@ -36,7 +36,6 @@ def test_the_prompt_carries_the_request_and_every_source():
         "取り込み処理を書いて",
         [("社内資料", [_Hit("設計書.docx p.2", "1ファイル=1ユニットとする。")])],
         [("main.go", "package main")],
-        "- main.go (120 bytes)",
         ".go",
     )
 
@@ -44,12 +43,11 @@ def test_the_prompt_carries_the_request_and_every_source():
     assert "設計書.docx p.2" in prompt
     assert "1ファイル=1ユニットとする。" in prompt
     assert "package main" in prompt
-    assert "main.go (120 bytes)" in prompt
 
 
 def test_an_unsupported_suffix_is_rejected():
     with pytest.raises(source_code.UnsupportedLanguageError):
-        source_code.build_prompt("依頼", [], [], "", ".rb")
+        source_code.build_prompt("依頼", [], [], ".rb")
 
 
 def test_a_fenced_reply_loses_its_fence():
@@ -109,7 +107,7 @@ def test_build_strips_the_fence_too():
 
 def test_write_source_returns_what_the_model_wrote():
     result = source_code.write_source(
-        "依頼", [], [], "", ".go", lambda prompt: "```go\npackage main\n```"
+        "依頼", [], [], ".go", lambda prompt: "```go\npackage main\n```"
     )
 
     assert result == "```go\npackage main\n```"
@@ -120,7 +118,7 @@ def test_write_source_stops_before_calling_the_model_when_too_long():
     huge = [("巨大.md", "あ" * (filling.MAX_PROMPT_CHARS + 1))]
 
     with pytest.raises(filling.PromptTooLongError):
-        source_code.write_source("依頼", [], huge, "", ".go", lambda prompt: "package main")
+        source_code.write_source("依頼", [], huge, ".go", lambda prompt: "package main")
 def test_every_source_format_is_offered():
     """画面のプルダウンはここから作る。足し忘れると選べない。"""
     assert set(source_code.OUTPUT_SUFFIXES) == {
@@ -136,8 +134,8 @@ def test_every_source_format_is_offered():
 
 
 def test_the_prompt_names_python_and_powershell():
-    assert "Python" in source_code.build_prompt("依頼", [], [], "", ".py")
-    assert "PowerShell" in source_code.build_prompt("依頼", [], [], "", ".ps1")
+    assert "Python" in source_code.build_prompt("依頼", [], [], ".py")
+    assert "PowerShell" in source_code.build_prompt("依頼", [], [], ".ps1")
 
 
 def test_the_reference_comment_uses_the_marker_of_each_language():
@@ -162,8 +160,8 @@ def test_typescript_is_offered_for_output():
 
 
 def test_the_prompt_names_typescript():
-    assert "TypeScript" in source_code.build_prompt("依頼", [], [], "", ".ts")
-    assert "TypeScript" in source_code.build_prompt("依頼", [], [], "", ".tsx")
+    assert "TypeScript" in source_code.build_prompt("依頼", [], [], ".ts")
+    assert "TypeScript" in source_code.build_prompt("依頼", [], [], ".tsx")
 
 
 def test_typescript_uses_the_slash_comment():
@@ -181,8 +179,8 @@ def test_javascript_and_vue_are_offered():
 
 
 def test_the_prompt_names_javascript_and_vue():
-    assert "JavaScript" in source_code.build_prompt("依頼", [], [], "", ".js")
-    assert "Vue" in source_code.build_prompt("依頼", [], [], "", ".vue")
+    assert "JavaScript" in source_code.build_prompt("依頼", [], [], ".js")
+    assert "Vue" in source_code.build_prompt("依頼", [], [], ".vue")
 
 
 def test_javascript_uses_the_slash_comment():
