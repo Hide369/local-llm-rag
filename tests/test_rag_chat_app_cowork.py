@@ -54,37 +54,6 @@ def _notes(app):
     return list(app.markdown)
 
 
-def _reads(*paths):
-    """read_files を1周だけ呼び、2周目では呼ばないモデル。
-
-    project.gather のループを画面越しに動かすための最小の模擬である。
-    """
-    rounds = {"count": 0}
-
-    def ask_tools(model, messages, tools, session=None, num_ctx=None):
-        rounds["count"] += 1
-        if rounds["count"] == 1:
-            return {
-                "role": "assistant",
-                "tool_calls": [
-                    {
-                        "function": {
-                            "name": "read_files",
-                            "arguments": {"paths": list(paths)},
-                        }
-                    }
-                ],
-            }
-        return {"role": "assistant", "content": "読めました"}
-
-    return ask_tools
-
-
-def _reads_nothing(model, messages, tools, session=None, num_ctx=None):
-    """道具を1度も呼ばないモデル。ツリーだけが渡る経路を通す。"""
-    return {"role": "assistant", "content": "読みません"}
-
-
 def _stub_store():
     def factory(*args, **kwargs):
         collection = open_real_store(":memory:")
@@ -570,37 +539,6 @@ def test_cowork_generates_go_source_without_the_markdown_path(app, tmp_path):
     assert app.download_button
 
 
-def test_writing_source_into_the_project_warns_about_the_build(app, tmp_path):
-    """generated_docs/ は走査からは外してあるが、言語のツールチェーンは別の規則で動く。
-
-    文書と違い、ソースコードは置いた場所がビルドの対象になる。`go build ./...`
-    は generated_docs/ の .go も拾うため、package 宣言が食い違えばその時点で
-    ビルドが壊れる。黙って置くと、原因がこの機能だと気づくのが難しい。
-    """
-    folder = tmp_path / "myproject"
-    folder.mkdir()
-    (folder / "main.go").write_text("package main\n", encoding="utf-8")
-
-    with (
-        patch.object(store_module, "open_store", _stub_store()),
-        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
-        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
-        patch.object(chat, "ask_text", lambda *a, **k: "package main\n"),
-        patch.object(chat, "ask_tools", _reads("main.go")),
-    ):
-        app.run()
-        app.segmented_control[0].set_value("Cowork").run()
-        app.selectbox(key="template").set_value(NO_TEMPLATE).run()
-        app.selectbox(key="output_suffix").set_value(".go").run()
-        app.text_input(key="project_folder").set_value(str(folder)).run()
-        app.chat_input[0].set_value("Go で書いて").run()
-
-    assert not app.exception
-    written = list((folder / "generated_docs").glob("*.go"))
-    assert len(written) == 1
-    assert any("ビルド" in note.value for note in _notes(app))
-
-
 def test_cowork_without_a_template_generates_markdown(app, tmp_path):
     """雛形なしの生成が実際に .md のバイト列を組み立てることまで確かめる。
 
@@ -691,333 +629,36 @@ def test_cowork_warns_when_an_attachment_yields_no_text(app, tmp_path):
     assert any("本文を取り出せませんでした" in note.value for note in _notes(app))
 
 
-def test_cowork_reads_the_project_folder_and_writes_the_result_into_it(app, tmp_path):
-    """成果物はダウンロードだけでなくフォルダにも残す。"""
-    folder = tmp_path / "myproject"
-    folder.mkdir()
-    (folder / "main.go").write_text("package main\n", encoding="utf-8")
-
-    with (
-        patch.object(store_module, "open_store", _stub_store()),
-        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
-        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
-        patch.object(chat, "ask_tools", _reads("main.go")),
-        patch.object(chat, "ask_text", lambda *a, **k: "# 設計書\n\n本文\n"),
-    ):
-        app.run()
-        app.segmented_control[0].set_value("Cowork").run()
-        app.selectbox(key="template").set_value(NO_TEMPLATE).run()
-        app.text_input(key="project_folder").set_value(str(folder)).run()
-        app.chat_input[0].set_value("設計書を書いて").run()
-
-    assert not app.exception
-    written = list((folder / "generated_docs").glob("*.md"))
-    assert len(written) == 1
-    assert "# 設計書" in written[0].read_text(encoding="utf-8")
-
-
-def test_the_generated_document_lists_the_files_it_used(app, tmp_path):
-    """何を根拠にしたかを後から辿れるようにする。"""
-    folder = tmp_path / "myproject"
-    folder.mkdir()
-    (folder / "main.go").write_text("package main\n", encoding="utf-8")
-
-    with (
-        patch.object(store_module, "open_store", _stub_store()),
-        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
-        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
-        patch.object(chat, "ask_tools", _reads("main.go")),
-        patch.object(chat, "ask_text", lambda *a, **k: "# 設計書\n\n本文\n"),
-    ):
-        app.run()
-        app.segmented_control[0].set_value("Cowork").run()
-        app.selectbox(key="template").set_value(NO_TEMPLATE).run()
-        app.text_input(key="project_folder").set_value(str(folder)).run()
-        app.chat_input[0].set_value("設計書を書いて").run()
-
-    written = list((folder / "generated_docs").glob("*.md"))
-    assert len(written) == 1
-    text = written[0].read_text(encoding="utf-8")
-    assert "## 参照したファイル" in text
-    assert "main.go" in text
-
-
-def _embed_query_must_not_be_called(*args, **kwargs):
-    raise AssertionError("embed_query was called before the folder was validated")
-
-
-def test_a_folder_that_does_not_exist_stops_before_calling_the_model(app, tmp_path):
-    """呼んでから落ちると、利用者は30〜60秒待たされたうえで何も受け取れない。
-
-    パスの打ち間違いを伝えるのに、埋め込み検索と翻訳の LLM を通す理由がない。
-    社内資料を参照するチェックは既定でオンのままにしておき、
-    `retrieval.embed_query` が「呼ばれたら失敗する」関数に差し替えてある
-    ことで、フォルダの検証（`docgen_project.tree`）が検索より先に実行される
-    順序をロックする。以前はこの検証が検索より後にあり、フォルダを打ち
-    間違えただけでも埋め込み検索（と技術ドキュメント参照時は翻訳のLLM
-    呼び出しまで）を1回無駄に払ってから初めてエラーが出ていた。
-    """
-    with (
-        patch.object(store_module, "open_store", _stub_store()),
-        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
-        patch.object(retrieval, "embed_query", _embed_query_must_not_be_called),
-    ):
-        app.run()
-        app.segmented_control[0].set_value("Cowork").run()
-        app.selectbox(key="template").set_value(NO_TEMPLATE).run()
-        app.text_input(key="project_folder").set_value(str(tmp_path / "無い")).run()
-        app.chat_input[0].set_value("設計書を書いて").run()
-
-    assert not app.exception
-    assert any("フォルダ" in error.value for error in app.error)
-
-
-def test_a_folder_with_no_supported_file_names_the_formats_it_accepts(app, tmp_path):
-    """「取り込める形式のファイルがありません」だけでは原因が分からない。
-
-    実測 2026-09-15: `.py` が対象から漏れていたため Python のプロジェクトを
-    指定した回がこの文言で止まったが、利用者には「なぜ0件なのか」を知る手段が
-    画面上に無く、拡張子の漏れだと分かるまで時間がかかった。受け付ける形式を
-    文言に含めれば、同じことが次に起きたときはその場で分かる。
-
-    この文言は警告であって、エラーではない。0件でも生成は続く
-    （test_an_empty_project_folder_warns_but_still_generates を参照）。
-    """
-    folder = tmp_path / "myproject"
-    folder.mkdir()
-    (folder / "main.rb").write_text("puts 1", encoding="utf-8")
-
-    with (
-        patch.object(store_module, "open_store", _stub_store()),
-        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
-        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
-        patch.object(chat, "ask_text", lambda *a, **k: "# 設計書\n\n本文\n"),
-    ):
-        app.run()
-        app.segmented_control[0].set_value("Cowork").run()
-        app.selectbox(key="template").set_value(NO_TEMPLATE).run()
-        app.text_input(key="project_folder").set_value(str(folder)).run()
-        app.chat_input[0].set_value("設計書を書いて").run()
-
-    assert not app.exception
-    message = "\n".join(note.value for note in _notes(app))
-    assert ".py" in message
-    assert ".md" in message
-
-
-def test_a_failed_selection_still_lets_the_template_path_see_the_listing(app, tmp_path):
-    """選択が0件でも、雛形ありの経路もツリーだけは載せる。
-
-    以前は _collect_project_files が「一覧だけ渡します」と警告する一方で、
-    _generate_document 側は tree_text をアンダースコア変数で受けて捨てて
-    いたため、警告の内容と実際の挙動が食い違っていた（設計書5節の
-    フォールバックは freeform 経路にしか効いていなかった）。
-    """
-    store = tmp_path / "templates"
-    _register(store)
-    folder = tmp_path / "myproject"
-    folder.mkdir()
-    (folder / "main.go").write_text("package main\n", encoding="utf-8")
-
-    seen_attachments = []
-    real_fill_values = filling.fill_values
-
-    def spy_fill_values(placeholders, question, sources, attachments, ask):
-        seen_attachments.append(attachments)
-        return real_fill_values(placeholders, question, sources, attachments, ask)
-
-    def ask_json(model, prompt, session=None, num_ctx=None):
-        return json.dumps({"会議名": "第5回"}, ensure_ascii=False)
-
-    with (
-        patch.object(store_module, "open_store", _stub_store()),
-        patch.object(templates_module, "TEMPLATE_DIR", store),
-        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
-        # 道具を1度も呼ばないモデル。読めたファイルは0件になり、ツリーだけが残る。
-        patch.object(chat, "ask_tools", _reads_nothing),
-        patch.object(chat, "ask_json", ask_json),
-        patch.object(filling, "fill_values", spy_fill_values),
-    ):
-        app.run()
-        app.segmented_control[0].set_value("Cowork").run()
-        app.selectbox(key="template").set_value(store / "議事録.docx").run()
-        app.text_input(key="project_folder").set_value(str(folder)).run()
-        app.chat_input[0].set_value("第5回会議の議事録を作って").run()
-
-    assert not app.exception
-    assert seen_attachments
-    names = [name for name, _ in seen_attachments[0]]
-    assert "（プロジェクトのファイル一覧）" in names
-    listing = next(text for name, text in seen_attachments[0] if name == "（プロジェクトのファイル一覧）")
-    assert "main.go" in listing
-
-
-def test_a_project_folder_too_big_for_the_listing_warns_with_the_exact_count(app, tmp_path):
-    """一覧がTREE_BUDGET_CHARSを超えるフォルダでは、モデルに見えていない
-    ファイルがあることを画面で伝える。伝えないと、選ばれなかったファイルが
-    「関係が無いから選ばれなかった」のか「一覧に載らなかったから選べな
-    かった」のか利用者には区別が付かない。
-    """
-    from docgen import project as project_module
-
-    folder = tmp_path / "myproject"
-    folder.mkdir()
-    entries_count = 400
-    for i in range(entries_count):
-        (folder / f"f{i:04d}.go").write_text("package main\n", encoding="utf-8")
-    entries = project_module.tree(folder)
-    _listing, expected_omitted = project_module.tree_text(entries)
-    assert expected_omitted > 0  # このテストの前提（実測で確かめる）
-
-    with (
-        patch.object(store_module, "open_store", _stub_store()),
-        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
-        patch.object(chat, "ask_tools", _reads_nothing),
-        patch.object(chat, "ask_text", lambda *a, **k: "# 設計書\n\n本文\n"),
-    ):
-        app.run()
-        app.segmented_control[0].set_value("Cowork").run()
-        app.selectbox(key="template").set_value(NO_TEMPLATE).run()
-        app.checkbox(key="cowork_internal").set_value(False).run()
-        app.text_input(key="project_folder").set_value(str(folder)).run()
-        app.chat_input[0].set_value("設計書を書いて").run()
-
-    assert not app.exception
-    assert any(str(expected_omitted) in note.value for note in _notes(app))
-
-
-def test_a_project_folder_alone_is_enough_evidence(app, tmp_path):
-    """フォルダだけを指定した回は正当な使い方であり、止めてはならない。"""
-    folder = tmp_path / "myproject"
-    folder.mkdir()
-    (folder / "main.go").write_text("package main\n", encoding="utf-8")
-
-    with (
-        patch.object(store_module, "open_store", _stub_store()),
-        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
-        patch.object(chat, "ask_tools", _reads("main.go")),
-        patch.object(chat, "ask_text", lambda *a, **k: "# 設計書\n\n本文\n"),
-    ):
-        app.run()
-        app.segmented_control[0].set_value("Cowork").run()
-        app.selectbox(key="template").set_value(NO_TEMPLATE).run()
-        app.checkbox(key="cowork_internal").set_value(False).run()
-        app.text_input(key="project_folder").set_value(str(folder)).run()
-        app.chat_input[0].set_value("設計書を書いて").run()
-
-    assert not app.exception
-    assert not app.error
-
-
-def test_an_empty_project_folder_warns_but_still_generates(app, tmp_path):
-    """空のフォルダを指定しても止めない。
-
-    プロジェクトフォルダは資料源であると同時に**出力先**でもある。これから
-    作るプロジェクトを指定して書かせたい回に、中身が無いという理由で何も
-    受け取れないのは筋が通らない。以前はここで生成ごと止めていた。
-    """
-    folder = tmp_path / "empty_project"
-    folder.mkdir()
-
-    with (
-        patch.object(store_module, "open_store", _stub_store()),
-        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
-        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
-        patch.object(chat, "ask_text", lambda *a, **k: "# 設計書\n\n本文\n"),
-    ):
-        app.run()
-        app.segmented_control[0].set_value("Cowork").run()
-        app.selectbox(key="template").set_value(NO_TEMPLATE).run()
-        app.text_input(key="project_folder").set_value(str(folder)).run()
-        app.chat_input[0].set_value("設計書を書いて").run()
-
-    assert not app.exception
-    assert not app.error
-    assert any("取り込める形式のファイル" in w.value for w in _notes(app))
-    # 出力先としては使える。成果物はこのフォルダに残る。
-    assert list((folder / "generated_docs").glob("*.md"))
-
-
-def test_a_folder_that_is_not_a_directory_still_stops(app, tmp_path):
-    """存在しないパスは打ち間違いである。書き出しもできないので進めない。"""
-    with (
-        patch.object(store_module, "open_store", _stub_store()),
-        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
-        patch.object(retrieval, "embed_query", _embed_query_must_not_be_called),
-    ):
-        app.run()
-        app.segmented_control[0].set_value("Cowork").run()
-        app.selectbox(key="template").set_value(NO_TEMPLATE).run()
-        app.text_input(key="project_folder").set_value(str(tmp_path / "無い")).run()
-        app.chat_input[0].set_value("設計書を書いて").run()
-
-    assert not app.exception
-    assert any("フォルダ" in error.value for error in app.error)
-
-
-def test_when_the_model_chooses_nothing_the_files_are_read_anyway(app, tmp_path):
-    """モデルが道具を呼ばなくても、根拠を0件にしない。
-
-    実測 2026-09-15: gpt-oss:20b は read_files を1度も呼ばず、成果物は毎回
-    ファイル一覧だけを根拠に書かれていた。警告は正しかったが、正しいだけで
-    利用者は何もできなかった。
-    """
-    folder = tmp_path / "myproject"
-    folder.mkdir()
-    (folder / "main.go").write_text("package main\n", encoding="utf-8")
-    # 全部が予算に収まると、モデルへ聞かずに全部読む経路へ流れてしまう。
-    # 往復が起きる大きさにしたうえで、モデルが何も選ばない状況を作る。
-    (folder / "かさ増し.md").write_text("あ" * 20_000, encoding="utf-8")
-
-    with (
-        patch.object(store_module, "open_store", _stub_store()),
-        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
-        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
-        patch.object(chat, "ask_tools", _reads_nothing),
-        patch.object(chat, "ask_text", lambda *a, **k: "# 設計書\n\n本文\n"),
-    ):
-        app.run()
-        app.segmented_control[0].set_value("Cowork").run()
-        app.selectbox(key="template").set_value(NO_TEMPLATE).run()
-        app.text_input(key="project_folder").set_value(str(folder)).run()
-        app.chat_input[0].set_value("設計書を書いて").run()
-
-    assert not app.exception
-    written = next((folder / "generated_docs").glob("*.md"))
-    # 読んだ以上、参照したファイルに名前が出る。
-    assert "main.go" in written.read_text(encoding="utf-8")
-    # 「選べませんでした」で終わる補足は出さない。何を読んだかまで言う。
-    for note in _notes(app):
-        assert "ファイル一覧だけを渡します" not in note.value
-
-
 def test_the_supplementary_messages_are_not_yellow_boxes(app, tmp_path):
     """生成のたびに黄色い枠が積み上がると、成果物が画面の下へ押し流される。
 
-    実測 2026-09-15: ingest/ を指定した回は「読まなかったファイル」だけで
-    28件・452字の枠になっていた。捨てはせず、畳んだ場所へ移す。
+    実測 2026-09-15: 補足が28件・452字の枠になった回があった。捨てはせず、
+    畳んだ場所へ移す。
     """
-    folder = tmp_path / "myproject"
-    folder.mkdir()
-    (folder / "main.rb").write_text("puts 1", encoding="utf-8")
+    def fake_parse(path, caption_image=None, on_missing_image=None):
+        return []
 
     with (
         patch.object(store_module, "open_store", _stub_store()),
         patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
         patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
+        patch("ingest.parsers.parse", fake_parse),
         patch.object(chat, "ask_text", lambda *a, **k: "# 設計書\n\n本文\n"),
     ):
         app.run()
         app.segmented_control[0].set_value("Cowork").run()
         app.selectbox(key="template").set_value(NO_TEMPLATE).run()
-        app.text_input(key="project_folder").set_value(str(folder)).run()
+        app.file_uploader(key="cowork_files").set_value(
+            ("画面.png", b"\x89PNG\r\n\x1a\n", "image/png")
+        )
+        app.run()
         app.chat_input[0].set_value("設計書を書いて").run()
 
     assert not app.exception
     # 黄色い枠は1つも出さない。
     assert not app.warning
     # 中身は畳んだ場所に残る。捨てているわけではない。
-    assert any("取り込める形式のファイル" in note.value for note in _notes(app))
+    assert any("本文を取り出せませんでした" in note.value for note in _notes(app))
 
 
 def test_choosing_a_source_format_turns_on_the_technical_documents(app, tmp_path):
@@ -1140,35 +781,6 @@ def test_an_empty_docs_search_adds_no_note(app, tmp_path):
     assert "の検索は0件でした" not in notes
     assert "下限" not in notes
     assert "Go io package" not in notes
-
-
-def test_it_says_which_files_it_read_only_the_top_of(app, tmp_path):
-    """黙って切ると、根拠の半分しか無い文書を全部踏まえたものとして読む。
-
-    成果物末尾の「参照したファイル」には名前しか出ない。そこに並んでいる
-    ファイルのどれが全文でどれが先頭だけなのかは、ここで言うしかない。
-    """
-    folder = tmp_path / "myproject"
-    folder.mkdir()
-    (folder / "大きい.md").write_text("あ" * 40000, encoding="utf-8")
-
-    with (
-        patch.object(store_module, "open_store", _stub_store()),
-        patch.object(templates_module, "TEMPLATE_DIR", tmp_path / "templates"),
-        patch.object(retrieval, "embed_query", lambda *a, **k: [0.1, 0.2]),
-        patch.object(chat, "ask_text", lambda *a, **k: "# 設計書\n\n本文\n"),
-        patch.object(chat, "ask_tools", _reads("大きい.md")),
-    ):
-        app.run()
-        app.segmented_control[0].set_value("Cowork").run()
-        app.selectbox(key="template").set_value(NO_TEMPLATE).run()
-        app.text_input(key="project_folder").set_value(str(folder)).run()
-        app.chat_input[0].set_value("設計書を書いて").run()
-
-    assert not app.exception
-    message = "\n".join(note.value for note in _notes(app))
-    assert "先頭だけ読んだファイル" in message
-    assert "大きい.md" in message
 
 
 PASTED_NAME = "貼り付けたテキスト"

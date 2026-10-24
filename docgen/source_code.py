@@ -6,7 +6,7 @@
 `|` を含む行が表になる。コードに「文書の構造」は無いので、中間表現を挟まず
 そのままファイルにする。
 
-材料の並べ方（検索結果・添付・プロジェクトの一覧）は文書と同じものを使う
+材料の並べ方（検索結果・添付）は文書と同じものを使う
 （freeform.evidence_sections）。2つに分かれていると、片方にだけ資料の種類が
 足された状態が例外を出さずに成立する。
 """
@@ -64,7 +64,7 @@ def _language(suffix: str) -> tuple[str, str]:
     return found
 
 
-def build_prompt(question, sources, attachments, tree_text: str, suffix: str) -> str:
+def build_prompt(question, sources, attachments, suffix: str) -> str:
     """依頼と資料を1つのプロンプトにまとめる。
 
     「フェンスも前置きも書くな」と明示するのは、返答をそのままファイルへ書く
@@ -78,7 +78,7 @@ def build_prompt(question, sources, attachments, tree_text: str, suffix: str) ->
         "資料に書かれていないことは書かないでください。"
         "根拠が見つからない部分は、推測で埋めずに省いてください。\n\n"
         f"## 依頼\n{question}\n\n"
-        f"{evidence_sections(sources, attachments, tree_text)}\n\n"
+        f"{evidence_sections(sources, attachments)}\n\n"
         "## 書き方\n"
         f"{language} のソースコードだけを返してください。\n"
         "説明や前置き、後書きは書かないでください。\n"
@@ -137,18 +137,16 @@ def build(code: str, paths, citations, suffix: str) -> tuple[bytes, list[str]]:
     return f"{_reference_header(names, comment)}\n\n{body}".encode("utf-8"), []
 
 
-def write_source(
-    question, sources, attachments, tree_text: str, suffix: str, ask
-) -> str:
+def write_source(question, sources, attachments, suffix: str, ask) -> str:
     """モデルが書いたコードをそのまま返す。フェンスの除去は build が行う。
 
     上限の判定を呼ぶ前に置くのは、呼んでから落ちると利用者が30〜60秒待たされた
     うえで何も受け取れないためである（freeform.write_markdown と同じ）。
     """
-    prompt = build_prompt(question, sources, attachments, tree_text, suffix)
+    prompt = build_prompt(question, sources, attachments, suffix)
     if len(prompt) > MAX_PROMPT_CHARS:
         raise PromptTooLongError(
             f"資料が長すぎます（{len(prompt):,}文字 / 上限 {MAX_PROMPT_CHARS:,}文字）。"
-            "参照するフォルダや添付を減らしてください"
+            "添付を減らしてください"
         )
     return ask(prompt)

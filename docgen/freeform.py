@@ -1,8 +1,8 @@
 """雛形なしで文書を書かせる。
 
 雛形ありの経路（docgen/filling.py）との違いは1点だけである。埋める欄の一覧の
-代わりに、出力の形の指示を載せる。材料（依頼・検索結果・添付・プロジェクトの
-ファイル）は同じものを同じ形で受け取る。
+代わりに、出力の形の指示を載せる。材料（依頼・検索結果・添付）は同じものを
+同じ形で受け取る。
 
 形式ごとにプロンプトを分けない。Markdown を1回書かせ、そこから4形式を組む
 （docgen/markdown_document.py）。分けるとプロンプトが4本になり、品質のばらつきも
@@ -18,8 +18,8 @@ _TABLE_INSTRUCTION = (
 )
 
 
-def evidence_sections(sources, attachments, tree_text: str) -> str:
-    """検索結果・添付・プロジェクトの一覧を、プロンプトへ載せる節にまとめる。
+def evidence_sections(sources, attachments) -> str:
+    """検索結果・添付を、プロンプトへ載せる節にまとめる。
 
     sources は (資料の種類の名前, ヒットの並び) の並びである。種類ごとに節を
     分けるのは、混ぜて並べるとどれが社内の決定事項でどれが外部ライブラリの
@@ -38,23 +38,18 @@ def evidence_sections(sources, attachments, tree_text: str) -> str:
     attached = "\n\n".join(
         f"【{name}】\n{text}" for name, text in attachments
     ) or "（添付ファイルはありません）"
-    listing = tree_text or "（プロジェクトフォルダは指定されていません）"
-    return (
-        f"{found}\n\n"
-        f"## 資料の本文\n{attached}\n\n"
-        f"## プロジェクトのファイル一覧\n{listing}"
-    )
+    return f"{found}\n\n## 資料の本文\n{attached}"
 
 
-def build_prompt(question, sources, attachments, tree_text: str, suffix: str) -> str:
-    """依頼・検索結果・添付・プロジェクトの一覧を1つのプロンプトにまとめる。"""
+def build_prompt(question, sources, attachments, suffix: str) -> str:
+    """依頼・検索結果・添付を1つのプロンプトにまとめる。"""
     return (
         "あなたは社内文書を作成する担当者です。\n"
         "次の資料をもとに、依頼された文書を Markdown で書いてください。\n\n"
         "資料に書かれていないことは書かないでください。"
         "根拠が見つからない項目は、推測で埋めずに省いてください。\n\n"
         f"## 依頼\n{question}\n\n"
-        f"{evidence_sections(sources, attachments, tree_text)}\n\n"
+        f"{evidence_sections(sources, attachments)}\n\n"
         "## 書き方\n"
         "Markdown だけを返してください。説明や前置きは書かないでください。\n"
         "見出しは `#` `##` `###` を使ってください。\n"
@@ -65,18 +60,16 @@ def build_prompt(question, sources, attachments, tree_text: str, suffix: str) ->
     )
 
 
-def write_markdown(
-    question, sources, attachments, tree_text: str, suffix: str, ask
-) -> str:
+def write_markdown(question, sources, attachments, suffix: str, ask) -> str:
     """モデルが書いた Markdown をそのまま返す。
 
     上限の判定を呼ぶ前に置くのは、呼んでから落ちると利用者が30〜60秒待たされた
     うえで何も受け取れないためである（filling.fill_values と同じ）。
     """
-    prompt = build_prompt(question, sources, attachments, tree_text, suffix)
+    prompt = build_prompt(question, sources, attachments, suffix)
     if len(prompt) > MAX_PROMPT_CHARS:
         raise PromptTooLongError(
             f"資料が長すぎます（{len(prompt):,}文字 / 上限 {MAX_PROMPT_CHARS:,}文字）。"
-            "参照するフォルダや添付を減らしてください"
+            "添付を減らしてください"
         )
     return ask(prompt)
