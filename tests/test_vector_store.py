@@ -563,6 +563,46 @@ def test_a_failed_write_is_not_committed_by_a_concurrent_one(filled_store, monke
     assert sorted(filled_store.get()["ids"]) == ["a::1", "a::2", "b::9"]
 
 
+def test_concurrent_reads_on_the_shared_connection_return_their_own_rows(filled_store):
+    """読み取りも直列化されていること。
+
+    Streamlit は @st.cache_resource で接続を1つだけ持ち、タブや重なった再実行が
+    別々のスレッドから同じ接続を読む。読み取りを直列化しないと、ある問い合わせの
+    結果を別の問い合わせのカーソルが受け取る。実測 2026-10-24: 画面で
+    revision() が「'NoneType' object is not subscriptable」で落ちた。同じ条件を
+    再現すると IndexError も出た。これは別の問い合わせの行を読んだということで、
+    例外にならない回は誤った値が黙って返っている。
+    """
+    expected_revision = filled_store.revision()
+    expected_count = filled_store.count()
+    expected_chunks = filled_store.chunks()
+    failures = []
+
+    def read(name, call, expected):
+        for _ in range(2000):
+            try:
+                actual = call()
+            except Exception as error:
+                failures.append(f"{name}: {type(error).__name__}: {error}")
+                return
+            if actual != expected:
+                failures.append(f"{name}: {actual!r} != {expected!r}")
+                return
+
+    readers = [
+        threading.Thread(target=read, args=("revision", filled_store.revision, expected_revision)),
+        threading.Thread(target=read, args=("revision", filled_store.revision, expected_revision)),
+        threading.Thread(target=read, args=("count", filled_store.count, expected_count)),
+        threading.Thread(target=read, args=("chunks", filled_store.chunks, expected_chunks)),
+    ]
+    for reader in readers:
+        reader.start()
+    for reader in readers:
+        reader.join(timeout=60)
+
+    assert not failures, failures
+
+
 def _add_one(store, source, text, seed=1.0, location=1):
     store.add(
         ids=[f"{source}::{location}::0"],

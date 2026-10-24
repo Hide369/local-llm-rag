@@ -133,7 +133,17 @@ class VectorStore:
         # DELETEまで確定させ、そちらが例外で終わってもロールバックされない。
         # 実測では資料が丸ごと消え、例外は誰にも出ず、count() は新しい値を
         # 正しく返した。設計書4.2が消そうとしている故障そのものなので、
-        # 書き込みは _write_lock で直列化する。
+        # 書き込みは _lock で直列化する。
+        #
+        # 読み取りも同じ _lock を通す。1つの接続を複数スレッドが同時に読むと、
+        # ある問い合わせの結果を別の問い合わせのカーソルが受け取る。実測
+        # 2026-10-24: 画面で revision() が None を受け取って落ちた。再現すると
+        # 別の問い合わせの行を受け取る IndexError も出た。例外にならない回は
+        # 誤った値が黙って返っている。
+        #
+        # RLock にするのは、ロックを持ったメソッドが別のメソッドを呼ぶため
+        # （delete → get、search → _current → revision）。
+        self._lock = threading.RLock()
         self._connection = sqlite3.connect(path, check_same_thread=False)
         # sqlite3 は既定で外部キーを検査しない。本文の無い出現が生まれても
         # 黙って通る。削除は「出現 → 孤児の本文」の順であり正しい手順なら
@@ -156,10 +166,9 @@ class VectorStore:
         self._cached_revision = None
         self._entries = []
         self._matrix = None
-        # 書き込みトランザクションを直列化する。別プロセス（=別接続）の競合は
-        # SQLiteのロックが "database is locked" として表に出すが、同一接続を
-        # 共有するスレッド間ではそれが一切効かない。
-        self._write_lock = threading.Lock()
+        # 別プロセス（=別接続）の競合は SQLite のロックが "database is locked"
+        # として表に出すが、同一接続を共有するスレッド間ではそれが一切効かない。
+        # そのため直列化はこの _lock が受け持つ。
 
     def _reject_old_schema(self) -> None:
         """1テーブル時代のDBを開こうとしたら止める。
@@ -179,22 +188,27 @@ class VectorStore:
 
     def count(self) -> int:
         """出現の数。入れた件数がそのまま返るという既存の意味を保つ。"""
-        return self._connection.execute("SELECT COUNT(*) FROM occurrences").fetchone()[0]
+        with self._lock:
+            return self._connection.execute(
+                "SELECT COUNT(*) FROM occurrences"
+            ).fetchone()[0]
 
     def chunk_count(self) -> int:
         """本文の種類数。畳み込みがどれだけ効いたかはこちらに現れる。"""
-        return self._connection.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+        with self._lock:
+            return self._connection.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
 
     def integrity(self) -> tuple[int, int]:
         """(孤児の本文, 本文の無い出現) を数える。0, 0 が健全である。"""
-        orphans = self._connection.execute(
-            "SELECT COUNT(*) FROM chunks c"
-            " WHERE NOT EXISTS (SELECT 1 FROM occurrences WHERE chunk_id = c.id)"
-        ).fetchone()[0]
-        dangling = self._connection.execute(
-            "SELECT COUNT(*) FROM occurrences o"
-            " WHERE NOT EXISTS (SELECT 1 FROM chunks WHERE id = o.chunk_id)"
-        ).fetchone()[0]
+        with self._lock:
+            orphans = self._connection.execute(
+                "SELECT COUNT(*) FROM chunks c"
+                " WHERE NOT EXISTS (SELECT 1 FROM occurrences WHERE chunk_id = c.id)"
+            ).fetchone()[0]
+            dangling = self._connection.execute(
+                "SELECT COUNT(*) FROM occurrences o"
+                " WHERE NOT EXISTS (SELECT 1 FROM chunks WHERE id = o.chunk_id)"
+            ).fetchone()[0]
         return orphans, dangling
 
     def _insert(self, cursor, ids, documents, metadatas, embeddings) -> None:
@@ -245,7 +259,7 @@ class VectorStore:
         )
 
     def add(self, ids, documents, metadatas, embeddings) -> None:
-        with self._write_lock, self._connection:
+        with self._lock, self._connection:
             self._insert(
                 self._connection, ids, documents, metadatas, embeddings
             )
@@ -267,7 +281,7 @@ class VectorStore:
             raise VectorStoreError(
                 f"metadata の source が引数と違います: {source!r} に対して {mismatched!r}"
             )
-        with self._write_lock, self._connection:
+        with self._lock, self._connection:
             self._connection.execute(
                 "DELETE FROM occurrences WHERE source = ?", (source,)
             )
@@ -278,15 +292,18 @@ class VectorStore:
             self._bump_revision(self._connection)
 
     def delete(self, where=None) -> None:
-        targets = self.get(where=where)["ids"]
-        if not targets:
-            return
-        with self._write_lock, self._connection:
-            self._connection.executemany(
-                "DELETE FROM occurrences WHERE id = ?", [(t,) for t in targets]
-            )
-            self._delete_orphan_chunks(self._connection)
-            self._bump_revision(self._connection)
+        # 対象の選び出しと削除を同じロックの中で行う。間で別スレッドが書くと、
+        # 選んだ時点の対象と消す時点の対象が食い違う。
+        with self._lock:
+            targets = self.get(where=where)["ids"]
+            if not targets:
+                return
+            with self._connection:
+                self._connection.executemany(
+                    "DELETE FROM occurrences WHERE id = ?", [(t,) for t in targets]
+                )
+                self._delete_orphan_chunks(self._connection)
+                self._bump_revision(self._connection)
 
     @staticmethod
     def _delete_orphan_chunks(cursor) -> None:
@@ -312,12 +329,14 @@ class VectorStore:
 
     def _rows(self):
         """(出現ID, 本文, メタデータ) を全件返す。get() の土台。"""
-        return [
-            (occurrence_id, text, json.loads(metadata))
-            for occurrence_id, text, metadata in self._connection.execute(
+        with self._lock:
+            rows = self._connection.execute(
                 "SELECT o.id, c.text, o.metadata"
                 " FROM occurrences o JOIN chunks c ON c.id = o.chunk_id"
-            )
+            ).fetchall()
+        return [
+            (occurrence_id, text, json.loads(metadata))
+            for occurrence_id, text, metadata in rows
         ]
 
     def get(self, ids=None, where=None, limit=None, include=None) -> dict:
@@ -371,7 +390,8 @@ class VectorStore:
 
     def chunks(self) -> tuple[list[str], list[str]]:
         """本文単位のIDと本文。BM25インデックスの入力になる。"""
-        rows = self._connection.execute("SELECT id, text FROM chunks").fetchall()
+        with self._lock:
+            rows = self._connection.execute("SELECT id, text FROM chunks").fetchall()
         return [row[0] for row in rows], [row[1] for row in rows]
 
     def chunks_by_ids(self, ids: list[str]) -> dict[str, tuple[str, list[dict]]]:
@@ -385,12 +405,13 @@ class VectorStore:
         if not ids:
             return {}
         placeholders = ",".join("?" * len(ids))
-        rows = self._connection.execute(
-            "SELECT c.id, c.text, o.id, o.metadata"
-            " FROM chunks c JOIN occurrences o ON o.chunk_id = c.id"
-            f" WHERE c.id IN ({placeholders})",
-            list(ids),
-        ).fetchall()
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT c.id, c.text, o.id, o.metadata"
+                " FROM chunks c JOIN occurrences o ON o.chunk_id = c.id"
+                f" WHERE c.id IN ({placeholders})",
+                list(ids),
+            ).fetchall()
         found: dict[str, tuple[str, list[dict]]] = {}
         for chunk_id, text, occurrence_id, metadata in rows:
             metadata_dict = json.loads(metadata)
@@ -411,9 +432,10 @@ class VectorStore:
         索引を持たない代わりに毎回この配列を使う。同じ本文を何度も載せると、
         候補の枠をコピーが食い合う。
         """
-        rows = self._connection.execute(
-            "SELECT id, text, embedding FROM chunks ORDER BY id"
-        ).fetchall()
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT id, text, embedding FROM chunks ORDER BY id"
+            ).fetchall()
         if not rows:
             return [], np.zeros((0, 0), dtype="float32")
         entries = [(chunk_id, text) for chunk_id, text, _ in rows]
@@ -423,17 +445,24 @@ class VectorStore:
         return entries, matrix
 
     def revision(self) -> int:
-        return self._connection.execute(
-            "SELECT value FROM meta WHERE key = 'revision'"
-        ).fetchone()[0]
+        with self._lock:
+            return self._connection.execute(
+                "SELECT value FROM meta WHERE key = 'revision'"
+            ).fetchone()[0]
 
     def _current(self):
-        """世代が変わっていれば読み直す。変わっていなければキャッシュを返す。"""
-        revision = self.revision()
-        if revision != self._cached_revision:
-            self._entries, self._matrix = self._load_matrix()
-            self._cached_revision = revision
-        return self._entries, self._matrix
+        """世代が変わっていれば読み直す。変わっていなければキャッシュを返す。
+
+        全体をロックの中で行う。entries と matrix と世代の3つを別々に代入する
+        ため、途中で別スレッドが読むと新しい entries と古い matrix の組を受け取り、
+        例外を出さずに検索結果がずれる。
+        """
+        with self._lock:
+            revision = self.revision()
+            if revision != self._cached_revision:
+                self._entries, self._matrix = self._load_matrix()
+                self._cached_revision = revision
+            return self._entries, self._matrix
 
     def search(self, vector, limit: int):
         """cosine距離の小さい順に返す。
