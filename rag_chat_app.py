@@ -680,7 +680,9 @@ def render_evidence(message):
     render_hits(message.get("hits"))
 
 
-st.set_page_config(page_title="社内文書RAG")
+# 既定の centered は本文の列を約730pxに絞る。回答には表やコードブロックが
+# 多く、その幅では横スクロールや折り返しで読みにくいため、画面幅いっぱいに使う。
+st.set_page_config(page_title="社内文書RAG", layout="wide")
 st.sidebar.title("設定")
 
 # ollama pull済みのモデルだけを並べる。自由入力にしていた頃は打ち間違いや
