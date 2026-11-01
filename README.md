@@ -540,14 +540,6 @@ mmdc --version
 「図にできなかった欄」として出る。生成そのものは止まらない。描画は手元の
 Chromium で行い、図の内容は外へ出ない。
 
-## ローカルGitLabにミラーする
-
-GitHubを正としたまま、手元のGitLab CEに全ブランチ・全タグの複製を持てる。
-GitLabはOllamaとメモリを取り合うため常時起動はせず、必要なときだけ
-`.\run_gitlab.ps1 up` で立ち上げて使う。
-
-セットアップと運用の手順は [docs/gitlab-local.md](docs/gitlab-local.md) を参照。
-
 ## 構成
 
 Colabの `gpt-oss:20b` をVS Codeのコーディングエージェントとして使う場合は、
@@ -584,8 +576,6 @@ Claude Code にプラグイン Superpowers を入れて使う手順と、ロー�
 | `scripts/local_source.py` | `kind = "local"` — リポジトリに置いた原本（`docs/pg_data/`）を写す。外部通信なし |
 | `ingest/query_translation.py` | 技術ドキュメント検索用に質問を英語へ翻訳する（生成には使わない） |
 | `rag_chat_app.py` | Streamlit UI |
-| `infra/gitlab/` | ローカルGitLab CEのDocker定義（アプリ本体には非依存） |
-| `run_gitlab.ps1` | ローカルGitLabの起動・停止・同期 |
 
 ベクトルは `vector_store.sqlite3`（bge-m3 / 1024次元 / cosine）に保存する。1つの
 埋め込みモデルしか入らない設計で、モデルを差し替えるときはファイルごと消して
@@ -941,5 +931,3 @@ BM25索引とベクトル行列は `chunks` から作る。
 - 実装計画（ハイブリッド検索）: `docs/superpowers/plans/2026-08-15-hybrid-retrieval.md`
 - 設計書（Reranker）: `docs/superpowers/specs/2026-08-30-reranker-design.md`
 - 実装計画（Reranker）: `docs/superpowers/plans/2026-08-30-reranker.md`
-- 設計書（ローカルGitLab）: `docs/superpowers/specs/2026-09-04-local-gitlab-design.md`
-- 実装計画（ローカルGitLab）: `docs/superpowers/plans/2026-09-04-local-gitlab.md`
