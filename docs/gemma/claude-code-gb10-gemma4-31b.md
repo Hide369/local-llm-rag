@@ -417,6 +417,10 @@ Gemma をやめると決めたら、GB10 側も片づける。
 ollama rm gemma4:31b-256k gemma4:31b   # 約20GB 空く
 ```
 
+7節の後（Qwen を消した後）や、`settings.json.qwen.bak` を消した後で Qwen に戻すときは、
+[Gemma 4 31B から Qwen3-Coder-Next へ切り替える](../qwen/claude-code-gb10-gemma4-to-qwen3-coder-next.md)の
+手順で行う。
+
 ## つまずきやすいところ
 
 |症状|原因|対処|
