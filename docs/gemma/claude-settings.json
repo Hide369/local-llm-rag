@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://192.168.1.50:11434",
+    "ANTHROPIC_AUTH_TOKEN": "ollama",
+    "ANTHROPIC_API_KEY": "",
+    "ANTHROPIC_MODEL": "gemma4:31b-256k",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "gemma4:31b-256k",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "gemma4:31b-256k",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "gemma4:31b-256k",
+    "CLAUDE_CODE_SUBAGENT_MODEL": "gemma4:31b-256k",
+    "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
+    "CLAUDE_CODE_ATTRIBUTION_HEADER": "0",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "DISABLE_TELEMETRY": "1"
+  }
+}
