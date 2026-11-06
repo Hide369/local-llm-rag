@@ -423,7 +423,7 @@ Claude Code は `settings.json` の `env` ブロックを消すか、値を書�
 |Codexが401|`Authorization: Bearer` が渡っていない|4節の但し書きを読む。vLLMを `--api-key` 無しで立てるのが確実|
 |道具を呼ばない|`--tool-call-parser` / `--enable-auto-tool-choice` 未指定|1節のフラグを確認。2節のcurlで切り分ける|
 |Claude Codeだけ動かない|LiteLLM|3節のcurl。`model_name` と `ANTHROPIC_MODEL` の一致を見る|
-|起動時にOOM|`--max-model-len` か `--gpu-memory-utilization` が大きい|`--max-model-len 65536` へ下げる。それでも駄目なら `--max-num-batched-tokens` を下げる|
+|起動時にOOM|`--max-model-len` か `--gpu-memory-utilization` が大きい|`--max-model-len 65536` へ下げる。それでも駄目なら `--max-num-batched-tokens` を下げる。切り分けの手順は [vllm-gb10-memory.md](vllm-gb10-memory.md)|
 |応答が遅い|GB10のメモリ帯域（約273GB/s）が律速|[vllm-gb10.md の帯域の節](vllm-gb10.md#gb10で先に知っておくこと)。設定では埋まらない|
 
 ## Ollama版とどちらを使うか
