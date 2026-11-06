@@ -10,7 +10,7 @@ RAGの生成とコーディングエージェントを社内ネットワーク�
 >   [PR #75](https://github.com/Hide369/local-llm-rag/pull/75) に残っている。
 >   再開するならそこから拾える
 > - **コーディングエージェントでは vLLM を使う。** 手順は
->   [GB10のvLLM + gpt-oss-120b でCodexとClaude Codeを使う](vllm-gb10-coding-agent.md)
+>   [GB10のvLLM + gpt-oss-120b でCodexとClaude Codeを使う](vllm/vllm-gb10-coding-agent.md)
 >
 > この文書はvLLMサーバー自体の立て方（コンテナ、systemd、公開と認証）で、
 > どちらの用途でも土台になる。**実機での起動と実測はしていない。**

@@ -432,7 +432,7 @@ Ollamaに肩代わりさせられる。現在Colab側に置いているのは `g
 以下は調査の記録である。実機で動かしてはいない。
 
 **コーディングエージェント向けにはvLLMを使う。** そちらの手順は
-[GB10のvLLM + gpt-oss-120b でCodexとClaude Codeを使う](docs/vllm-gb10-coding-agent.md)
+[GB10のvLLM + gpt-oss-120b でCodexとClaude Codeを使う](docs/vllm/vllm-gb10-coding-agent.md)
 にある。
 
 Nvidia GB10（DGX Spark）を社内の推論サーバーにして、生成とコーディングエージェントを
@@ -554,7 +554,7 @@ Qwen3-Coder-Next に置き換えたGB10へ、プロキシを立てずに Claude 
 [VS CodeのClaude CodeをGB10のQwen3-Coder-Nextへ向ける](docs/qwen/claude-code-gb10-qwen3-coder-next.md)
 にある（Ollama v0.14.0 以降は `/v1/messages` を自分で話す。クライアントは `settings.json` だけ）。
 OllamaではなくvLLMに `openai/gpt-oss-120b` を載せ、CodexとClaude Codeの両方を使う場合は
-[GB10のvLLM + gpt-oss-120b でCodexとClaude Codeを使う](docs/vllm-gb10-coding-agent.md)
+[GB10のvLLM + gpt-oss-120b でCodexとClaude Codeを使う](docs/vllm/vllm-gb10-coding-agent.md)
 を参照する。
 Claude Code にプラグイン Superpowers を入れて使う手順と、ローカルLLMでの注意点は
 [Superpowers プラグイン導入手順](docs/superpowers-setup.md) にある。
