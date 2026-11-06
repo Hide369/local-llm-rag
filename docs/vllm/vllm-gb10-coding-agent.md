@@ -53,7 +53,7 @@ Windows（VS Code）
 ## 1. GB10: vLLMを立てる
 
 vLLM自体の導入（コンテナの取得、CUDA 13 と `sm_121` の前提、systemd化）は
-[GB10サーバーにvLLMを立てる](../vllm-gb10.md) にある。ここではコーディング
+[GB10サーバーにvLLMを立てる](vllm-gb10.md) にある。ここではコーディング
 エージェント向けの起動だけを書く。
 
 ```bash
@@ -424,7 +424,7 @@ Claude Code は `settings.json` の `env` ブロックを消すか、値を書�
 |道具を呼ばない|`--tool-call-parser` / `--enable-auto-tool-choice` 未指定|1節のフラグを確認。2節のcurlで切り分ける|
 |Claude Codeだけ動かない|LiteLLM|3節のcurl。`model_name` と `ANTHROPIC_MODEL` の一致を見る|
 |起動時にOOM|`--max-model-len` か `--gpu-memory-utilization` が大きい|`--max-model-len 65536` へ下げる。それでも駄目なら `--max-num-batched-tokens` を下げる。切り分けの手順は [vllm-gb10-memory.md](vllm-gb10-memory.md)|
-|応答が遅い|GB10のメモリ帯域（約273GB/s）が律速|[vllm-gb10.md の帯域の節](../vllm-gb10.md#gb10で先に知っておくこと)。設定では埋まらない|
+|応答が遅い|GB10のメモリ帯域（約273GB/s）が律速|[vllm-gb10.md の帯域の節](vllm-gb10.md#gb10で先に知っておくこと)。設定では埋まらない|
 
 ## Ollama版とどちらを使うか
 
@@ -442,5 +442,5 @@ RAG など他の用途と同じサーバーを共有したい場合である。
 
 - [GB10のOllamaでコーディングエージェントを動かす](../gb10-coding-agent.md)
 - [VS CodeのClaude CodeをGB10へ向ける](../claude-code-gb10.md) — Ollama版のプロキシ構成
-- [GB10サーバーにvLLMを立てる](../vllm-gb10.md) — vLLM自体の導入、コンテナ、systemd
+- [GB10サーバーにvLLMを立てる](vllm-gb10.md) — vLLM自体の導入、コンテナ、systemd
 - [vLLM GPT-OSS recipe](https://github.com/vllm-project/recipes/blob/main/OpenAI/GPT-OSS.md) — 起動フラグとBlackwell設定の出どころ

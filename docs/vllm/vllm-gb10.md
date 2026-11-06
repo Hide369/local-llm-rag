@@ -10,7 +10,7 @@ RAGの生成とコーディングエージェントを社内ネットワーク�
 >   [PR #75](https://github.com/Hide369/local-llm-rag/pull/75) に残っている。
 >   再開するならそこから拾える
 > - **コーディングエージェントでは vLLM を使う。** 手順は
->   [GB10のvLLM + gpt-oss-120b でCodexとClaude Codeを使う](vllm/vllm-gb10-coding-agent.md)
+>   [GB10のvLLM + gpt-oss-120b でCodexとClaude Codeを使う](vllm-gb10-coding-agent.md)
 >
 > この文書はvLLMサーバー自体の立て方（コンテナ、systemd、公開と認証）で、
 > どちらの用途でも土台になる。**実機での起動と実測はしていない。**
@@ -266,7 +266,7 @@ journalctl -u vllm-chat -f
 
 クライアントは `Authorization: Bearer <キー>` を付ける。
 
-公開の形は、本リポジトリの [docs/server-deployment.md](server-deployment.md) と
+公開の形は、本リポジトリの [docs/server-deployment.md](../server-deployment.md) と
 同じ考え方でよい。推論サーバーを直接LANに晒さず、TLSと認証を担うリバースプロキシを
 前に置く。
 
@@ -537,7 +537,7 @@ OpenAI互換エンドポイントを使っている。RAG本体とは別経路�
 
 DGX Spark playbookには `ollama` の項目もあり、GB10でOllamaは動く。RAG側は
 `.env` の `OLLAMA_HOST` をGB10のOllamaに向けるだけで済む（[README「ColabのL4 GPUに
-接続する」](../README.md#colabのl4-gpuに接続する)と同じ仕組みで、向き先が
+接続する」](../../README.md#colabのl4-gpuに接続する)と同じ仕組みで、向き先が
 ngrokからLANのアドレスに変わるだけである）。vLLMはコーディングエージェント専用に
 使う。**まずこれで動かし、RAGの生成をvLLMへ寄せるかは実測してから決める**のが安全である。
 Ollamaとの併存では、両者が同じ128GBを食い合う点にだけ注意する。
@@ -592,7 +592,7 @@ DBに入っているベクトルと問い合わせのベクトルは同じ経路
 |コンテナを作り直すたびに巨大なDL|HFキャッシュを未マウント|`-v ~/.cache/huggingface:/root/.cache/huggingface` を必ず付ける|
 |初回起動が異様に遅い|モデルDLとカーネルのコンパイル|2回目以降は速くなる。`--load-format fastsafetensors` でロード自体も短縮できる|
 |`.env` の `OLLAMA_HOST` を向けたのにRAGが404|vLLMに `/api/chat` は無い|[8節](#8-本リポジトリのragとつなぐ)。設定では解決しない。経路の追加が要る|
-|GB10のデスクトップで日本語が打てない|IMEが未導入（vLLMとは無関係）|[docs/gb10-japanese-input.md](gb10-japanese-input.md)|
+|GB10のデスクトップで日本語が打てない|IMEが未導入（vLLMとは無関係）|[docs/gb10-japanese-input.md](../gb10-japanese-input.md)|
 
 2台以上のGB10をQSFPで繋いで `--tensor-parallel-size 2` 以上で動かす手順
 （Rayクラスタ）もplaybookにある。1台に載らないモデルを動かす必要が出てから読めばよい。
@@ -608,7 +608,7 @@ DBに入っているベクトルと問い合わせのベクトルは同じ経路
 - [timothystewart6/vllm-gb10 — GB10（sm_121a）向けにビルドされた非公式イメージ](https://github.com/timothystewart6/vllm-gb10)
 - [HuggingFace — 環境変数（`HF_HOME` / `HF_HUB_OFFLINE`）](https://huggingface.co/docs/huggingface_hub/package_reference/environment_variables)（オフライン運用の出どころ）
 - [jschmied/dgx-spark-setup-guide](https://github.com/jschmied/dgx-spark-setup-guide) / [timothystewart6/ubuntu-gb10](https://github.com/timothystewart6/ubuntu-gb10)（DGX OSの版とSSHでの初期セットアップ）
-- 本リポジトリ内: [docs/gb10-japanese-input.md](gb10-japanese-input.md)（GB10のデスクトップの日本語入力）、
-  [docs/server-deployment.md](server-deployment.md)（公開構成の考え方）、
-  [README「ColabのL4 GPUに接続する」](../README.md#colabのl4-gpuに接続する)（`OLLAMA_HOST` の差し替え）、
+- 本リポジトリ内: [docs/gb10-japanese-input.md](../gb10-japanese-input.md)（GB10のデスクトップの日本語入力）、
+  [docs/server-deployment.md](../server-deployment.md)（公開構成の考え方）、
+  [README「ColabのL4 GPUに接続する」](../../README.md#colabのl4-gpuに接続する)（`OLLAMA_HOST` の差し替え）、
   `ingest/chat.py` / `ingest/embedder.py`（Ollamaネイティブapiの呼び出し箇所）

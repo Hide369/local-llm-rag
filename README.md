@@ -436,9 +436,9 @@ Ollamaに肩代わりさせられる。現在Colab側に置いているのは `g
 にある。
 
 Nvidia GB10（DGX Spark）を社内の推論サーバーにして、生成とコーディングエージェントを
-そこへ寄せる場合の手順は [docs/vllm-gb10.md](docs/vllm-gb10.md) にある。
+そこへ寄せる場合の手順は [docs/vllm-gb10.md](docs/vllm/vllm-gb10.md) にある。
 載せるモデルの選定（生成・VLM・埋め込みの3本）と、その導入手順は
-[docs/vllm-gb10-models.md](docs/vllm-gb10-models.md) に分けてある。
+[docs/vllm-gb10-models.md](docs/vllm/vllm-gb10-models.md) に分けてある。
 GB10のデスクトップに直接キーボードを繋いで使うとき、テキスト欄で日本語が打てないのは
 IMEが未導入だからである。その手当ては
 [docs/gb10-japanese-input.md](docs/gb10-japanese-input.md) にある。
