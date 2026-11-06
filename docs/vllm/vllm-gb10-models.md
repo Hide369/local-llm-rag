@@ -11,7 +11,7 @@
 >
 > **コーディングエージェント向けにはvLLMを使う。** そちらのモデルは
 > `openai/gpt-oss-120b` で、選定も起動フラグもこの文書とは別である
-> （[GB10のvLLM + gpt-oss-120b でCodexとClaude Codeを使う](vllm/vllm-gb10-coding-agent.md)）。
+> （[GB10のvLLM + gpt-oss-120b でCodexとClaude Codeを使う](vllm-gb10-coding-agent.md)）。
 
 > **この文書の位置づけ**
 > 選定の根拠と起動フラグは、NVIDIAのDGX Spark playbook、vLLM公式のレシピ集
