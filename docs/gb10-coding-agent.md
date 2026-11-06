@@ -454,7 +454,7 @@ ollama rm gpt-oss:120b-131k
 > `--restore-context` で退避した `gpt-oss:120b-before-coding-agent` から戻す
 > 必要がある（[Pythonを入れてよいなら](#pythonを入れてよいなら)）。
 > vLLM版にはどちらも無い。コンテキスト長がサーバー起動時の `--max-model-len` で
-> 決まり、モデル自体を書き換えないためである（[vLLM版](vllm-gb10-coding-agent.md)）。
+> 決まり、モデル自体を書き換えないためである（[vLLM版](vllm/vllm-gb10-coding-agent.md)）。
 
 ### ColabのL4へ戻す
 
@@ -542,4 +542,4 @@ ngrokからLANのアドレスに変わるだけで、使い方は同じである
 - [docs/mcp-tool-not-called.md](mcp-tool-not-called.md) — 道具が呼ばれないときの切り分け
 - [VS CodeのClaude CodeをGB10へ向ける](claude-code-gb10.md) — Codexではなく Claude Code を使う場合。変換プロキシを挟む旧手順
 - [VS CodeのClaude CodeをGB10のQwen3-Coder-Nextへ向ける](qwen/claude-code-gb10-qwen3-coder-next.md) — Claude Code をプロキシなしで Ollama へ直接繋ぐ
-- [GB10のvLLM + gpt-oss-120b でCodexとClaude Codeを使う](vllm-gb10-coding-agent.md) — OllamaではなくvLLMを使う場合
+- [GB10のvLLM + gpt-oss-120b でCodexとClaude Codeを使う](vllm/vllm-gb10-coding-agent.md) — OllamaではなくvLLMを使う場合

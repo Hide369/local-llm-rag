@@ -5,7 +5,7 @@ GB10上でvLLMを起動したら、メモリを使い切ってOOMで落ちた、
 止めてから起動し直す**のが基本である。
 
 > **この文書の位置づけ（2026-11-07）**
-> vLLMサーバー自体の立て方は [GB10サーバーにvLLMを立てる](vllm-gb10.md)、
+> vLLMサーバー自体の立て方は [GB10サーバーにvLLMを立てる](../vllm-gb10.md)、
 > gpt-oss-120b の起動フラグは [GB10のvLLM + gpt-oss-120b でCodexとClaude Codeを使う](vllm-gb10-coding-agent.md)
 > にある。ここはその起動が**メモリ不足で通らないときの切り分けと対処**だけを書く。
 > フラグ名とその効果は vLLM の公開情報に基づく。**各値は実測していない**ので、
@@ -24,7 +24,7 @@ GB10上でvLLMを起動したら、メモリを使い切ってOOMで落ちた、
 
 ## なぜ枯渇するか
 
-GB10はCPUとGPUが128GBのメモリを共有する（[vllm-gb10.md の2項](vllm-gb10.md#gb10で先に知っておくこと)）。
+GB10はCPUとGPUが128GBのメモリを共有する（[vllm-gb10.md の2項](../vllm-gb10.md#gb10で先に知っておくこと)）。
 vLLMは起動時に `--gpu-memory-utilization` の割合を**128GB全体に対して**確保して
 抱え込む。主な原因は次の3つである。
 
@@ -157,7 +157,7 @@ watch -n 2 free -h                               # 推論中のメモリを別�
 
 ## 常時稼働させるとき
 
-[vllm-gb10.md の3節（systemd）](vllm-gb10.md#3-常時稼働させるsystemd) で常駐させる
+[vllm-gb10.md の3節（systemd）](../vllm-gb10.md#3-常時稼働させるsystemd) で常駐させる
 場合は、Ollamaとの衝突とキャッシュ解放をユニットに書いておくと、手順1・2を
 毎回手で行わずに済む。
 
@@ -174,4 +174,4 @@ ExecStartPre=+/bin/sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'
 - GB10を2台にして、gpt-oss-120b と Qwen3-Coder-Next を別々の機械に載せれば、
   1台に1モデルとなり、この文書の制約はほぼ考えなくてよくなる。1台に複数の
   プロセスを同居させるときの割り振りは
-  [vllm-gb10-models.md の「128GBの割り振り」](vllm-gb10-models.md#128gbの割り振り) を見ること
+  [vllm-gb10-models.md の「128GBの割り振り」](../vllm-gb10-models.md#128gbの割り振り) を見ること

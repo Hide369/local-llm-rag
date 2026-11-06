@@ -23,7 +23,7 @@ Windows（VS Code）
 
 ## Ollama版との違い
 
-[GB10のOllamaでコーディングエージェントを動かす](gb10-coding-agent.md) との差はここ。
+[GB10のOllamaでコーディングエージェントを動かす](../gb10-coding-agent.md) との差はここ。
 
 |項目|Ollama版|vLLM版（この文書）|
 |---|---|---|
@@ -53,7 +53,7 @@ Windows（VS Code）
 ## 1. GB10: vLLMを立てる
 
 vLLM自体の導入（コンテナの取得、CUDA 13 と `sm_121` の前提、systemd化）は
-[GB10サーバーにvLLMを立てる](vllm-gb10.md) にある。ここではコーディング
+[GB10サーバーにvLLMを立てる](../vllm-gb10.md) にある。ここではコーディング
 エージェント向けの起動だけを書く。
 
 ```bash
@@ -244,7 +244,7 @@ py -3.13 -m venv myvenv313
 **Codex でも Python を入れたくないなら**、`config.toml` と `models.json` を
 `%USERPROFILE%\.codex\` に手で置く道がある。書き方と、そのとき落ちるもの
 （Superpowersスキルの自動配置）は
-[Ollama版の5節](gb10-coding-agent.md#5-windows側-configtoml-を置く)と同じで、
+[Ollama版の5節](../gb10-coding-agent.md#5-windows側-configtoml-を置く)と同じで、
 `base_url` のポートと `wire_api` だけがこの文書の値になる。
 
 ## 4. Windows: Codexを設定する
@@ -306,7 +306,7 @@ X-API-Key = "OLLAMA_API_KEY"
 
 `models.json` の `slug` も `openai/gpt-oss-120b` になり、`config.toml` の `model` と
 揃う。**食い違うとCodexはモデルを見つけられない**ので、ここは自動で揃うようにしてある。
-各キーの意味は [Ollama版の「確かめる値」](gb10-coding-agent.md#確かめる値) と同じ。
+各キーの意味は [Ollama版の「確かめる値」](../gb10-coding-agent.md#確かめる値) と同じ。
 
 > **キーの渡り方に1つ弱点がある。** 起動補助は `X-API-Key` ヘッダーで送る形しか
 > 持たないが、vLLM が見るのは `Authorization: Bearer` である。`--setup` だけを
@@ -357,7 +357,7 @@ npm install -g @anthropic-ai/claude-code
 }
 ```
 
-要点は [Claude Code をGB10へ向ける](claude-code-gb10.md#5-windows側-接続先を設定する)
+要点は [Claude Code をGB10へ向ける](../claude-code-gb10.md#5-windows側-接続先を設定する)
 と同じ。**`ANTHROPIC_BASE_URL` に `/v1` を付けない**、**`ANTHROPIC_DEFAULT_HAIKU_MODEL`
 を忘れない**（裏で走る処理に使われる）、**`ANTHROPIC_API_KEY` は設定しない**。
 
@@ -407,7 +407,7 @@ docker rm -f vllm-code      # 必要なら litellm も止める
 Ollama版は、コンテキスト長をモデルに焼くぶんだけ後始末がある。別名で作って
 いれば `ollama rm gpt-oss:120b-131k` で終わる。起動補助の `--configure-context` を
 使った場合だけ、同名のモデルが `num_ctx` 焼き込みで作り直されているので、
-`--restore-context` が要る（[Ollama版の「元に戻す」](gb10-coding-agent.md#元に戻す)）。
+`--restore-context` が要る（[Ollama版の「元に戻す」](../gb10-coding-agent.md#元に戻す)）。
 
 クライアント側は、Ollama版・vLLM版どちらでも同じである。設定を手で置いたなら
 `config.toml` の `model` と `base_url`、`models.json` の `slug` を書き戻す。
@@ -424,7 +424,7 @@ Claude Code は `settings.json` の `env` ブロックを消すか、値を書�
 |道具を呼ばない|`--tool-call-parser` / `--enable-auto-tool-choice` 未指定|1節のフラグを確認。2節のcurlで切り分ける|
 |Claude Codeだけ動かない|LiteLLM|3節のcurl。`model_name` と `ANTHROPIC_MODEL` の一致を見る|
 |起動時にOOM|`--max-model-len` か `--gpu-memory-utilization` が大きい|`--max-model-len 65536` へ下げる。それでも駄目なら `--max-num-batched-tokens` を下げる。切り分けの手順は [vllm-gb10-memory.md](vllm-gb10-memory.md)|
-|応答が遅い|GB10のメモリ帯域（約273GB/s）が律速|[vllm-gb10.md の帯域の節](vllm-gb10.md#gb10で先に知っておくこと)。設定では埋まらない|
+|応答が遅い|GB10のメモリ帯域（約273GB/s）が律速|[vllm-gb10.md の帯域の節](../vllm-gb10.md#gb10で先に知っておくこと)。設定では埋まらない|
 
 ## Ollama版とどちらを使うか
 
@@ -440,7 +440,7 @@ RAG など他の用途と同じサーバーを共有したい場合である。
 
 ## 関連
 
-- [GB10のOllamaでコーディングエージェントを動かす](gb10-coding-agent.md)
-- [VS CodeのClaude CodeをGB10へ向ける](claude-code-gb10.md) — Ollama版のプロキシ構成
-- [GB10サーバーにvLLMを立てる](vllm-gb10.md) — vLLM自体の導入、コンテナ、systemd
+- [GB10のOllamaでコーディングエージェントを動かす](../gb10-coding-agent.md)
+- [VS CodeのClaude CodeをGB10へ向ける](../claude-code-gb10.md) — Ollama版のプロキシ構成
+- [GB10サーバーにvLLMを立てる](../vllm-gb10.md) — vLLM自体の導入、コンテナ、systemd
 - [vLLM GPT-OSS recipe](https://github.com/vllm-project/recipes/blob/main/OpenAI/GPT-OSS.md) — 起動フラグとBlackwell設定の出どころ
