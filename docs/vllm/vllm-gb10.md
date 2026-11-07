@@ -289,7 +289,7 @@ NVIDIAがGB10での動作を確認しているモデルは playbook の Model Su
 一覧がある。用途別に、そこから選ぶのが安全である。
 
 > Nemotron系を軸に、生成・VLM・埋め込みの3本を具体的に選定して載せる手順は
-> [docs/vllm-gb10-models.md](vllm-gb10-models.md) に分けてある。下の表は
+> [docs/vllm/vllm-gb10-models.md](vllm-gb10-models.md) に分けてある。下の表は
 > 全体像をつかむための一覧である。
 
 |用途|候補|量子化|備考|
@@ -586,7 +586,7 @@ DBに入っているベクトルと問い合わせのベクトルは同じ経路
 |---|---|---|
 |起動時にCUDAカーネル初期化で落ちる|PyTorch/Tritonが `sm_120` 止まりのビルド|NGCの `nvcr.io/nvidia/vllm` か、GB10向けにビルドされたイメージを使う。素のpip導入を避ける|
 |メモリはあるはずなのにOOM|UMAのページキャッシュが居座っている|`sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'` でバッファを流す（playbook記載）|
-|`CUDA out of memory`|`--max-model-len` / `--max-num-seqs` が大きい|どちらも下げる。複数プロセス常駐なら `--gpu-memory-utilization` の合計を見直す|
+|`CUDA out of memory`|`--max-model-len` / `--max-num-seqs` が大きい|どちらも下げる。複数プロセス常駐なら `--gpu-memory-utilization` の合計を見直す。切り分けの手順は [vllm-gb10-memory.md](vllm-gb10-memory.md)|
 |`Cannot access gated repo`|HFのライセンス未同意、またはトークンの権限不足|ブラウザーでモデルページの利用申請を通し、read権限のトークンを取り直す|
 |エージェントがツールを呼ばない|`--enable-auto-tool-choice` と `--tool-call-parser` が無い|[6節](#6-コーディングエージェント向けの起動)のレシピに合わせる。パーサー名はモデルごとに違う|
 |コンテナを作り直すたびに巨大なDL|HFキャッシュを未マウント|`-v ~/.cache/huggingface:/root/.cache/huggingface` を必ず付ける|
