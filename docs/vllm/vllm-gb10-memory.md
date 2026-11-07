@@ -51,7 +51,13 @@ GB10では `nvidia-smi` のメモリ欄が実態を表さないことがある�
 
 ## 1. 競合プロセスを止める
 
-**OllamaとvLLMを同じGB10で同時に動かさない。**
+**切り分けの間は、OllamaをいったんGB10から降ろす。** 起動が通るかどうかを、
+vLLM自身の設定だけで判断できるようにするためである。
+
+これは切り分けのための一時的な措置である。[vllm-gb10.md の8節 (a)](vllm-gb10.md#8-本リポジトリのragとつなぐ)
+のように、RAGはOllama・エージェントはvLLMとして1台に同居させる構成は成り立つ。
+同居させるなら、vLLMの `--gpu-memory-utilization` を絞り、OllamaとvLLMの合計が
+128GBに収まるよう割り振る（[vllm-gb10-models.md の「128GBの割り振り」](vllm-gb10-models.md#128gbの割り振り)）。
 
 ```bash
 ollama stop <モデル名>               # 読み込み中のモデルをアンロード
@@ -94,7 +100,7 @@ free -h                              # buff/cache が減ったことを確認
 ```bash
 export VLLM_IMAGE=nvcr.io/nvidia/vllm:26.06-py3   # 最新タグはNGCで確認する
 
-docker run -d --name vllm-code --restart unless-stopped \
+docker run -d --name vllm-code \
   --gpus all --ipc=host \
   -p 0.0.0.0:8000:8000 \
   -v ~/.cache/huggingface:/root/.cache/huggingface \
@@ -115,11 +121,24 @@ docker run -d --name vllm-code --restart unless-stopped \
 メモリとは関係ないが、外すとコーディングエージェントが道具を呼べなくなる、
 あるいは無認証になるので残す（理由は [vllm-gb10-coding-agent.md](vllm-gb10-coding-agent.md)）。
 
+**値を詰めている間は `--restart unless-stopped` を付けない。** OSごと固まる設定のまま
+電源から再起動すると、Dockerが同じ設定でコンテナを立ち上げ直し、また固まる。
+落ちない値が決まってから、[vllm-gb10-coding-agent.md](vllm-gb10-coding-agent.md) の
+起動例どおり `--restart unless-stopped` を付けて作り直す。
+
+**gpt-oss-120b では `--gpu-memory-utilization` を0.6より下げない。** 128GBの0.5は
+約64GBで、重み（MXFP4で約60GiB＝約64GB）だけで埋まり、KVキャッシュの余地が残らない。
+0.6（約77GB）でも、重みを除いた残りは十数GBしかない。ここから先は割合ではなく、
+KVキャッシュとCUDAグラフの側を削る。
+
 まだ落ちる場合は、次の順に**1つずつ**変えて試す。
 
 1. `--enforce-eager` を足す
-2. `--gpu-memory-utilization` を0.5へ下げる
-3. `--max-model-len` を16384へ下げる
+2. `--max-model-len` を16384へ下げる
+3. `--max-num-seqs` を1へ下げる
+
+ここまで下げても落ちるなら、vLLMの設定ではなく空き容量の問題である。0〜2節に戻り、
+`free -h` の `available` が80GB以上あるかを確かめる。
 
 起動が通ったら、逆の順に戻して、落ちない上限を探す。
 
@@ -148,18 +167,20 @@ watch -n 2 free -h                               # 推論中のメモリを別�
 
 |症状|原因|対処|
 |---|---|---|
-|起動時に `CUDA out of memory`|確保割合が空きより大きい|1・2節を実施し、`--gpu-memory-utilization` を0.1ずつ下げる|
+|起動時に `CUDA out of memory`|確保割合が空きより大きい|1・2節を実施して空きを増やす。gpt-oss-120bなら `--gpu-memory-utilization` は0.6を下限とし、それでも落ちるなら `--max-model-len` を下げる|
 |`No available memory for the cache blocks`|重みを載せた後にKVキャッシュの余地がない|`--max-model-len` を下げる。`--kv-cache-dtype fp8` を付ける|
 |`max_model_len` がKVキャッシュに収まらないと出る|コンテキスト長が大きすぎる|`--max-model-len` をエラーが示す値以下にする|
 |CUDAグラフの取得中に落ちる|グラフ用のメモリが足りない|`--enforce-eager` を足す|
-|SSHが固まる・OSが応答しない|OSの分まで使い切った|電源から再起動し、`--gpu-memory-utilization` を0.5以下で起動し直す|
+|SSHが固まる・OSが応答しない|OSの分まで使い切った|電源から再起動し、`docker rm -f vllm-code` で自動再起動を断ってから、3節の保守的な値で起動し直す|
 |推論の途中で落ちる|長い入力や同時リクエストでKVが足りない|`--max-num-seqs` と `--max-model-len` を下げる|
 
 ## 常時稼働させるとき
 
 [vllm-gb10.md の3節（systemd）](vllm-gb10.md#3-常時稼働させるsystemd) で常駐させる
-場合は、Ollamaとの衝突とキャッシュ解放をユニットに書いておくと、手順1・2を
-毎回手で行わずに済む。
+場合は、キャッシュ解放をユニットに書いておくと、手順2を毎回手で行わずに済む。
+`Conflicts=ollama.service` は、**そのGB10でOllamaを使わない構成のときだけ**足す。
+[vllm-gb10.md の8節 (a)](vllm-gb10.md#8-本リポジトリのragとつなぐ) のように
+RAGをGB10のOllamaで動かしている場合に足すと、vLLMが起動するたびにRAGが止まる。
 
 ```ini
 [Unit]
@@ -169,7 +190,7 @@ Conflicts=ollama.service
 ExecStartPre=+/bin/sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'
 ```
 
-- `Conflicts=ollama.service` で、vLLMの起動時にOllamaが止まる
+- `Conflicts=ollama.service` で、vLLMの起動時にOllamaが止まる（上の条件のときだけ）
 - `ExecStartPre` の先頭の `+` は、キャッシュ解放をrootで実行するためのもの
 - GB10を2台にして、gpt-oss-120b と Qwen3-Coder-Next を別々の機械に載せれば、
   1台に1モデルとなり、この文書の制約はほぼ考えなくてよくなる。1台に複数の

@@ -55,9 +55,11 @@ vLLMの公式ドキュメントは「ノード内はテンソル並列、ノー�
 テンソル並列、5節のNCCLテストで帯域が出ないならパイプライン並列、と決める。
 どちらでも `テンソル並列数 × パイプライン並列数 = 4` にする。
 
-**3. 台間の通信路と管理用の通信路は分ける。** モデルの通信はConnectX-7（QSFP）、
-SSHやモデルのダウンロードは通常のEthernet（`enP7s7`）を使う。ConnectXの帯域を
-推論の通信だけに使うためである。
+**3. 台間の通信路と管理用の通信路は分ける。** 推論中の台間の通信はConnectX-7（QSFP）、
+社内LANからのAPI呼び出しやHugging Faceからのモデルのダウンロードは通常のEthernet
+（`enP7s7`）を使う。推論中のConnectXの帯域を、台間の通信だけに使うためである。
+4節のSSH、6節のモデルの写し、9節の停止はConnectXのIP（`192.168.100.x`）宛てに
+行うが、どれも推論の前後に行う作業なので、推論の通信と帯域を取り合わない。
 
 ## 構成と用意するもの
 
@@ -248,11 +250,24 @@ mpirun -np 4 -H <node-1の管理IP>:1,<node-2の管理IP>:1,<node-3の管理IP>:
   -x UCX_NET_DEVICES=enP7s7 \
   -x NCCL_SOCKET_IFNAME=enP7s7 \
   -x OMPI_MCA_btl_tcp_if_include=enP7s7 \
-  $HOME/nccl-tests/build/all_gather_perf -b 16G -e 16G
+  -x NCCL_IB_HCA=rocep1s0f1,roceP2p1s0f1 \
+  -x NCCL_DEBUG=INFO \
+  $HOME/nccl-tests/build/all_gather_perf -b 16G -e 16G 2>&1 | tee nccl-test.log
+
+grep -E "NET/(IB|Socket)" nccl-test.log | head   # NET/IB が出ていること
 ```
 
 `mpirun` の制御は管理用のEthernetで行い、GPU間のデータはNCCLがConnectXのRoCEを
-自動で使う。出力の `busbw` を記録しておく。**合格の目安となる帯域の数値は、NVIDIAの
+使う。`NCCL_IB_HCA` と `NCCL_DEBUG` はNVIDIAの手順のコマンドには無く、この文書で
+足したものである。`NCCL_IB_HCA` は7節のvLLMと同じHCAを使わせて、テストと本番の
+条件をそろえるため、`NCCL_DEBUG=INFO` はRoCEを使えたかをログで確かめるためである。
+
+**ログに `NET/IB` ではなく `NET/Socket` と出たら、その帯域の数値は使えない。**
+NCCLがRoCEを使えず、`NCCL_SOCKET_IFNAME` の管理用Ethernet（TCP）へ黙って切り替えた
+ときの値で、ConnectXの帯域を測れていない。`NCCL_IB_HCA` の名前（2節の
+`ibdev2netdev` の左側）を見直してからやり直す。
+
+`NET/IB` を確かめたうえで、出力の `busbw` を記録しておく。**合格の目安となる帯域の数値は、NVIDIAの
 手順に書かれておらず、この文書でも実測していない。** 2台で測った値と大きく
 変わらないか、を見る。
 
@@ -269,9 +284,12 @@ hf download <モデルのHFハンドル>
 
 # node-1 から他の3台へ写す場合（ConnectX経由で速い）
 for ip in 192.168.100.2 192.168.100.3 192.168.100.4; do
-  rsync -a --info=progress2 ~/.cache/huggingface/hub/ "$ip:.cache/huggingface/hub/"
+  rsync -a --mkpath --info=progress2 ~/.cache/huggingface/hub/ "$ip:.cache/huggingface/hub/"
 done
 ```
+
+`--mkpath` は、写し先に `~/.cache/huggingface/hub/` がまだ無いときに作るためのものである
+（rsync 3.2.3以降。無いと、写し先の親ディレクトリが無いと言われて失敗する）。
 
 モデルの選び方は [vllm-gb10-models.md](vllm-gb10-models.md) と同じ考え方
 （MoE が有利、量子化済みのチェックポイントを選ぶ）を使う。NVIDIAの4台の例は
@@ -487,9 +505,15 @@ docker exec -it $VLLM_CONTAINER /bin/bash -c '
   vllm serve <モデルのHFハンドル> \
     --tensor-parallel-size 4 \
     --distributed-executor-backend ray \
+    --gpu-memory-utilization 0.8 \
     --max-model-len 32768 --max-num-seqs 4 \
+    --kv-cache-dtype fp8 \
     --api-key "<十分に長いランダム文字列>"'
 ```
+
+メモリまわりのフラグは7節とそろえてある。`--gpu-memory-utilization` を省くと既定の
+0.9が各台に掛かり、OSの分が残らない（[メモリ枯渇の対処](vllm-gb10-memory.md)）。
+7節と比べるための代替なので、条件を変えないこと。
 
 Rayのダッシュボード（`http://<ヘッドのIP>:8265`）は認証が無いので、社内LANの外へ
 出さないこと。
@@ -506,6 +530,7 @@ Rayのダッシュボード（`http://<ヘッドのIP>:8265`）は認証が無�
 |vLLMの起動が待ったまま進まない|4台のうち1台が起動していない、または `--master-addr` が違う|4台すべてのコンテナのログを見る。1台の失敗でヘッドも止まる|
 |1台だけOOMで落ちる|その台にOllamaやキャッシュが残っている|その台で7-2節を行う。`--gpu-memory-utilization` を下げる|
 |ログに `NET/Socket` と出る・遅い|NCCLがRoCEを使えていない|`NCCL_IB_HCA` と `--privileged` を確認。帯域が出ないならパイプライン並列へ|
+|rsyncで写し先のディレクトリが無いと言われる|写し先に `~/.cache/huggingface` が無い|6節のとおり `--mkpath` を付ける|
 |モデルが見つからないと言われる|4台のうちどこかにモデルが無い|6節。4台で同じパスにそろえる|
 
 ## 出典

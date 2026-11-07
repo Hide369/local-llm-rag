@@ -122,7 +122,7 @@ general_settings:
 ~/litellm/bin/litellm --config ~/litellm/config.yaml --host 0.0.0.0 --port 4000
 ```
 
-常時稼働させるなら systemd に載せる（[docs/vllm-gb10.md の3節](vllm/vllm-gb10.md#3-常時稼働させるsystemd)
+常時稼働させるなら systemd に載せる（[docs/vllm/vllm-gb10.md の3節](vllm/vllm-gb10.md#3-常時稼働させるsystemd)
 と同じ形で、`ExecStart` を上のコマンドに置き換える）。
 
 > **`master_key` は必ず設定する。** LiteLLMを `0.0.0.0` に開いた時点で、LANから

@@ -60,7 +60,7 @@ fc-list | grep -ci "Noto Sans CJK"
 
 `uname -m` が `aarch64` でも、ここで入れるものに自前ビルドは要らない。mozc・ibus・
 fcitx5 はいずれもUbuntuのarm64リポジトリにバイナリがあり、`apt` でそのまま入る。
-vLLMのときのような `sm_121` / aarch64 のwheel問題（[docs/vllm-gb10.md](vllm/vllm-gb10.md)）は
+vLLMのときのような `sm_121` / aarch64 のwheel問題（[docs/vllm/vllm-gb10.md](vllm/vllm-gb10.md)）は
 ここでは起きない。
 
 ## 2. フォントとロケール
@@ -218,5 +218,5 @@ x86_64機で集めた`.deb`は入らない。`dpkg --print-architecture` が `ar
 - [Canonical — NVIDIA DGX Spark is built on an Ubuntu base](https://canonical.com/blog/nvidia-dgx-spark-ubuntu-base)（Waylandのデスクトップが載っていること）
 - [Fcitx — Using Fcitx 5 on Wayland](https://fcitx-im.org/wiki/Using_Fcitx_5_on_Wayland)（Wayland での環境変数の扱い）
 - [microsoft/vscode#277073 — Japanese IME not working on Linux (Wayland + fcitx5)](https://github.com/microsoft/vscode/issues/277073)（Electron系のフラグ）
-- 本リポジトリ内: [docs/vllm-gb10.md](vllm/vllm-gb10.md)（GB10そのものの構築手順）、
-  [docs/vllm-gb10-models.md](vllm/vllm-gb10-models.md)（載せるモデルの選定）
+- 本リポジトリ内: [docs/vllm/vllm-gb10.md](vllm/vllm-gb10.md)（GB10そのものの構築手順）、
+  [docs/vllm/vllm-gb10-models.md](vllm/vllm-gb10-models.md)（載せるモデルの選定）

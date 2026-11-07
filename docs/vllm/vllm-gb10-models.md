@@ -1,6 +1,6 @@
 # GB10で使うモデルの選定と導入手順（RAG向け・見送り）
 
-[docs/vllm-gb10.md](vllm-gb10.md) でvLLMが立った前提で、**生成・VLM・埋め込みの3本を
+[docs/vllm/vllm-gb10.md](vllm-gb10.md) でvLLMが立った前提で、**生成・VLM・埋め込みの3本を
 何にして、どう載せるか**を決める。用途は本リポジトリの日本語RAG（回答生成・図表の
 説明文化・埋め込み）と、コーディングエージェントである。
 
@@ -63,7 +63,7 @@
 
 ## なぜこの3本なのか
 
-GB10の制約（[docs/vllm-gb10.md](vllm-gb10.md#gb10で先に知っておくこと)）に照らすと、
+GB10の制約（[docs/vllm/vllm-gb10.md](vllm-gb10.md#gb10で先に知っておくこと)）に照らすと、
 選定の軸は3つに絞られる。
 
 **軸1: MoEであること。** GB10のメモリ帯域は約273GB/sで、生成の速さは事実上ここで
@@ -120,13 +120,14 @@ GPUが同じ128GBを共有するので、**合計の管理は自分の仕事**�
 
 **構成Aから始めることを勧める。** 1本ずつ立てて、その都度 `nvidia-smi` と
 `free -h` で実際の消費を見てから次を足すほうが、原因の切り分けが効く。
-合計を0.9近くまで詰めるとOSごと不安定になる。
+合計を0.9近くまで詰めるとOSごと不安定になる。起動がメモリ不足で通らないときの
+切り分けは [vllm-gb10-memory.md](vllm-gb10-memory.md) にある。
 
 ## 導入手順
 
 ### 0. 共通の準備
 
-[docs/vllm-gb10.md](vllm-gb10.md) の1〜4節（前提確認、コンテナ取得、systemd、
+[docs/vllm/vllm-gb10.md](vllm-gb10.md) の1〜4節（前提確認、コンテナ取得、systemd、
 公開と認証）を先に済ませておく。以下はその続きである。
 
 ```bash
@@ -138,7 +139,7 @@ mkdir -p ~/.cache/huggingface
 以下のモデルはすべてHuggingFaceから落ちてくるが、**ゲート付きでなければログイン
 もトークンも要らない**。ゲート有無の判定、匿名で落とす手順、HFを使わない経路
 （`ollama pull` / NGC / ModelScope / 別マシンで取って搬入）は
-[docs/vllm-gb10.md の入手経路とオフライン運用](vllm-gb10.md#入手経路とオフライン運用)に
+[docs/vllm/vllm-gb10.md の入手経路とオフライン運用](vllm-gb10.md#入手経路とオフライン運用)に
 まとめてある。閉域で運用するなら、外に出られるマシンで先に取って
 `~/.cache/huggingface` を搬入し、`HF_HUB_OFFLINE=1` を立てる。
 
@@ -330,7 +331,7 @@ curl http://localhost:8002/v1/embeddings -H "Content-Type: application/json" -d 
 
 `2048` と出れば期待どおりである。**この2048という数字が、次の節の作業量を決める。**
 
-`BAAI/bge-m3` のまま行くなら、[docs/vllm-gb10.md の7節](vllm-gb10.md#7-埋め込みとリランカーをvllmで出す)の
+`BAAI/bge-m3` のまま行くなら、[docs/vllm/vllm-gb10.md の7節](vllm-gb10.md#7-埋め込みとリランカーをvllmで出す)の
 コマンドを使う。1024次元なので `EMBED_DIM` を触らずに済む。
 
 ### 5. リランカー（任意）
@@ -351,7 +352,7 @@ vllm_run vllm-rerank 8004 -- \
 
 ### 6. まとめて常駐させる
 
-[docs/vllm-gb10.md の3節](vllm-gb10.md#3-常時稼働させるsystemd)のsystemd unitを、
+[docs/vllm/vllm-gb10.md の3節](vllm-gb10.md#3-常時稼働させるsystemd)のsystemd unitを、
 ポートと名前とモデルだけ変えて複製する。`vllm-chat.service`（8000）、
 `vllm-embed.service`（8002）、必要なら `vllm-vlm.service`（8003）。
 
@@ -360,7 +361,7 @@ vllm_run vllm-rerank 8004 -- \
 
 ## 本リポジトリに入れるときに必要な変更
 
-**設定だけでは繋がらない。** 理由は [docs/vllm-gb10.md の8節](vllm-gb10.md#8-本リポジトリのragとつなぐ)の
+**設定だけでは繋がらない。** 理由は [docs/vllm/vllm-gb10.md の8節](vllm-gb10.md#8-本リポジトリのragとつなぐ)の
 とおりで、このアプリはOllamaのネイティブAPIを直接叩いている。モデルを替えると、
 それに加えて以下が要る。
 
@@ -420,5 +421,5 @@ vllm_run vllm-rerank 8004 -- \
 - [Nemotron 3 Nano Omni（論文）](https://arxiv.org/abs/2604.24954)（視覚・音声エンコーダーの構成と256K文脈）
 - [Nemotron 3 Super（論文）](https://arxiv.org/abs/2604.12374)（ハイブリッドMamba-Transformer MoEの構成）
 - NVIDIA公式のモデルカード（HuggingFace / build.nvidia.com）— サポート言語、量子化版の有無、`query:` / `passage:` の接頭辞、モデル固有の配備手順。**導入時は必ずこちらを正とすること**
-- 本リポジトリ内: [docs/vllm-gb10.md](vllm-gb10.md)（vLLM自体の導入）、
+- 本リポジトリ内: [docs/vllm/vllm-gb10.md](vllm-gb10.md)（vLLM自体の導入）、
   `ingest/embedder.py` / `ingest/chat.py` / `ingest/vlm.py`（変更が要る箇所）
