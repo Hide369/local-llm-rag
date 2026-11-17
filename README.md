@@ -442,7 +442,7 @@ Nvidia GB10（DGX Spark）を社内の推論サーバーにして、生成とコ
 vLLMの起動がメモリ不足で通らないときの切り分けは
 [docs/vllm/vllm-gb10-memory.md](docs/vllm/vllm-gb10-memory.md)、
 1台に載らないモデルをGB10を4台に分けて動かす手順は
-[docs/vllm/vllm-gb10-cluster.md](docs/vllm/vllm-gb10-cluster.md) にある。
+Batch_Exec リポジトリの [docs/other/vllm_gb10_cluster.md](https://github.com/Hide369/Batch_Exec/blob/main/docs/other/vllm_gb10_cluster.md) へ移した。
 GB10のデスクトップに直接キーボードを繋いで使うとき、テキスト欄で日本語が打てないのは
 IMEが未導入だからである。その手当ては
 [docs/gb10-japanese-input.md](docs/gb10-japanese-input.md) にある。
