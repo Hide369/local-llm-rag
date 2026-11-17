@@ -596,7 +596,7 @@ DBに入っているベクトルと問い合わせのベクトルは同じ経路
 
 2台以上のGB10をQSFPで繋いで `--tensor-parallel-size 2` 以上で動かす手順
 （Rayクラスタ）もplaybookにある。1台に載らないモデルを動かす必要が出てから読めばよい。
-4台をスイッチで繋ぐ場合は [GB10を4台スイッチで繋ぎ、vLLMで1つのモデルを分散して動かす](vllm-gb10-cluster.md) にまとめた。
+4台をスイッチで繋ぐ場合は [GB10を4台スイッチで繋ぎ、vLLMで1つのモデルを分散して動かす](https://github.com/Hide369/Batch_Exec/blob/main/docs/other/vllm_gb10_cluster.md)（Batch_Exec リポジトリへ移した）にまとめた。
 
 ## 出典
 
