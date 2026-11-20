@@ -443,6 +443,8 @@ vLLMの起動がメモリ不足で通らないときの切り分けは
 [docs/vllm/vllm-gb10-memory.md](docs/vllm/vllm-gb10-memory.md)、
 1台に載らないモデルをGB10を4台に分けて動かす手順は
 Batch_Exec リポジトリの [docs/other/vllm_gb10_cluster.md](https://github.com/Hide369/Batch_Exec/blob/main/docs/other/vllm_gb10_cluster.md) へ移した。
+GB10を2台並べ、LiteLLMを前に置いてClaude Codeから2つのモデルを切り替える手順（旧 `docs/proxy/`）は
+Batch_Exec リポジトリの [docs/other/proxy/](https://github.com/Hide369/Batch_Exec/tree/main/docs/other/proxy) へ移した。
 GB10のデスクトップに直接キーボードを繋いで使うとき、テキスト欄で日本語が打てないのは
 IMEが未導入だからである。その手当ては
 [docs/gb10-japanese-input.md](docs/gb10-japanese-input.md) にある。
