@@ -432,19 +432,20 @@ Ollamaに肩代わりさせられる。現在Colab側に置いているのは `g
 以下は調査の記録である。実機で動かしてはいない。
 
 **コーディングエージェント向けにはvLLMを使う。** そちらの手順は
-[GB10のvLLM + gpt-oss-120b でCodexとClaude Codeを使う](docs/vllm/vllm-gb10-coding-agent.md)
+[GB10のvLLM + gpt-oss-120b でCodexとClaude Codeを使う](https://github.com/Hide369/Batch_Exec/blob/main/docs/other/vllm/vllm-gb10-coding-agent.md)
 にある。
 
 Nvidia GB10（DGX Spark）を社内の推論サーバーにして、生成とコーディングエージェントを
-そこへ寄せる場合の手順は [docs/vllm/vllm-gb10.md](docs/vllm/vllm-gb10.md) にある。
+そこへ寄せる場合の手順は [Batch_Exec の docs/other/vllm/vllm-gb10.md](https://github.com/Hide369/Batch_Exec/blob/main/docs/other/vllm/vllm-gb10.md) にある。
 載せるモデルの選定（生成・VLM・埋め込みの3本）と、その導入手順は
-[docs/vllm/vllm-gb10-models.md](docs/vllm/vllm-gb10-models.md) に分けてある。
+[Batch_Exec の docs/other/vllm/vllm-gb10-models.md](https://github.com/Hide369/Batch_Exec/blob/main/docs/other/vllm/vllm-gb10-models.md) に分けてある。
 vLLMの起動がメモリ不足で通らないときの切り分けは
-[docs/vllm/vllm-gb10-memory.md](docs/vllm/vllm-gb10-memory.md)、
+[Batch_Exec の docs/other/vllm/vllm-gb10-memory.md](https://github.com/Hide369/Batch_Exec/blob/main/docs/other/vllm/vllm-gb10-memory.md)、
 1台に載らないモデルをGB10を4台に分けて動かす手順は
 Batch_Exec リポジトリの [docs/other/vllm_gb10_cluster.md](https://github.com/Hide369/Batch_Exec/blob/main/docs/other/vllm_gb10_cluster.md) へ移した。
 GB10を2台並べ、LiteLLMを前に置いてClaude Codeから2つのモデルを切り替える手順（旧 `docs/proxy/`）は
 Batch_Exec リポジトリの [docs/other/proxy/](https://github.com/Hide369/Batch_Exec/tree/main/docs/other/proxy) へ移した。
+vLLM関係の文書（旧 `docs/vllm/` の4本）も Batch_Exec リポジトリの [docs/other/vllm/](https://github.com/Hide369/Batch_Exec/tree/main/docs/other/vllm) へ移した。
 GB10のデスクトップに直接キーボードを繋いで使うとき、テキスト欄で日本語が打てないのは
 IMEが未導入だからである。その手当ては
 [docs/gb10-japanese-input.md](docs/gb10-japanese-input.md) にある。
@@ -560,7 +561,7 @@ Qwen3-Coder-Next に置き換えたGB10へ、プロキシを立てずに Claude 
 [VS CodeのClaude CodeをGB10のQwen3-Coder-Nextへ向ける](docs/qwen/claude-code-gb10-qwen3-coder-next.md)
 にある（Ollama v0.14.0 以降は `/v1/messages` を自分で話す。クライアントは `settings.json` だけ）。
 OllamaではなくvLLMに `openai/gpt-oss-120b` を載せ、CodexとClaude Codeの両方を使う場合は
-[GB10のvLLM + gpt-oss-120b でCodexとClaude Codeを使う](docs/vllm/vllm-gb10-coding-agent.md)
+[GB10のvLLM + gpt-oss-120b でCodexとClaude Codeを使う](https://github.com/Hide369/Batch_Exec/blob/main/docs/other/vllm/vllm-gb10-coding-agent.md)
 を参照する。
 Claude Code にプラグイン Superpowers を入れて使う手順と、ローカルLLMでの注意点は
 [Superpowers プラグイン導入手順](docs/superpowers-setup.md) にある。
