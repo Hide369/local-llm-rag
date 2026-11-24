@@ -28,6 +28,9 @@ $env:OLLAMA_HOST="http://127.0.0.1:12000"
 .\myvenv313\Scripts\python.exe -m scripts.ingest_source
 ```
 
+サーバ機で Ollama 自体の待ち受けを移し、常駐サービスまで揃える手順は
+[docs/ollama-port-11500.md](docs/ollama-port-11500.md) にある。
+
 `localhost` は使わないこと。Windowsでは先にIPv6の `::1` に解決され、
 1リクエストあたり約2.1秒を浪費する（`127.0.0.1` なら約80ms）。
 
