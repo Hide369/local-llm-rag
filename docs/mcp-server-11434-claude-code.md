@@ -9,7 +9,7 @@
 
 | 対象 | 文書 | 状態 |
 | --- | --- | --- |
-| GB10 ×2 と LiteLLM | [gb10-dual-sglang-setup.md](proxy/gb10-dual-sglang-setup.md) の1〜7章（vLLM 版なら [gb10-dual-llm-setup.md](proxy/gb10-dual-llm-setup.md) の1〜6章） | LiteLLM 経由で両モデルが応答する |
+| GB10 ×2 と LiteLLM | [gb10-dual-sglang-setup.md](https://github.com/Hide369/Batch_Exec/blob/main/docs/other/proxy/gb10-dual-sglang-setup.md) の1〜7章（vLLM 版なら [gb10-dual-llm-setup.md](https://github.com/Hide369/Batch_Exec/blob/main/docs/other/proxy/gb10-dual-llm-setup.md) の1〜6章） | LiteLLM 経由で両モデルが応答する |
 | 検索サーバ機の RAG | [mcp-server-network.md](mcp-server-network.md) の「サーバ機の準備」1〜3（取得・依存関係・Ollama・取り込み） | 資料が取り込み済み |
 | 検索サーバ機の Ollama | [ollama-port-11500.md](ollama-port-11500.md) | Ollama が `127.0.0.1:11500`、`11434` が空いている |
 
@@ -230,7 +230,7 @@ IP とトークンは LiteLLM のもの（`master_key`）に置き換える。
 ```
 
 プルダウン・モデルの割り当て・`CLAUDE_CODE_*` の各値の意味は
-[gb10-dual-sglang-setup.md](proxy/gb10-dual-sglang-setup.md)「8.2」の表にある。
+[gb10-dual-sglang-setup.md](https://github.com/Hide369/Batch_Exec/blob/main/docs/other/proxy/gb10-dual-sglang-setup.md)「8.2」の表にある。
 モデル名（`gpt-oss-120b` / `qwen3-coder-next`）は LiteLLM の `model_name` と**完全に**
 一致させる。vLLM 版の LiteLLM で別の名前を付けている場合はそれに合わせる。
 
@@ -321,7 +321,7 @@ Claude Code のパネルを開き、新しい会話で次の順に確かめる�
 まず、**モデルにツール定義が届いているか**を確かめる。Codex の件はここで止まっていた。
 
 1. GB10-A で LiteLLM を `--detailed_debug` 付きで起動し直す
-   （[gb10-dual-sglang-setup.md](proxy/gb10-dual-sglang-setup.md)「7.3」）
+   （[gb10-dual-sglang-setup.md](https://github.com/Hide369/Batch_Exec/blob/main/docs/other/proxy/gb10-dual-sglang-setup.md)「7.3」）
 2. クライアントから質問を1つ送る
 3. ログに出た要求の `tools` 配列に `mcp__local_docs__search_documents` があるかを見る
 
@@ -341,7 +341,7 @@ Claude Code のパネルを開き、新しい会話で次の順に確かめる�
 | 「ベクトルDBが空です」 | 取り込みが未実行。サーバ機で `scripts.ingest_source` を実行する（`.env` か環境変数の `OLLAMA_HOST` を 11500 に揃えてから） |
 | 検索のたびに許可ダイアログが出る | `permissions.allow` の名前と `claude mcp add` の名前（`local_docs`）が一致していない |
 | 400 エラーで会話が進まない | `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` と `ENABLE_TOOL_SEARCH=false` が入っているか |
-| ログイン画面が出る・プルダウンが変わらない | [gb10-dual-sglang-setup.md](proxy/gb10-dual-sglang-setup.md)「11. トラブルシューティング」 |
+| ログイン画面が出る・プルダウンが変わらない | [gb10-dual-sglang-setup.md](https://github.com/Hide369/Batch_Exec/blob/main/docs/other/proxy/gb10-dual-sglang-setup.md)「11. トラブルシューティング」 |
 | 社内の質問なのに検索しない | 手順9。`/context` に `CLAUDE.md` が出ているか。出ていて呼ばないなら上の「一度も呼ばれないとき」 |
 
 ## 制限
