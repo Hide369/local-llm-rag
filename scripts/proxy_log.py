@@ -10,7 +10,7 @@
 
 つまり「正しく渡せば呼ぶ」ことは分かっている。残る未知は渡されているかだけである。
 
-手順は docs/mcp-tool-not-called.md にある。
+手順は docs/mcp/mcp-tool-not-called.md にある。
 
 このファイルは単体で動く。プロジェクトの他のモジュールを import しないので、
 Codex が動いている機械へこの1枚だけコピーすればよい（必要なのは Python と

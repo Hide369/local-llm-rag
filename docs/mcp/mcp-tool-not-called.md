@@ -125,7 +125,7 @@ nvidia-smi
 
 ここまでで原因が出なければ、送信内容を直接観測する。推測を重ねないこと。
 
-[scripts/proxy_log.py](../scripts/proxy_log.py) を Codex と Ollama の間に挟む。
+[scripts/proxy_log.py](../../scripts/proxy_log.py) を Codex と Ollama の間に挟む。
 このファイルは単体で動き、プロジェクトの他のモジュールを import しない。
 **Codex が動いている機械へこの1枚だけコピーすればよい**（Python と requests だけ要る）。
 

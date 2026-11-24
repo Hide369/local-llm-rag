@@ -33,7 +33,7 @@ MCP サーバを `11434` で動かす手順は本書の範囲外で、次の文�
 | 読む側 | 使い方 |
 | --- | --- |
 | Ollama 本体（`ollama serve`・トレイアプリ・`ollama` コマンド） | 待ち受けるアドレス、`ollama pull` 等の接続先 |
-| RAG（[ingest/embedder.py:15-17](../ingest/embedder.py#L15-L17)） | 埋め込み・生成・画像説明の接続先。未設定なら `http://127.0.0.1:11434` |
+| RAG（[ingest/embedder.py:15-17](../../ingest/embedder.py#L15-L17)） | 埋め込み・生成・画像説明の接続先。未設定なら `http://127.0.0.1:11434` |
 
 値は **`http://127.0.0.1:11500`** と書く。
 

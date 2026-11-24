@@ -41,7 +41,7 @@
 - 外部へ出る通信は context7 だけではない。`search_documents` の初回呼び出しは、
   リランカーのモデルが手元にあるかを確かめるため huggingface.co へ HEAD を6回
   送る（実測 2026-09-08。`ingest/reranker.py` の `check_reranker` →
-  `_model_paths`、詳細は `docs/mcp-server.md`）。送るのは要求するモデルファイルの
+  `_model_paths`、詳細は `docs/mcp/mcp-server.md`）。送るのは要求するモデルファイルの
   パスだけで、検索語も社内資料の中身も含まない。それでも「社内資料の検索は
   完全にローカルで閉じている」とは言えないので、オフライン環境ではモデルを
   事前に取得しておくこと。

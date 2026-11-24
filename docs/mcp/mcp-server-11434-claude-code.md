@@ -161,7 +161,7 @@ New-NetFirewallRule -DisplayName "local-docs MCP (TCP 11434)" -Direction Inbound
 
 - VS Code と Claude Code 拡張。プルダウンの設定（`modelPicker`）に **v2.1.242 以降**が要る
 - 統合ターミナルで `claude` コマンドが使える（拡張機能は PATH に追加しない。未導入なら
-  [claude-code-vscode.md](claude-code-vscode.md)「1. 拡張機能を入れる」で CLI を入れる）
+  [claude-code-vscode.md](../claude-code-vscode.md)「1. 拡張機能を入れる」で CLI を入れる）
 
 ## 5. 検索サーバに届くか確かめる
 
@@ -276,14 +276,14 @@ claude mcp list
 - **末尾の `/mcp` を省かない。** 省くと 404 になり「応答しない」としか見えない
 - **名前は `local_docs` にする。** 手順7の `permissions.allow` と手順9の指示が
   `mcp__local_docs__search_documents` という名前を前提にしている
-- `--scope user` にする理由は [claude-code-vscode.md](claude-code-vscode.md)「スコープを選ぶ」にある
+- `--scope user` にする理由は [claude-code-vscode.md](../claude-code-vscode.md)「スコープを選ぶ」にある
 
 ## 9. いつ検索するかを `CLAUDE.md` で教える
 
 MCP の登録が教えるのは接続先だけである。**どの質問で検索するかはモデルが決める。**
 `~/.claude/CLAUDE.md`（`%USERPROFILE%\.claude\CLAUDE.md`）に、本リポジトリの
-[AGENTS.md](../AGENTS.md) の「社内資料の参照」節を貼る。既存のファイルがあれば追記する。
-貼る範囲と理由は [claude-code-vscode.md](claude-code-vscode.md)「4. `CLAUDE.md` を置く」にある。
+[AGENTS.md](../../AGENTS.md) の「社内資料の参照」節を貼る。既存のファイルがあれば追記する。
+貼る範囲と理由は [claude-code-vscode.md](../claude-code-vscode.md)「4. `CLAUDE.md` を置く」にある。
 
 ローカルLLMは Claude ほど自発的にツールを使わないことがある。貼った節の先頭に、
 ツール名を明示した1行を足しておく。
@@ -352,5 +352,5 @@ Claude Code のパネルを開き、新しい会話で次の順に確かめる�
   （[mcp-server-network.md](mcp-server-network.md)「制限」）
 - 資料を更新したら、サーバ機で取り込みを実行するだけでよい。MCP サーバの再起動は要らない
 - 検索サーバの初回検索は、リランカーのモデル確認のため huggingface.co へ HEAD を送る
-  （[AGENTS.md](../AGENTS.md)「外部ドキュメントの参照」）。オフラインの検索サーバでは
+  （[AGENTS.md](../../AGENTS.md)「外部ドキュメントの参照」）。オフラインの検索サーバでは
   モデルを事前に取得しておく

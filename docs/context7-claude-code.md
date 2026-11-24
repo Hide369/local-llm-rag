@@ -5,7 +5,7 @@
 ローカル LLM であっても、context7 の MCP サーバへ繋ぐのは **クライアントPC** で
 ある。GB10 側の設定は変えない。
 
-Codex 版の登録手順は [mcp-server.md](mcp-server.md) の「`~/.codex/config.toml` への
+Codex 版の登録手順は [mcp-server.md](mcp/mcp-server.md) の「`~/.codex/config.toml` への
 登録」にある。Claude Code 自体の導入と `CLAUDE.md` の置き場所は
 [claude-code-vscode.md](claude-code-vscode.md) にある。
 
@@ -43,7 +43,7 @@ context7 は社外のサービスである。登録する前に、送るもの�
 `ctx7sk-` で始まり、無償で取得できる。未設定でも動作するが、レート制限が厳しくなる。
 
 キーは Windows の環境変数に置き、設定ファイルには値を書かない（Codex 版と同じ方針。
-[mcp-server.md](mcp-server.md) の「context7 の API キーは値を書かない」）。
+[mcp-server.md](mcp/mcp-server.md) の「context7 の API キーは値を書かない」）。
 
 ```powershell
 setx CONTEXT7_API_KEY "ctx7sk-..."
@@ -222,7 +222,7 @@ Claude Code を開き直し、新しい会話で次の順に確かめる。
 | `/mcp` で `Failed`、または 401 | 環境変数が Claude Code に渡っていない。`setx` 後に VS Code を全部閉じたか確かめる。`$env:CONTEXT7_API_KEY` が空なら第1章からやり直す |
 | 起動時に設定の読み込みエラー | `${CONTEXT7_API_KEY}` を参照しているのに環境変数が未設定である。キーを設定するか、キー無しで使うなら `--header` を付けずに登録し直す（`claude mcp remove context7 --scope user`） |
 | `~/.claude.json` にキーの値が書かれている | 登録時にダブルクォートを使った。削除して第2章のコマンドで登録し直す |
-| ツールが呼ばれず、モデルの知識だけで答える | `CLAUDE.md` のルールが読まれていない（`/context` で確認）。読まれているのに呼ばれない場合は [mcp-tool-not-called.md](mcp-tool-not-called.md) を見る |
+| ツールが呼ばれず、モデルの知識だけで答える | `CLAUDE.md` のルールが読まれていない（`/context` で確認）。読まれているのに呼ばれない場合は [mcp-tool-not-called.md](mcp/mcp-tool-not-called.md) を見る |
 | 429（レート制限） | API キー未設定、または無償枠の上限。キーを設定する |
 
 ## 制限
