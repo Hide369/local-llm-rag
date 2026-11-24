@@ -3,7 +3,7 @@
 各開発者の PC に Claude Code の VS Code 拡張を入れ、社内資料の MCP サーバへ繋ぎ、
 `CLAUDE.md` で「いつ社内資料を引くか」を教えるまでの手順である。
 
-[mcp-server-network.md](mcp-server-network.md) の「クライアント側の設定」は Codex 版
+[mcp-server-network.md](mcp/mcp-server-network.md) の「クライアント側の設定」は Codex 版
 （`~/.codex/config.toml` と `~/.codex/AGENTS.md`）である。本書はその Claude Code 版
 にあたる。サーバ機の構築手順は本書の範囲外で、上記の文書にある。
 
@@ -13,7 +13,7 @@
 ## 前提
 
 - サーバ機で `rag_mcp_server` が `http://<サーバIP>:8080/mcp` で動いている
-  （[mcp-server-network.md](mcp-server-network.md) の手順が完了している）
+  （[mcp-server-network.md](mcp/mcp-server-network.md) の手順が完了している）
 - VS Code 1.94.0 以降
 - Claude の有料プラン（Pro / Max / Team / Enterprise）または Claude Console の
   アカウント。**API キーは不要である**
@@ -227,7 +227,7 @@ DB が空のままだと「ベクトルDBが空です。取り込みが未実行
 
 | 症状 | 原因と対処 |
 | --- | --- |
-| `/mcp` で `Failed` | URL の末尾 `/mcp` の欠落、サーバ機のファイアウォール、サーバ未起動。サーバ機で `Invoke-WebRequest` による疎通確認（[mcp-server-network.md](mcp-server-network.md)）を先に通す |
+| `/mcp` で `Failed` | URL の末尾 `/mcp` の欠落、サーバ機のファイアウォール、サーバ未起動。サーバ機で `Invoke-WebRequest` による疎通確認（[mcp-server-network.md](mcp/mcp-server-network.md)）を先に通す |
 | `CLAUDE.md` を書いたのに従わない | `/context` の **Memory files** に出ているか確認する。出ていなければ置き場所が読み込み対象外である。出ているのに従わない場合は、指示が曖昧か他のファイルと矛盾している |
 | 社内資料の質問なのに検索しない | `~/.claude/CLAUDE.md` の「社内資料の参照」節が入っていない。第4章 |
 | MCP を登録したのに会話に出ない | 登録は**その後に開始した会話**から効く。会話を開き直す |
@@ -240,10 +240,10 @@ DB が空のままだと「ベクトルDBが空です。取り込みが未実行
 
 - **同時アクセスは順番待ちになる。** サーバ側で検索を直列化してある。検索1回は
   およそ 3.6 秒、サーバ起動後の初回だけ 8.2 秒である。3人が同時に叩けば最後の1人は
-  およそ 11 秒待つ（実測条件は [mcp-server-network.md](mcp-server-network.md)）
+  およそ 11 秒待つ（実測条件は [mcp-server-network.md](mcp/mcp-server-network.md)）
 - 通信は平文 HTTP で認証が無い。到達できる範囲をファイアウォールで絞ることが唯一の
   境界である。この構成が守るもの・守らないものは
-  [mcp-server-network.md](mcp-server-network.md) の表を必ず読むこと
+  [mcp-server-network.md](mcp/mcp-server-network.md) の表を必ず読むこと
 - `CLAUDE.md` は強制ではない。従わせたい処理が確実に走る必要があるならフックで書く
 - 拡張機能のスラッシュコマンドは CLI の全部ではない。`!` によるシェル実行や
   タブ補完は CLI 専用である。必要なときは統合ターミナルで `claude` を使う

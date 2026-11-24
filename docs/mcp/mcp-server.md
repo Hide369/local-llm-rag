@@ -12,7 +12,7 @@ search_documents(query: str, n_results: int = 4) -> str
 - `n_results`: 返すチャンク数。既定は `SEARCH_RESULT_COUNT`（4）。
 
 設計の経緯・却下案・エラーハンドリングの全体像は
-[2026-09-05-rag-mcp-server-design.md](superpowers/specs/2026-09-05-rag-mcp-server-design.md)
+[2026-09-05-rag-mcp-server-design.md](../superpowers/specs/2026-09-05-rag-mcp-server-design.md)
 にある。本ドキュメントは導入先で手を動かすための手順に絞る。
 
 **本書は1台のPCで完結する構成である。** Codex がサーバを子プロセスとして
@@ -105,10 +105,10 @@ playwright を使う導入先に別途必要になる。
 ## `~/.codex/AGENTS.md` への追記
 
 `config.toml` が書けるのは接続先までで、**どの質問で検索するか**は書けない。ツール
-の説明文（[rag_mcp_server.py:205](../scripts/rag_mcp_server.py#L205)）にも呼ぶべき
+の説明文（[rag_mcp_server.py:205](../../scripts/rag_mcp_server.py#L205)）にも呼ぶべき
 条件は含まれないため、Codex が自分の知識で答えてしまえば検索は一度も走らない。
 
-`~/.codex/AGENTS.md` に、本リポジトリの [AGENTS.md](../AGENTS.md) から「社内資料の
+`~/.codex/AGENTS.md` に、本リポジトリの [AGENTS.md](../../AGENTS.md) から「社内資料の
 参照」「外部ドキュメントの参照」の2節をそのまま貼る。ホーム直下の AGENTS.md は
 リポジトリを問わず読まれるので、利用者が別のリポジトリで作業していても効く。
 
@@ -170,8 +170,8 @@ python -m scripts.ingest_source を実行してください。
 
 一方で社内固有の事項（規程・議事録・社内の決定）は、0件でも推測させない。この
 線引きはサーバが返す `_FALLBACK`
-（[rag_mcp_server.py:37-43](../scripts/rag_mcp_server.py#L37-L43)）と
-[AGENTS.md](../AGENTS.md) の両方が受け持つ。経緯は
+（[rag_mcp_server.py:37-43](../../scripts/rag_mcp_server.py#L37-L43)）と
+[AGENTS.md](../../AGENTS.md) の両方が受け持つ。経緯は
 [mcp-server-network.md](mcp-server-network.md) の同名の節にある。
 
 ### エラー時の応答

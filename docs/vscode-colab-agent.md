@@ -80,7 +80,7 @@ Ollama側に焼き、`--probe` で全層がGPUに載っていることを確認�
 
 ## Playwright MCPを使う
 
-Playwright MCPの設定、接続確認、トラブルシューティングは[Playwright MCPの設定](playwright-mcp.md)にまとめている。
+Playwright MCPの設定、接続確認、トラブルシューティングは[Playwright MCPの設定](mcp/playwright-mcp.md)にまとめている。
 
 ## 起動と操作
 
